@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phần Mềm Chấm Công & Nhận Diện</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">📋</div>
+                <span>Chấm Công</span>
+            </div>
+
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" data-tab="analyze">
+                    <span class="nav-icon">🔍</span>
+                    <span>Phân Tích</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="pdf">
+                    <span class="nav-icon">📄</span>
+                    <span>Tách PDF</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="results">
+                    <span class="nav-icon">📋</span>
+                    <span>Kết Quả</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="version">v2.0.0</div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="header">
+                <h1 class="page-title">Phân Tích Chấm Công</h1>
+                <div class="header-actions">
+                    <button class="btn btn-primary" onclick="refreshData()">
+                        🔄 Làm mới
+                    </button>
+                </div>
+            </header>
+
+            <!-- Tab Phân Tích -->
+            <div class="tab-content active" id="tab-analyze">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📁</div>
+                        <div class="stat-info">
+                            <div class="stat-value" id="stat-files">0</div>
+                            <div class="stat-label">File Chấm Công</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⚠️</div>
+                        <div class="stat-info">
+                            <div class="stat-value" id="stat-missing">0</div>
+                            <div class="stat-label">Bản Ghi Thiếu</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">👤</div>
+                        <div class="stat-info">
+                            <div class="stat-value" id="stat-persons">0</div>
+                            <div class="stat-label">Người Có Vấn Đề</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🖼️</div>
+                        <div class="stat-info">
+                            <div class="stat-value" id="stat-matched">0</div>
+                            <div class="stat-label">Ảnh Đã Match</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Analyze Section -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Phân Tích Tổng Hợp</h2>
+                        <button class="btn btn-success" onclick="runAnalysis()" id="btn-analyze">
+                            🚀 Bắt Đầu Phân Tích
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <p>Quét file chấm công, tìm ngày thiếu và match ảnh camera tương ứng.</p>
+
+                        <!-- Progress -->
+                        <div class="progress-section" id="progress-section" style="display: none;">
+                            <div class="progress-header">
+                                <span class="progress-title" id="progress-title">Đang xử lý...</span>
+                                <span class="progress-percent" id="progress-percent">0%</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                            </div>
+                            <div class="progress-detail" id="progress-detail"></div>
+                        </div>
+
+                        <!-- Log Panel -->
+                        <div class="log-panel" id="log-panel" style="display: none;">
+                            <div class="log-header">
+                                <span class="log-title">📋 Log Chi Tiết</span>
+                                <div class="log-actions">
+                                    <button class="btn-icon" onclick="clearLogs()" title="Xóa log">🗑️</button>
+                                    <button class="btn-icon" onclick="toggleLogPanel()" title="Thu gọn">➖</button>
+                                </div>
+                            </div>
+                            <div class="log-content" id="log-content"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results Table -->
+                <div class="card" id="results-card" style="display: none;">
+                    <div class="card-header">
+                        <h2>Danh Sách Thiếu Dữ Liệu</h2>
+                        <button class="btn btn-primary" onclick="exportWord()">
+                            📄 Xuất File Word
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>STT</th>
+                                        <th>Tên</th>
+                                        <th>Ngày</th>
+                                        <th>Thứ</th>
+                                        <th>Vấn Đề</th>
+                                        <th>Ảnh Camera</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="analysis-table-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab Kết Quả -->
+            <div class="tab-content" id="tab-results">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Danh Sách File Kết Quả</h2>
+                        <button class="btn btn-secondary" onclick="loadResultFiles()">
+                            🔄 Làm mới
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>STT</th>
+                                        <th>Tên File</th>
+                                        <th>Kích Thước</th>
+                                        <th>Thao Tác</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="results-table-body">
+                                    <tr>
+                                        <td colspan="4" class="empty-message">Chưa có file kết quả nào</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Export Settings -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Cài Đặt Xuất File</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label>Tên Dự Án:</label>
+                            <input type="text" id="project-name" class="form-input" value="Chung cư Tân Thuận Đông">
+                        </div>
+                        <div class="form-group">
+                            <label>Tháng:</label>
+                            <input type="text" id="export-month" class="form-input" value="01/2026">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab Tách PDF -->
+            <div class="tab-content" id="tab-pdf">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📄</div>
+                        <div class="stat-info">
+                            <div class="stat-value" id="stat-pdf-uploads">0</div>
+                            <div class="stat-label">File PDF Đã Upload</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📁</div>
+                        <div class="stat-info">
+                            <div class="stat-value" id="stat-pdf-extracted">0</div>
+                            <div class="stat-label">Thư Mục Đã Tách</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Upload PDF -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Upload File PDF</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="upload-zone" id="pdf-upload-zone">
+                            <div class="upload-icon">📄</div>
+                            <div class="upload-text">Kéo thả file PDF hoặc click để chọn</div>
+                            <div class="upload-info">Hỗ trợ file .pdf</div>
+                            <input type="file" id="pdf-file-input" accept=".pdf" style="display: none;">
+                        </div>
+                        <div id="pdf-selected-file" style="margin-top: 16px; display: none;">
+                            <p><strong>File đã chọn:</strong> <span id="pdf-filename"></span></p>
+                            <button class="btn btn-success" onclick="extractPDF()" id="btn-extract">
+                                🚀 Bắt Đầu Tách
+                            </button>
+                        </div>
+
+                        <!-- Progress -->
+                        <div class="progress-section" id="pdf-progress-section" style="display: none;">
+                            <div class="progress-header">
+                                <span class="progress-title" id="pdf-progress-title">Đang xử lý...</span>
+                                <span class="progress-percent" id="pdf-progress-percent">0%</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="pdf-progress-fill" style="width: 0%"></div>
+                            </div>
+                            <div class="progress-detail" id="pdf-progress-detail"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PDF Files List -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Danh Sách File PDF Đã Upload</h2>
+                        <button class="btn btn-secondary" onclick="loadPDFUploads()">
+                            🔄 Làm mới
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>STT</th>
+                                        <th>Tên File</th>
+                                        <th>Kích Thước</th>
+                                        <th>Thao Tác</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pdf-uploads-table-body">
+                                    <tr>
+                                        <td colspan="4" class="empty-message">Chưa có file PDF nào</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Extracted Files -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>File Word Đã Tách</h2>
+                        <button class="btn btn-secondary" onclick="loadPDFExtractedFiles()">
+                            🔄 Làm mới
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div id="pdf-extracted-files">
+                            <p class="empty-message">Chưa có file nào được tách</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+
+</html>
