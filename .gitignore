@@ -4,3 +4,4 @@ build
 .env
 input_images
 pdf_extracted
+*.exe
