@@ -19,15 +19,19 @@
             </div>
 
             <nav class="nav-menu">
-                <a href="#" class="nav-item active" data-tab="analyze">
+                <a href="javascript:void(0)" class="nav-item active" data-tab="analyze">
                     <span class="nav-icon">🔍</span>
                     <span>Phân Tích</span>
                 </a>
-                <a href="#" class="nav-item" data-tab="pdf">
+                <a href="javascript:void(0)" class="nav-item" data-tab="pdf">
                     <span class="nav-icon">📄</span>
                     <span>Tách PDF</span>
                 </a>
-                <a href="#" class="nav-item" data-tab="results">
+                <a href="javascript:void(0)" class="nav-item" data-tab="excel">
+                    <span class="nav-icon">📊</span>
+                    <span>Tách Excel</span>
+                </a>
+                <a href="javascript:void(0)" class="nav-item" data-tab="results">
                     <span class="nav-icon">📋</span>
                     <span>Kết Quả</span>
                 </a>
@@ -293,13 +297,163 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Tab Tách Excel -->
+            <div class="tab-content" id="tab-excel">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📊</div>
+                        <div class="stat-info">
+                            <div class="stat-value" id="stat-excel-uploads">0</div>
+                            <div class="stat-label">File Excel Đã Upload</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">👥</div>
+                        <div class="stat-info">
+                            <div class="stat-value" id="stat-excel-persons">0</div>
+                            <div class="stat-label">Nhân Viên Đã Xuất</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⚠️</div>
+                        <div class="stat-info">
+                            <div class="stat-value" id="stat-excel-absent">0</div>
+                            <div class="stat-label">Tổng Ngày Vắng/Thiếu</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Upload Excel -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Upload File Excel Chấm Công</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="upload-zone" id="excel-upload-zone" onclick="document.getElementById('excel-file-input').click()">
+                            <div class="upload-icon">📊</div>
+                            <div class="upload-text">Kéo thả file Excel hoặc click để chọn</div>
+                            <div class="upload-info">Hỗ trợ file .xls, .xlsx. Sau khi tách sẽ tạo file Excel và file Word in theo từng người.</div>
+                            <input type="file" id="excel-file-input" accept=".xls,.xlsx" style="display: none;" onchange="handleExcelFileSelect(this)">
+                        </div>
+                        <div id="excel-selected-file" style="margin-top: 16px; display: none;">
+                            <p><strong>File đã chọn:</strong> <span id="excel-filename"></span></p>
+                            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                                <button class="btn btn-success" onclick="extractExcel()" id="btn-excel-extract">
+                                    🚀 Bắt Đầu Tách
+                                </button>
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <label for="excel-face-threshold" style="font-weight:600;">Ngưỡng match:</label>
+                                    <input id="excel-face-threshold" type="number" step="0.01" min="0.20" max="0.80"
+                                           placeholder="vd: 0.35" style="width:120px;">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Progress -->
+                        <div class="progress-section" id="excel-progress-section" style="display: none;">
+                            <div class="progress-header">
+                                <span class="progress-title" id="excel-progress-title">Đang xử lý...</span>
+                                <span class="progress-percent" id="excel-progress-percent">0%</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="excel-progress-fill" style="width: 0%"></div>
+                            </div>
+                            <div class="progress-detail" id="excel-progress-detail"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Excel Uploads List -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Danh Sách File Excel Đã Upload</h2>
+                        <button class="btn btn-secondary" onclick="loadExcelUploads()">
+                            🔄 Làm mới
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>STT</th>
+                                        <th>Tên File</th>
+                                        <th>Kích Thước</th>
+                                        <th>Thao Tác</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="excel-uploads-table-body">
+                                    <tr>
+                                        <td colspan="4" class="empty-message">Chưa có file Excel nào</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Extracted Excel Files -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>File Word Chi Tiết Chấm Công Theo Người</h2>
+                        <button class="btn btn-secondary" onclick="loadExcelExtractedFiles()">
+                            🔄 Làm mới
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div id="excel-extracted-files">
+                            <p class="empty-message">Chưa có file Word nào được tạo</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Face Analysis Word Files -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>File Word Đã Phân Tích Từ Excel</h2>
+                        <button class="btn btn-secondary" onclick="loadExcelFaceFiles()">
+                            🔄 Làm mới
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="progress-section" id="excel-face-progress-section" style="display: none;">
+                            <div class="progress-header">
+                                <span class="progress-title" id="excel-face-progress-title">Đang xử lý...</span>
+                                <span class="progress-percent" id="excel-face-progress-percent">0%</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="excel-face-progress-fill" style="width: 0%"></div>
+                            </div>
+                            <div class="progress-detail" id="excel-face-progress-detail"></div>
+                        </div>
+                        <div id="excel-face-files">
+                            <p class="empty-message">Chưa có file Word nào</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
     <!-- Toast Notification -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=20260314"></script>
+    <script>
+        // Fallback to ensure tabs work even if app.js fails to load
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+                item.classList.add('active');
+                const tabId = item.dataset.tab;
+                document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+                const tabEl = document.getElementById(`tab-${tabId}`);
+                if (tabEl) tabEl.classList.add('active');
+            });
+        });
+    </script>
 </body>
 
 </html>

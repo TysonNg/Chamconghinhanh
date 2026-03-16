@@ -1,5 +1,45 @@
-node_modules
-dist
-build
+node_modules/
+dist/
+build/
 .env
+
+# Packaged app / build artifacts
 *.exe
+_internal/
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# Python cache and logs
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+startup.log
+app.log
+
+# Generated app outputs
+excel_uploads/
+excel_persons/
+excel_extracted/
+excel_face_output/
+pdf_uploads/
+pdf_extracted/
+results/
+
+# Local working data
+input_images/
+chamcong/
+database/
+ngay_rong/
+Ảnh BV/
+
+# Common local input files
+*.xls
+*.xlsx
+*.doc
+*.docx
+*.pdf
