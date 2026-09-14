@@ -1,7 +1,13 @@
 node_modules/
+**/node_modules/
 dist/
 build/
 .env
+
+# Zalo service profile & runtime cache
+zalo-service/zalo-browser-profile/
+**/zalo-browser-profile/
+zalo-service/*.png
 
 # Packaged app / build artifacts
 *.exe
