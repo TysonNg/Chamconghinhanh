@@ -1,7 +1,7 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
-Flask Web Server cho pháº§n má»m nháº­n diá»‡n khuÃ´n máº·t
-PhiÃªn báº£n Ä‘Æ¡n giáº£n Ä‘á»ƒ test UI
+Flask Web Server cho phần mềm nhận diện khuôn mặt
+Phiên bản đơn giản để test UI
 """
 
 import os
@@ -12,30 +12,34 @@ import queue
 import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import shutil
+import re
+import logging
+from typing import List, Dict, Optional, Tuple
 
-# ThÃªm thÆ° má»¥c gá»‘c vÃ o path
+# Thêm thư mục gốc vào path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, Response
 from werkzeug.utils import secure_filename
 
-# Cáº¥u hÃ¬nh - PhÃ¡t hiá»‡n Ä‘Ãºng thÆ° má»¥c khi cháº¡y tá»« EXE
+# Cấu hình - Phát hiện đúng thư mục khi chạy từ EXE
 def get_base_dir():
-    """Láº¥y thÆ° má»¥c gá»‘c (chá»©a data: input_images, database, ...) - há»— trá»£ cáº£ khi cháº¡y tá»« source vÃ  tá»« EXE"""
+    """Lấy thư mục gốc (chứa data: input_images, database, ...) - hỗ trợ cả khi chạy từ source và từ EXE"""
     if getattr(sys, 'frozen', False):
-        # Cháº¡y tá»« EXE (PyInstaller) - data náº±m cáº¡nh file exe
+        # Chạy từ EXE (PyInstaller) - data nằm cạnh file exe
         return os.path.dirname(sys.executable)
     else:
-        # Cháº¡y tá»« source
+        # Chạy từ source
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def get_resource_dir():
-    """Láº¥y thÆ° má»¥c resources (templates, static) - há»— trá»£ cáº£ khi cháº¡y tá»« EXE"""
+    """Lấy thư mục resources (templates, static) - hỗ trợ cả khi chạy từ EXE"""
     if getattr(sys, 'frozen', False):
-        # Cháº¡y tá»« EXE - resources Ä‘Æ°á»£c PyInstaller giáº£i nÃ©n vÃ o _MEIPASS
+        # Chạy từ EXE - resources được PyInstaller giải nén vào _MEIPASS
         return sys._MEIPASS
     else:
-        # Cháº¡y tá»« source
+        # Chạy từ source
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 BASE_DIR = get_base_dir()
@@ -108,10 +112,86 @@ PORTRAIT_DIR = resolve_portrait_dir(BASE_DIR)
 NGAY_RONG_DIR = os.path.join(BASE_DIR, "ngay_rong")
 
 # Tao thu muc neu chua ton tai
-for directory in [INPUT_IMAGES_DIR, DATABASE_DIR, RESULTS_DIR, CHAMCONG_DIR, PORTRAIT_DIR, NGAY_RONG_DIR]:
+for directory in [INPUT_IMAGES_DIR, RESULTS_DIR, CHAMCONG_DIR, PORTRAIT_DIR, NGAY_RONG_DIR]:
     os.makedirs(directory, exist_ok=True)
 
-# Flask app - dÃ¹ng RESOURCE_DIR cho templates/static (Ä‘Ãºng cáº£ khi cháº¡y tá»« EXE)
+DEFAULT_PROJECT_NAME = "Chung cư Tân Thuận Đông"
+
+def ensure_initial_project_migration():
+    """Tự động gom các nhân viên ban đầu vào dự án mặc định nếu chưa gom"""
+    default_portrait_project_dir = os.path.join(PORTRAIT_DIR, DEFAULT_PROJECT_NAME)
+    default_input_project_dir = os.path.join(INPUT_IMAGES_DIR, DEFAULT_PROJECT_NAME)
+    os.makedirs(default_portrait_project_dir, exist_ok=True)
+    os.makedirs(default_input_project_dir, exist_ok=True)
+    
+    if os.path.exists(PORTRAIT_DIR):
+        for item in os.listdir(PORTRAIT_DIR):
+            item_path = os.path.join(PORTRAIT_DIR, item)
+            if not os.path.isdir(item_path) or item == DEFAULT_PROJECT_NAME:
+                continue
+            try:
+                sub_items = os.listdir(item_path)
+            except Exception:
+                continue
+            sub_dirs = [s for s in sub_items if os.path.isdir(os.path.join(item_path, s))]
+            if not sub_dirs:
+                dest_path = os.path.join(default_portrait_project_dir, item)
+                try:
+                    if not os.path.exists(dest_path):
+                        shutil.move(item_path, dest_path)
+                    else:
+                        for f in sub_items:
+                            src_f = os.path.join(item_path, f)
+                            dst_f = os.path.join(dest_path, f)
+                            if not os.path.exists(dst_f):
+                                shutil.move(src_f, dst_f)
+                        shutil.rmtree(item_path, ignore_errors=True)
+                except Exception as e:
+                    logging.error(f"[MIGRATION] Lỗi di chuyển {item}: {e}")
+
+ensure_initial_project_migration()
+
+def ensure_project_structure(project_name: str, create_day_folders: bool = True) -> Tuple[str, str]:
+    """Đảm bảo đầy đủ cấu trúc thư mục cho dự án:
+    1. Ảnh BV/<project_name> (Thư mục chân dung nhân viên)
+    2. input_images/<project_name> (Thư mục ảnh camera theo ngày)
+    3. input_images/<project_name>/01..31 (31 thư mục ngày trong tháng)
+    """
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', project_name.strip()) if project_name else DEFAULT_PROJECT_NAME
+    p_dir = os.path.join(PORTRAIT_DIR, safe_name)
+    i_dir = os.path.join(INPUT_IMAGES_DIR, safe_name)
+    os.makedirs(p_dir, exist_ok=True)
+    os.makedirs(i_dir, exist_ok=True)
+    if create_day_folders:
+        for d in range(1, 32):
+            os.makedirs(os.path.join(i_dir, f"{d:02d}"), exist_ok=True)
+    return p_dir, i_dir
+
+def get_all_projects() -> List[str]:
+    """Lấy danh sách tên tất cả các dự án từ PORTRAIT_DIR và INPUT_IMAGES_DIR"""
+    projects = set()
+    if os.path.exists(PORTRAIT_DIR):
+        for item in os.listdir(PORTRAIT_DIR):
+            p_path = os.path.join(PORTRAIT_DIR, item)
+            if os.path.isdir(p_path):
+                projects.add(item)
+    if os.path.exists(INPUT_IMAGES_DIR):
+        for item in os.listdir(INPUT_IMAGES_DIR):
+            p_path = os.path.join(INPUT_IMAGES_DIR, item)
+            if os.path.isdir(p_path) and not (item.isdigit() and len(item) <= 2):
+                projects.add(item)
+    if not projects:
+        projects.add(DEFAULT_PROJECT_NAME)
+    # Tự động đồng bộ và tạo đầy đủ cấu trúc thư mục cho tất cả các dự án
+    for p in projects:
+        ensure_project_structure(p)
+    return sorted(list(projects))
+
+def resolve_project_dirs(project_name: str) -> Tuple[str, str]:
+    """Trả về (portrait_dir, input_images_dir) an toàn cho dự án"""
+    return ensure_project_structure(project_name)
+
+# Flask app - dùng RESOURCE_DIR cho templates/static (đúng cả khi chạy từ EXE)
 app = Flask(__name__, 
             template_folder=os.path.join(RESOURCE_DIR, 'templates'),
             static_folder=os.path.join(RESOURCE_DIR, 'static'))
@@ -216,7 +296,7 @@ def send_log(message, log_type='default'):
 
 
 def get_image_files(folder_path):
-    """Láº¥y danh sÃ¡ch file áº£nh trong thÆ° má»¥c"""
+    """Lấy danh sách file ảnh trong thư mục"""
     image_files = []
     for root, dirs, files in os.walk(folder_path):
         for file in files:
@@ -226,7 +306,7 @@ def get_image_files(folder_path):
     return image_files
 
 def process_image(image_path):
-    """Xá»­ lÃ½ má»™t áº£nh (demo version - tráº£ vá» dá»¯ liá»‡u máº«u)"""
+    """Xử lý một ảnh (demo version - trả về dữ liệu mẫu)"""
     result = {
         'image_path': image_path,
         'filename': os.path.basename(image_path),
@@ -248,7 +328,7 @@ def process_image(image_path):
     result['location'] = 'Demo Location'
     result['faces'] = [{'location': (0, 100, 100, 0)}]
     
-    # TÃ¬m trong database
+    # Tìm trong database
     if database:
         for person_id, data in database.items():
             result['matched_person'] = person_id
@@ -260,7 +340,7 @@ def process_image(image_path):
     return result
 
 def run_processing(task_id, files):
-    """Xá»­ lÃ½ trong background thread"""
+    """Xử lý trong background thread"""
     task = tasks[task_id]
     task.status = 'running'
     task.start_time = datetime.now()
@@ -293,7 +373,7 @@ def run_processing(task_id, files):
     task.end_time = datetime.now()
 
 def export_results(task):
-    """Xuáº¥t káº¿t quáº£ ra file Excel hoáº·c CSV"""
+    """Xuất kết quả ra file Excel hoặc CSV"""
     try:
         import pandas as pd
         
@@ -301,14 +381,14 @@ def export_results(task):
         for i, result in enumerate(task.results, 1):
             rows.append({
                 'STT': i,
-                'TÃªn File': result['filename'],
-                'NgÃ y Giá»': result['datetime'] or '',
-                'Äá»‹a Äiá»ƒm': result['location'] or '',
-                'Chi NhÃ¡nh': result['branch'] or '',
-                'TÃªn NgÆ°á»i': result['person_name'] or 'KhÃ´ng xÃ¡c Ä‘á»‹nh',
-                'Äá»™ Tin Cáº­y (%)': result['confidence'] or 0,
-                'Sá»‘ KhuÃ´n Máº·t': len(result['faces']),
-                'Lá»—i': result['error'] or ''
+                'Tên File': result['filename'],
+                'Ngày Giờ': result['datetime'] or '',
+                'Địa Điểm': result['location'] or '',
+                'Chi Nhánh': result['branch'] or '',
+                'Tên Người': result['person_name'] or 'Không xác định',
+                'Độ Tin Cậy (%)': result['confidence'] or 0,
+                'Số Khuôn Mặt': len(result['faces']),
+                'Lỗi': result['error'] or ''
             })
         
         df = pd.DataFrame(rows)
@@ -329,7 +409,7 @@ def export_results(task):
         
         with open(output_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['STT', 'TÃªn File', 'NgÃ y Giá»', 'Äá»‹a Äiá»ƒm', 'Chi NhÃ¡nh', 'TÃªn NgÆ°á»i', 'Äá»™ Tin Cáº­y (%)', 'Sá»‘ KhuÃ´n Máº·t', 'Lá»—i'])
+            writer.writerow(['STT', 'Tên File', 'Ngày Giờ', 'Địa Điểm', 'Chi Nhánh', 'Tên Người', 'Độ Tin Cậy (%)', 'Số Khuôn Mặt', 'Lỗi'])
             
             for i, result in enumerate(task.results, 1):
                 writer.writerow([
@@ -338,7 +418,7 @@ def export_results(task):
                     result['datetime'] or '',
                     result['location'] or '',
                     result['branch'] or '',
-                    result['person_name'] or 'KhÃ´ng xÃ¡c Ä‘á»‹nh',
+                    result['person_name'] or 'Không xác định',
                     result['confidence'] or 0,
                     len(result['faces']),
                     result['error'] or ''
@@ -346,11 +426,11 @@ def export_results(task):
         
         return output_path
     except Exception as e:
-        print(f"Lá»—i xuáº¥t file: {e}")
+        print(f"Lỗi xuất file: {e}")
         return None
 
 def scan_database():
-    """QuÃ©t database áº£nh chÃ¢n dung"""
+    """Quét database ảnh chân dung"""
     global database
     database = {}
     
@@ -367,7 +447,7 @@ def scan_database():
             if not os.path.isdir(person_path):
                 continue
             
-            # TÃ¬m áº£nh
+            # Tìm ảnh
             image_files = []
             for file in os.listdir(person_path):
                 ext = os.path.splitext(file)[1].lower()
@@ -422,19 +502,19 @@ def log_stream():
 @app.route('/api/scan/start', methods=['POST'])
 def start_scan():
     data = request.json or {}
-    date_folder = data.get('date', None)  # CÃ³ thá»ƒ chá»‰ Ä‘á»‹nh ngÃ y cá»¥ thá»ƒ
+    date_folder = data.get('date', None)  # Có thể chỉ định ngày cụ thể
     folder_path = data.get('folder_path', INPUT_IMAGES_DIR)
     
-    # Náº¿u cÃ³ chá»‰ Ä‘á»‹nh ngÃ y, quÃ©t trong thÆ° má»¥c ngÃ y Ä‘Ã³
+    # Nếu có chỉ định ngày, quét trong thư mục ngày đó
     if date_folder:
         folder_path = os.path.join(INPUT_IMAGES_DIR, date_folder)
     
     if not os.path.exists(folder_path):
-        return jsonify({'error': f'ThÆ° má»¥c khÃ´ng tá»“n táº¡i: {folder_path}'}), 400
+        return jsonify({'error': f'Thư mục không tồn tại: {folder_path}'}), 400
     
     files = get_image_files(folder_path)
     if not files:
-        return jsonify({'error': 'KhÃ´ng tÃ¬m tháº¥y file áº£nh nÃ o'}), 400
+        return jsonify({'error': 'Không tìm thấy file ảnh nào'}), 400
     
     task_id = f"task_{int(time.time() * 1000)}"
     task = ProcessingTask(task_id)
@@ -447,20 +527,20 @@ def start_scan():
     return jsonify({
         'success': True,
         'task_id': task_id,
-        'message': f'ÄÃ£ báº¯t Ä‘áº§u quÃ©t {len(files)} áº£nh',
+        'message': f'Đã bắt đầu quét {len(files)} ảnh',
         'folder': folder_path,
         'total_files': len(files)
     })
 
 @app.route('/api/scan/dates')
 def list_date_folders():
-    """Liá»‡t kÃª cÃ¡c thÆ° má»¥c ngÃ y cÃ³ sáºµn trong input_images"""
+    """Liệt kê các thư mục ngày có sẵn trong input_images"""
     date_folders = []
     if os.path.exists(INPUT_IMAGES_DIR):
         for item in os.listdir(INPUT_IMAGES_DIR):
             item_path = os.path.join(INPUT_IMAGES_DIR, item)
             if os.path.isdir(item_path):
-                # Äáº¿m sá»‘ áº£nh trong thÆ° má»¥c
+                # Đếm số ảnh trong thư mục
                 image_count = len(get_image_files(item_path))
                 if image_count > 0:
                     date_folders.append({
@@ -469,7 +549,7 @@ def list_date_folders():
                         'image_count': image_count
                     })
     
-    # Sáº¯p xáº¿p theo tÃªn (ngÃ y)
+    # Sắp xếp theo tên (ngày)
     date_folders.sort(key=lambda x: x['name'])
     
     return jsonify({
@@ -480,14 +560,14 @@ def list_date_folders():
 
 @app.route('/api/scan/all-dates', methods=['POST'])
 def scan_all_dates():
-    """QuÃ©t táº¥t cáº£ cÃ¡c thÆ° má»¥c ngÃ y cÃ³ áº£nh trong input_images"""
+    """Quét tất cả các thư mục ngày có ảnh trong input_images"""
     date_folders = []
     total_images = 0
     
     if not os.path.exists(INPUT_IMAGES_DIR):
-        return jsonify({'error': 'ThÆ° má»¥c input_images khÃ´ng tá»“n táº¡i'}), 400
+        return jsonify({'error': 'Thư mục input_images không tồn tại'}), 400
     
-    # TÃ¬m táº¥t cáº£ thÆ° má»¥c con cÃ³ áº£nh
+    # Tìm tất cả thư mục con có ảnh
     for item in os.listdir(INPUT_IMAGES_DIR):
         item_path = os.path.join(INPUT_IMAGES_DIR, item)
         if os.path.isdir(item_path):
@@ -501,12 +581,12 @@ def scan_all_dates():
                 total_images += len(images)
     
     if not date_folders:
-        return jsonify({'error': 'KhÃ´ng tÃ¬m tháº¥y thÆ° má»¥c ngÃ y nÃ o cÃ³ áº£nh'}), 400
+        return jsonify({'error': 'Không tìm thấy thư mục ngày nào có ảnh'}), 400
     
-    # Sáº¯p xáº¿p theo tÃªn ngÃ y
+    # Sắp xếp theo tên ngày
     date_folders.sort(key=lambda x: x['name'])
     
-    # Táº¡o task vÃ  báº¯t Ä‘áº§u quÃ©t tá»«ng thÆ° má»¥c
+    # Tạo task và bắt đầu quét từng thư mục
     task_id = f"task_{int(time.time() * 1000)}"
     task = ProcessingTask(task_id)
     task.total = total_images
@@ -525,14 +605,14 @@ def scan_all_dates():
                 
                 try:
                     result = process_image(image_path)
-                    result['date_folder'] = folder_name  # ThÃªm thÃ´ng tin thÆ° má»¥c ngÃ y
+                    result['date_folder'] = folder_name  # Thêm thông tin thư mục ngày
                     task.results.append(result)
                 except Exception as e:
                     task.errors.append({'file': image_path, 'error': str(e)})
                 
                 task.progress += 1
         
-        # Export káº¿t quáº£
+        # Export kết quả
         task.output_file = export_results(task)
         task.status = 'completed'
         task.end_time = datetime.now()
@@ -543,7 +623,7 @@ def scan_all_dates():
     return jsonify({
         'success': True,
         'task_id': task_id,
-        'message': f'Äang quÃ©t {len(date_folders)} thÆ° má»¥c, tá»•ng {total_images} áº£nh',
+        'message': f'Đang quét {len(date_folders)} thư mục, tổng {total_images} ảnh',
         'folders': [{'name': f['name'], 'count': len(f['images'])} for f in date_folders],
         'total_images': total_images
     })
@@ -553,7 +633,7 @@ def get_scan_status(task_id):
     task = tasks.get(task_id)
     if task:
         return jsonify(task.to_dict())
-    return jsonify({'error': 'Task khÃ´ng tá»“n táº¡i'}), 404
+    return jsonify({'error': 'Task không tồn tại'}), 404
 
 @app.route('/api/scan/results/<task_id>')
 def get_scan_results(task_id):
@@ -564,7 +644,7 @@ def get_scan_results(task_id):
             'results': task.results,
             'errors': task.errors
         })
-    return jsonify({'error': 'Task khÃ´ng tá»“n táº¡i'}), 404
+    return jsonify({'error': 'Task không tồn tại'}), 404
 
 @app.route('/api/scan/tasks')
 def get_all_tasks():
@@ -594,7 +674,7 @@ def rescan_database():
     stats = get_database_stats().get_json()
     return jsonify({
         'success': True,
-        'message': 'ÄÃ£ quÃ©t database',
+        'message': 'Đã quét database',
         'stats': stats
     })
 
@@ -614,14 +694,14 @@ def add_branch():
     branch_name = data.get('name', '').strip()
     
     if not branch_name:
-        return jsonify({'error': 'TÃªn chi nhÃ¡nh khÃ´ng há»£p lá»‡'}), 400
+        return jsonify({'error': 'Tên chi nhánh không hợp lệ'}), 400
     
     branch_path = os.path.join(DATABASE_DIR, branch_name)
     os.makedirs(branch_path, exist_ok=True)
     
     return jsonify({
         'success': True,
-        'message': f'ÄÃ£ thÃªm chi nhÃ¡nh: {branch_name}'
+        'message': f'Đã thêm chi nhánh: {branch_name}'
     })
 
 @app.route('/api/database/persons/<branch>')
@@ -690,12 +770,12 @@ def download_file(filename):
     file_path = os.path.join(RESULTS_DIR, secure_filename(filename))
     if os.path.exists(file_path):
         return send_file(file_path, as_attachment=True)
-    return jsonify({'error': 'File khÃ´ng tá»“n táº¡i'}), 404
+    return jsonify({'error': 'File không tồn tại'}), 404
 
 @app.route('/api/files/upload', methods=['POST'])
 def upload_files():
     if 'files' not in request.files:
-        return jsonify({'error': 'KhÃ´ng cÃ³ file Ä‘Æ°á»£c upload'}), 400
+        return jsonify({'error': 'Không có file được upload'}), 400
     
     files = request.files.getlist('files')
     uploaded = []
@@ -733,15 +813,503 @@ def serve_image(filename):
     file_path = os.path.join(INPUT_IMAGES_DIR, filename)
     if os.path.exists(file_path):
         return send_file(file_path)
-    return jsonify({'error': 'File khÃ´ng tá»“n táº¡i'}), 404
+    return jsonify({'error': 'File không tồn tại'}), 404
+
+# ==================== API: DỰ ÁN & QUẢN LÝ ẢNH ====================
+
+@app.route('/api/projects', methods=['GET'])
+def list_projects():
+    """Lấy danh sách dự án kèm thống kê số lượng nhân viên và ảnh camera"""
+    projects_list = []
+    names = get_all_projects()
+    for name in names:
+        p_dir = os.path.join(PORTRAIT_DIR, name)
+        i_dir = os.path.join(INPUT_IMAGES_DIR, name)
+        emp_count = 0
+        if os.path.exists(p_dir):
+            for item in os.listdir(p_dir):
+                sub_p = os.path.join(p_dir, item)
+                if os.path.isdir(sub_p):
+                    emp_count += 1
+                elif os.path.splitext(item)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                    emp_count += 1
+        cam_days = 0
+        cam_imgs = 0
+        if os.path.exists(i_dir):
+            for item in os.listdir(i_dir):
+                sub_p = os.path.join(i_dir, item)
+                if os.path.isdir(sub_p):
+                    imgs = [f for f in os.listdir(sub_p) if os.path.splitext(f)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS]
+                    if imgs:
+                        cam_days += 1
+                        cam_imgs += len(imgs)
+        projects_list.append({
+            'name': name,
+            'employee_count': emp_count,
+            'camera_days_count': cam_days,
+            'camera_total_images': cam_imgs
+        })
+    return jsonify({
+        'success': True,
+        'projects': projects_list,
+        'default_project': DEFAULT_PROJECT_NAME
+    })
+
+@app.route('/api/projects/create', methods=['POST'])
+def create_project():
+    """Tạo dự án mới đầy đủ cấu trúc thư mục"""
+    data = request.json or {}
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Tên dự án không được để trống'}), 400
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    p_dir, i_dir = ensure_project_structure(safe_name)
+    matcher = get_face_matcher()
+    if matcher:
+        matcher.reload_portraits()
+    return jsonify({'success': True, 'project': safe_name})
+
+@app.route('/api/projects/rename', methods=['POST'])
+def rename_project():
+    """Đổi tên dự án"""
+    data = request.json or {}
+    old_name = data.get('old_name', '').strip()
+    new_name = data.get('new_name', '').strip()
+    if not old_name or not new_name:
+        return jsonify({'error': 'Tên dự án không hợp lệ'}), 400
+    safe_old = re.sub(r'[<>:"/\\|?*]', '_', old_name)
+    safe_new = re.sub(r'[<>:"/\\|?*]', '_', new_name)
+    
+    old_p = os.path.join(PORTRAIT_DIR, safe_old)
+    new_p = os.path.join(PORTRAIT_DIR, safe_new)
+    if os.path.exists(old_p):
+        os.rename(old_p, new_p)
+        
+    old_i = os.path.join(INPUT_IMAGES_DIR, safe_old)
+    new_i = os.path.join(INPUT_IMAGES_DIR, safe_new)
+    if os.path.exists(old_i):
+        os.rename(old_i, new_i)
+        
+    matcher = get_face_matcher()
+    if matcher:
+        matcher.reload_portraits()
+    return jsonify({'success': True, 'name': safe_new})
+
+@app.route('/api/projects/delete', methods=['POST'])
+def delete_project():
+    """Xóa dự án"""
+    data = request.json or {}
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Tên dự án không hợp lệ'}), 400
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    p_dir = os.path.join(PORTRAIT_DIR, safe_name)
+    i_dir = os.path.join(INPUT_IMAGES_DIR, safe_name)
+    
+    force = data.get('force', False)
+    has_content = False
+    if os.path.exists(p_dir) and os.listdir(p_dir):
+        has_content = True
+    if os.path.exists(i_dir) and os.listdir(i_dir):
+        has_content = True
+    if has_content and not force:
+        return jsonify({'error': 'Dự án này đang có dữ liệu nhân viên/ảnh camera. Vui lòng chuyển nhân viên hoặc xóa ảnh trước khi xóa dự án'}), 400
+        
+    if os.path.exists(p_dir):
+        shutil.rmtree(p_dir, ignore_errors=True)
+    if os.path.exists(i_dir):
+        shutil.rmtree(i_dir, ignore_errors=True)
+        
+    matcher = get_face_matcher()
+    if matcher:
+        matcher.reload_portraits()
+    return jsonify({'success': True})
+
+# ---------- API: ẢNH CAMERA THEO NGÀY ----------
+
+@app.route('/api/photos/daily', methods=['GET'])
+def get_daily_photo_stats():
+    """Lấy danh sách 31 ngày kèm số ảnh camera của dự án (hỗ trợ cả dạng '01' và 'YYYY-MM-01')"""
+    project = request.args.get('project', DEFAULT_PROJECT_NAME).strip()
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
+    proj_dir = os.path.join(INPUT_IMAGES_DIR, safe_proj)
+    days_data = []
+
+    subdirs = []
+    if os.path.exists(proj_dir):
+        subdirs = [d for d in os.listdir(proj_dir) if os.path.isdir(os.path.join(proj_dir, d))]
+
+    for d in range(1, 32):
+        d_str = f"{d:02d}"
+        matching_dirs = [os.path.join(proj_dir, sd) for sd in subdirs if sd == d_str or sd.endswith(f"-{d_str}") or sd.startswith(f"{d_str}-")]
+        if not matching_dirs:
+            if os.path.exists(os.path.join(INPUT_IMAGES_DIR, d_str)):
+                matching_dirs.append(os.path.join(INPUT_IMAGES_DIR, d_str))
+
+        counted_files = set()
+        for md in matching_dirs:
+            if os.path.exists(md):
+                for f in os.listdir(md):
+                    if os.path.splitext(f)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                        counted_files.add(f)
+
+        days_data.append({
+            'day': d_str,
+            'image_count': len(counted_files),
+            'has_images': len(counted_files) > 0
+        })
+    return jsonify({'success': True, 'project': project, 'days': days_data})
+
+@app.route('/api/photos/daily/<day>', methods=['GET'])
+def get_daily_photos(day):
+    """Lấy danh sách ảnh camera của 1 ngày trong dự án (hỗ trợ cả dạng '01' và 'YYYY-MM-01')"""
+    project = request.args.get('project', DEFAULT_PROJECT_NAME).strip()
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
+    day_str = str(day).zfill(2)
+    proj_dir = os.path.join(INPUT_IMAGES_DIR, safe_proj)
+
+    matching_dirs = []
+    if os.path.exists(proj_dir):
+        for sd in os.listdir(proj_dir):
+            if os.path.isdir(os.path.join(proj_dir, sd)):
+                if sd == day_str or sd.endswith(f"-{day_str}") or sd.startswith(f"{day_str}-"):
+                    matching_dirs.append(os.path.join(proj_dir, sd))
+
+    if not matching_dirs and os.path.exists(os.path.join(INPUT_IMAGES_DIR, day_str)):
+        matching_dirs.append(os.path.join(INPUT_IMAGES_DIR, day_str))
+
+    photos = []
+    seen_filenames = set()
+    for md in matching_dirs:
+        for f in sorted(os.listdir(md)):
+            ext = os.path.splitext(f)[1].lower()
+            if ext in SUPPORTED_IMAGE_EXTENSIONS and f not in seen_filenames:
+                seen_filenames.add(f)
+                f_path = os.path.join(md, f)
+                size_kb = round(os.path.getsize(f_path) / 1024, 1)
+                photos.append({
+                    'filename': f,
+                    'size_kb': size_kb,
+                    'url': f"/api/photos/view/daily?project={safe_proj}&day={day_str}&filename={f}"
+                })
+    return jsonify({'success': True, 'project': project, 'day': day_str, 'photos': photos, 'total': len(photos)})
+
+@app.route('/api/photos/daily/upload', methods=['POST'])
+def upload_daily_photos():
+    """Tải lên nhiều ảnh camera vào 1 ngày của dự án"""
+    project = request.form.get('project', DEFAULT_PROJECT_NAME).strip()
+    day = request.form.get('day', '01').strip()
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
+    day_str = str(day).zfill(2)
+    
+    target_dir = os.path.join(INPUT_IMAGES_DIR, safe_proj, day_str)
+    os.makedirs(target_dir, exist_ok=True)
+    
+    files = request.files.getlist('files') or request.files.getlist('photos')
+    if not files and 'file' in request.files:
+        files = [request.files['file']]
+            
+    if not files:
+        return jsonify({'error': 'Không có file ảnh nào được gửi lên'}), 400
+        
+    saved_count = 0
+    for f in files:
+        if not f.filename:
+            continue
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext in SUPPORTED_IMAGE_EXTENSIONS:
+            safe_filename = re.sub(r'[<>:"/\\|?*]', '_', f.filename)
+            save_path = os.path.join(target_dir, safe_filename)
+            f.save(save_path)
+            saved_count += 1
+            
+    return jsonify({'success': True, 'saved_count': saved_count, 'day': day_str, 'project': project})
+
+@app.route('/api/photos/daily/delete', methods=['POST'])
+def delete_daily_photo():
+    """Xóa 1 ảnh hoặc xóa toàn bộ ảnh của ngày (hỗ trợ cả dạng '01' và 'YYYY-MM-01')"""
+    data = request.json or {}
+    project = data.get('project', DEFAULT_PROJECT_NAME).strip()
+    day = str(data.get('day', '01')).zfill(2)
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
+    filename = data.get('filename')
+    delete_all = data.get('delete_all', False)
+    
+    # Tìm tất cả thư mục khớp với ngày (giống get_daily_photos)
+    proj_dir = os.path.join(INPUT_IMAGES_DIR, safe_proj)
+    matching_dirs = []
+    if os.path.exists(proj_dir):
+        for sd in os.listdir(proj_dir):
+            if os.path.isdir(os.path.join(proj_dir, sd)):
+                if sd == day or sd.endswith(f"-{day}") or sd.startswith(f"{day}-"):
+                    matching_dirs.append(os.path.join(proj_dir, sd))
+    
+    if not matching_dirs and os.path.exists(os.path.join(INPUT_IMAGES_DIR, day)):
+        matching_dirs.append(os.path.join(INPUT_IMAGES_DIR, day))
+        
+    if not matching_dirs:
+        return jsonify({'success': True})
+        
+    if delete_all:
+        deleted_count = 0
+        for d_path in matching_dirs:
+            for f in os.listdir(d_path):
+                if os.path.splitext(f)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                    try:
+                        os.remove(os.path.join(d_path, f))
+                        deleted_count += 1
+                    except Exception:
+                        pass
+        return jsonify({'success': True, 'message': f'Đã xóa toàn bộ {deleted_count} ảnh ngày {day}'})
+    elif filename:
+        for d_path in matching_dirs:
+            file_path = os.path.join(d_path, filename)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                return jsonify({'success': True, 'message': f'Đã xóa ảnh {filename}'})
+        return jsonify({'success': True, 'message': f'Ảnh {filename} không tồn tại'})
+    return jsonify({'error': 'Yêu cầu không hợp lệ'}), 400
+
+# ---------- API: ẢNH CHÂN DUNG NHÂN VIÊN & THUYÊN CHUYỂN ----------
+
+@app.route('/api/portraits', methods=['GET'])
+def get_employees_portraits():
+    """Lấy danh sách nhân viên và ảnh chân dung theo dự án"""
+    project = request.args.get('project', DEFAULT_PROJECT_NAME).strip()
+    search = request.args.get('search', '').strip().lower()
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
+    proj_dir = os.path.join(PORTRAIT_DIR, safe_proj)
+    
+    employees = []
+    if os.path.exists(proj_dir):
+        for item in os.listdir(proj_dir):
+            item_path = os.path.join(proj_dir, item)
+            if os.path.isdir(item_path):
+                emp_name = item
+                if search and search not in emp_name.lower():
+                    continue
+                imgs = [
+                    f for f in sorted(os.listdir(item_path))
+                    if os.path.splitext(f)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS
+                ]
+                avatar_url = ""
+                if imgs:
+                    avatar_url = f"/api/photos/view/portrait?project={safe_proj}&person={emp_name}&filename={imgs[0]}"
+                employees.append({
+                    'name': emp_name,
+                    'project': project,
+                    'image_count': len(imgs),
+                    'images': imgs,
+                    'avatar_url': avatar_url
+                })
+            elif os.path.splitext(item)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                emp_name = os.path.splitext(item)[0]
+                if search and search not in emp_name.lower():
+                    continue
+                avatar_url = f"/api/photos/view/portrait?project={safe_proj}&person=&filename={item}"
+                employees.append({
+                    'name': emp_name,
+                    'project': project,
+                    'image_count': 1,
+                    'images': [item],
+                    'avatar_url': avatar_url
+                })
+    employees.sort(key=lambda x: x['name'])
+    return jsonify({'success': True, 'project': project, 'employees': employees, 'total': len(employees)})
+
+@app.route('/api/portraits/employee/create', methods=['POST'])
+def create_employee():
+    """Thêm nhân viên mới vào dự án"""
+    data = request.json or {}
+    project = data.get('project', DEFAULT_PROJECT_NAME).strip()
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Tên nhân viên không được để trống'}), 400
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    emp_dir = os.path.join(PORTRAIT_DIR, safe_proj, safe_name)
+    os.makedirs(emp_dir, exist_ok=True)
+    matcher = get_face_matcher()
+    if matcher:
+        matcher.reload_portraits()
+    return jsonify({'success': True, 'name': safe_name, 'project': safe_proj})
+
+@app.route('/api/portraits/employee/upload', methods=['POST'])
+def upload_employee_photos():
+    """Tải lên ảnh chân dung cho nhân viên"""
+    project = request.form.get('project', DEFAULT_PROJECT_NAME).strip()
+    name = request.form.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Tên nhân viên không hợp lệ'}), 400
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    emp_dir = os.path.join(PORTRAIT_DIR, safe_proj, safe_name)
+    os.makedirs(emp_dir, exist_ok=True)
+    
+    files = request.files.getlist('files') or request.files.getlist('photos')
+    if not files and 'file' in request.files:
+        files = [request.files['file']]
+    if not files:
+        return jsonify({'error': 'Không có file ảnh nào được gửi lên'}), 400
+        
+    saved = []
+    for f in files:
+        if not f.filename:
+            continue
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext in SUPPORTED_IMAGE_EXTENSIONS:
+            safe_fname = re.sub(r'[<>:"/\\|?*]', '_', f.filename)
+            save_path = os.path.join(emp_dir, safe_fname)
+            f.save(save_path)
+            saved.append(safe_fname)
+            
+    matcher = get_face_matcher()
+    if matcher:
+        matcher.reload_portraits()
+    return jsonify({'success': True, 'saved_count': len(saved), 'files': saved})
+
+@app.route('/api/portraits/employee/delete-photo', methods=['POST'])
+def delete_employee_photo():
+    """Xóa 1 ảnh chân dung của nhân viên"""
+    data = request.json or {}
+    project = data.get('project', DEFAULT_PROJECT_NAME).strip()
+    name = data.get('name', '').strip()
+    filename = data.get('filename', '').strip()
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    
+    p_path = os.path.join(PORTRAIT_DIR, safe_proj, safe_name, filename)
+    if os.path.exists(p_path):
+        os.remove(p_path)
+    matcher = get_face_matcher()
+    if matcher:
+        matcher.reload_portraits()
+    return jsonify({'success': True})
+
+@app.route('/api/portraits/employee/delete', methods=['POST'])
+def delete_employee():
+    """Xóa nhân viên và toàn bộ ảnh chân dung"""
+    data = request.json or {}
+    project = data.get('project', DEFAULT_PROJECT_NAME).strip()
+    name = data.get('name', '').strip()
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    
+    emp_dir = os.path.join(PORTRAIT_DIR, safe_proj, safe_name)
+    if os.path.exists(emp_dir):
+        shutil.rmtree(emp_dir, ignore_errors=True)
+    matcher = get_face_matcher()
+    if matcher:
+        matcher.reload_portraits()
+    return jsonify({'success': True})
+
+@app.route('/api/portraits/employee/transfer', methods=['POST'])
+def transfer_employee():
+    """Thuyên chuyển nhân viên từ dự án này sang dự án khác"""
+    data = request.json or {}
+    source_proj = data.get('source_project', '').strip()
+    target_proj = data.get('target_project', '').strip()
+    name = data.get('name', '').strip()
+    
+    if not source_proj or not target_proj or not name:
+        return jsonify({'error': 'Thông tin thuyên chuyển không đầy đủ'}), 400
+        
+    if source_proj == target_proj:
+        return jsonify({'error': 'Dự án đích phải khác dự án nguồn'}), 400
+        
+    safe_source = re.sub(r'[<>:"/\\|?*]', '_', source_proj)
+    safe_target = re.sub(r'[<>:"/\\|?*]', '_', target_proj)
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    
+    src_dir = os.path.join(PORTRAIT_DIR, safe_source, safe_name)
+    dst_proj_dir = os.path.join(PORTRAIT_DIR, safe_target)
+    dst_dir = os.path.join(dst_proj_dir, safe_name)
+    
+    if not os.path.exists(src_dir):
+        return jsonify({'error': f'Không tìm thấy nhân viên {name} trong dự án {source_proj}'}), 404
+        
+    os.makedirs(dst_proj_dir, exist_ok=True)
+    
+    if not os.path.exists(dst_dir):
+        shutil.move(src_dir, dst_dir)
+    else:
+        for f in os.listdir(src_dir):
+            s_file = os.path.join(src_dir, f)
+            d_file = os.path.join(dst_dir, f)
+            if not os.path.exists(d_file):
+                shutil.move(s_file, d_file)
+        shutil.rmtree(src_dir, ignore_errors=True)
+        
+    matcher = get_face_matcher()
+    if matcher:
+        matcher.reload_portraits()
+        
+    return jsonify({
+        'success': True,
+        'message': f'Đã thuyên chuyển nhân viên {name} từ {source_proj} sang {target_proj}'
+    })
+
+# ---------- API: PHỤC VỤ XEM ẢNH AN TOÀN UTF-8 ----------
+
+@app.route('/api/photos/view/portrait')
+def view_portrait_photo():
+    """Xem ảnh chân dung an toàn với tên tiếng Việt"""
+    project = request.args.get('project', '').strip()
+    person = request.args.get('person', '').strip()
+    filename = request.args.get('filename', '').strip()
+    if not filename:
+        return "File not found", 404
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project) if project else ''
+    safe_person = re.sub(r'[<>:"/\\|?*]', '_', person) if person else ''
+    
+    if safe_person:
+        file_path = os.path.join(PORTRAIT_DIR, safe_proj, safe_person, filename)
+    elif safe_proj:
+        file_path = os.path.join(PORTRAIT_DIR, safe_proj, filename)
+    else:
+        file_path = os.path.join(PORTRAIT_DIR, filename)
+        
+    if not os.path.exists(file_path):
+        file_path = os.path.join(PORTRAIT_DIR, safe_person, filename)
+        
+    if os.path.exists(file_path):
+        return send_file(os.path.abspath(file_path))
+    return "Not found", 404
+
+@app.route('/api/photos/view/daily')
+def view_daily_photo():
+    """Xem ảnh camera theo ngày an toàn với tên tiếng Việt"""
+    project = request.args.get('project', '').strip()
+    day = str(request.args.get('day', '')).zfill(2)
+    filename = request.args.get('filename', '').strip()
+    if not filename:
+        return "File not found", 404
+    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project) if project else ''
+    
+    file_path = os.path.join(INPUT_IMAGES_DIR, safe_proj, day, filename)
+    if not os.path.exists(file_path):
+        proj_dir = os.path.join(INPUT_IMAGES_DIR, safe_proj)
+        if os.path.exists(proj_dir):
+            for sd in os.listdir(proj_dir):
+                if sd == day or sd.endswith(f"-{day}") or sd.startswith(f"{day}-"):
+                    candidate = os.path.join(proj_dir, sd, filename)
+                    if os.path.exists(candidate):
+                        file_path = candidate
+                        break
+    if not os.path.exists(file_path):
+        file_path = os.path.join(INPUT_IMAGES_DIR, day, filename)
+        
+    if os.path.exists(file_path):
+        return send_file(os.path.abspath(file_path))
+    return "Not found", 404
 
 # ==================== API: ATTENDANCE ====================
 
-# ÄÆ°á»ng dáº«n cho attendance
+# Đường dẫn cho attendance
 
 @app.route('/api/attendance/analyze', methods=['POST'])
 def analyze_attendance():
-    """PhÃ¢n tÃ­ch file cháº¥m cÃ´ng vÃ  tÃ¬m cÃ¡c báº£n ghi thiáº¿u"""
+    """Phân tích file chấm công và tìm các bản ghi thiếu"""
     try:
         from src.attendance_processor import AttendanceProcessor
         
@@ -760,16 +1328,16 @@ def analyze_attendance():
 
 @app.route('/api/attendance/export', methods=['POST'])
 def export_attendance():
-    """Xuáº¥t file Word giáº£i trÃ¬nh vá»›i áº£nh"""
+    """Xuất file Word giải trình với ảnh"""
     try:
         from src.attendance_processor import AttendanceProcessor
         from src.word_exporter import WordExporter
         
         data = request.json or {}
-        project_name = data.get('project_name', 'Chung cÆ° TÃ¢n Thuáº­n ÄÃ´ng')
+        project_name = data.get('project_name', 'Chung cư Tân Thuận Đông')
         month = data.get('month', None)
         
-        # Xá»­ lÃ½ cháº¥m cÃ´ng
+        # Xử lý chấm công
         processor = AttendanceProcessor(CHAMCONG_DIR)
         processor.scan_all_files()
         missing = processor.get_missing_records()
@@ -777,17 +1345,17 @@ def export_attendance():
         if not missing:
             return jsonify({
                 'success': True,
-                'message': 'KhÃ´ng cÃ³ báº£n ghi thiáº¿u cáº§n giáº£i trÃ¬nh',
+                'message': 'Không có bản ghi thiếu cần giải trình',
                 'output_file': None
             })
         
-        # Xuáº¥t Word
+        # Xuất Word
         exporter = WordExporter(PORTRAIT_DIR, RESULTS_DIR)
         output_file = exporter.create_summary_document(missing, project_name, month)
         
         return jsonify({
             'success': True,
-            'message': f'ÄÃ£ xuáº¥t {len(missing)} báº£n ghi thiáº¿u',
+            'message': f'Đã xuất {len(missing)} bản ghi thiếu',
             'output_file': os.path.basename(output_file),
             'total_missing': len(missing)
         })
@@ -797,7 +1365,7 @@ def export_attendance():
 
 @app.route('/api/attendance/portraits')
 def get_portrait_stats():
-    """Thá»‘ng kÃª áº£nh chÃ¢n dung"""
+    """Thống kê ảnh chân dung"""
     try:
         from src.word_exporter import WordExporter
         
@@ -849,28 +1417,28 @@ def get_face_matcher():
 
 @app.route('/api/analyze-full', methods=['POST'])
 def analyze_full():
-    """PhÃ¢n tÃ­ch tá»•ng há»£p: tÃ¬m ngÃ y thiáº¿u + match áº£nh camera báº±ng nháº­n diá»‡n khuÃ´n máº·t"""
+    """Phân tích tổng hợp: tìm ngày thiếu + match ảnh camera bằng nhận diện khuôn mặt"""
     try:
         from src.attendance_processor import AttendanceProcessor
         
-        # Step 1: PhÃ¢n tÃ­ch cháº¥m cÃ´ng
-        send_log("ðŸ“‚ Step 1: Äang phÃ¢n tÃ­ch file cháº¥m cÃ´ng...", "info")
+        # Step 1: Phân tích chấm công
+        send_log(" Step 1: Đang phân tích file chấm công...", "info")
         processor = AttendanceProcessor(CHAMCONG_DIR)
         processor.scan_all_files()
         missing_records = processor.get_missing_records()
         summary = processor.get_summary()
-        send_log(f"ðŸ“‹ TÃ¬m tháº¥y {len(missing_records)} báº£n ghi thiáº¿u tá»« {summary.get('total_persons', 0)} ngÆ°á»i", "info")
+        send_log(f" Tìm thấy {len(missing_records)} bản ghi thiếu từ {summary.get('total_persons', 0)} người", "info")
         
-        # Step 2: Khá»Ÿi táº¡o face matcher
-        send_log("ðŸ”§ Step 2: Äang khá»Ÿi táº¡o Face Matcher...", "info")
+        # Step 2: Khởi tạo face matcher
+        send_log(" Step 2: Đang khởi tạo Face Matcher...", "info")
         matcher = get_face_matcher()
         if matcher:
-            send_log("âœ… Face Matcher Ä‘Ã£ sáºµn sÃ ng", "success")
+            send_log(" Face Matcher đã sẵn sàng", "success")
         else:
-            send_log("âš ï¸ Face Matcher khÃ´ng kháº£ dá»¥ng, sáº½ dÃ¹ng fallback", "warning")
+            send_log(" Face Matcher không khả dụng, sẽ dùng fallback", "warning")
         
-        # Step 3: Match áº£nh camera cho má»—i báº£n ghi thiáº¿u
-        send_log(f"ðŸ” Step 3: Báº¯t Ä‘áº§u matching áº£nh cho {len(missing_records)} báº£n ghi...", "info")
+        # Step 3: Match ảnh camera cho mỗi bản ghi thiếu
+        send_log(f" Step 3: Bắt đầu matching ảnh cho {len(missing_records)} bản ghi...", "info")
         matched_count = 0
         
         for i, record in enumerate(missing_records):
@@ -878,37 +1446,37 @@ def analyze_full():
             day = date_str.split('/')[0].zfill(2)  # extract dd
             person_name = record['person_name']
             
-            # TÃ¬m thÆ° má»¥c ngÃ y tÆ°Æ¡ng á»©ng
+            # Tìm thư mục ngày tương ứng
             day_folder = os.path.join(INPUT_IMAGES_DIR, day)
             
             record['matched_image'] = None
             
             if os.path.exists(day_folder):
                 images = get_image_files(day_folder)
-                send_log(f"  [{i+1}/{len(missing_records)}] {person_name} (ngÃ y {day}): TÃ¬m tháº¥y {len(images)} áº£nh trong thÆ° má»¥c", "default")
+                send_log(f"  [{i+1}/{len(missing_records)}] {person_name} (ngày {day}): Tìm thấy {len(images)} ảnh trong thư mục", "default")
                 
                 if images and matcher:
-                    # DÃ¹ng face recognition Ä‘á»ƒ tÃ¬m áº£nh match
+                    # Dùng face recognition để tìm ảnh match
                     try:
                         matched_image = matcher.match_face_in_images(person_name, images)
                         if matched_image:
                             record['matched_image'] = matched_image
                             matched_count += 1
-                            send_log(f"  [{i+1}/{len(missing_records)}] âœ“ {person_name} -> {os.path.basename(matched_image)}", "success")
+                            send_log(f"  [{i+1}/{len(missing_records)}] ✓ {person_name} -> {os.path.basename(matched_image)}", "success")
                         else:
-                            send_log(f"  [{i+1}/{len(missing_records)}] âŒ {person_name}: KhÃ´ng tÃ¬m tháº¥y áº£nh match", "warning")
+                            send_log(f"  [{i+1}/{len(missing_records)}]  {person_name}: Không tìm thấy ảnh match", "warning")
                     except Exception as match_err:
-                        send_log(f"  [{i+1}/{len(missing_records)}] âŒ {person_name}: Lá»—i matcher ({match_err})", "error")
+                        send_log(f"  [{i+1}/{len(missing_records)}]  {person_name}: Lỗi matcher ({match_err})", "error")
                 elif images:
-                    send_log(f"  [{i+1}/{len(missing_records)}] âš ï¸ {person_name}: FaceMatcher chÆ°a sáºµn sÃ ng, bá» qua", "warning")
+                    send_log(f"  [{i+1}/{len(missing_records)}]  {person_name}: FaceMatcher chưa sẵn sàng, bỏ qua", "warning")
                 else:
-                    send_log(f"  [{i+1}/{len(missing_records)}] âš ï¸ ThÆ° má»¥c {day} rá»—ng", "warning")
+                    send_log(f"  [{i+1}/{len(missing_records)}]  Thư mục {day} rỗng", "warning")
             else:
-                send_log(f"  [{i+1}/{len(missing_records)}] âŒ KhÃ´ng tÃ¬m tháº¥y thÆ° má»¥c: {day_folder}", "error")
+                send_log(f"  [{i+1}/{len(missing_records)}]  Không tìm thấy thư mục: {day_folder}", "error")
                 record['matched_image'] = None
         
         summary['total_matched'] = matched_count
-        send_log(f"ðŸŽ‰ HoÃ n thÃ nh! Matched {matched_count}/{len(missing_records)} báº£n ghi", "success")
+        send_log(f" Hoàn thành! Matched {matched_count}/{len(missing_records)} bản ghi", "success")
         
         return jsonify({
             'success': True,
@@ -917,95 +1485,95 @@ def analyze_full():
         })
     except Exception as e:
         import traceback
-        send_log(f"âŒ Lá»—i: {e}", "error")
+        send_log(f" Lỗi: {e}", "error")
         return jsonify({'success': False, 'error': str(e), 'trace': traceback.format_exc()}), 500
 
 @app.route('/matched-image/<path:filepath>')
 def serve_matched_image(filepath):
-    """Serve áº£nh Ä‘Ã£ match"""
-    # Decode URL path náº¿u cáº§n
+    """Serve ảnh đã match"""
+    # Decode URL path nếu cần
     import urllib.parse
     filepath = urllib.parse.unquote(filepath)
     
-    # Thá»­ vá»›i Ä‘Æ°á»ng dáº«n nguyÃªn gá»‘c
+    # Thử với đường dẫn nguyên gốc
     if os.path.exists(filepath):
         return send_file(filepath)
     
-    # Thá»­ vá»›i Ä‘Æ°á»ng dáº«n tuyá»‡t Ä‘á»‘i tá»« BASE_DIR
+    # Thử với đường dẫn tuyệt đối từ BASE_DIR
     abs_path = os.path.join(BASE_DIR, filepath)
     if os.path.exists(abs_path):
         return send_file(abs_path)
     
-    # Thá»­ thay tháº¿ backslash/forward slash
+    # Thử thay thế backslash/forward slash
     filepath_fixed = filepath.replace('/', os.sep).replace('\\', os.sep)
     abs_path_fixed = os.path.join(BASE_DIR, filepath_fixed)
     if os.path.exists(abs_path_fixed):
         return send_file(abs_path_fixed)
     
-    print(f"[serve_matched_image] File khÃ´ng tá»“n táº¡i:")
+    print(f"[serve_matched_image] File không tồn tại:")
     print(f"  filepath: {filepath}")
     print(f"  abs_path: {abs_path}")
     print(f"  abs_path_fixed: {abs_path_fixed}")
     print(f"  BASE_DIR: {BASE_DIR}")
     
-    return jsonify({'error': 'File khÃ´ng tá»“n táº¡i', 'filepath': filepath}), 404
+    return jsonify({'error': 'File không tồn tại', 'filepath': filepath}), 404
 
 @app.route('/api/export-word', methods=['POST'])
 def export_word():
-    """Xuáº¥t file Word vá»›i áº£nh camera Ä‘Ã£ match"""
+    """Xuất file Word với ảnh camera đã match"""
     try:
         from docx import Document
         from docx.shared import Inches, Cm
         
         data = request.json or {}
-        project_name = data.get('project_name', 'Chung cÆ° TÃ¢n Thuáº­n ÄÃ´ng')
+        project_name = data.get('project_name', 'Chung cư Tân Thuận Đông')
         month = data.get('month', '')
         records = data.get('records', [])
         
         if not records:
-            return jsonify({'success': False, 'error': 'KhÃ´ng cÃ³ dá»¯ liá»‡u Ä‘á»ƒ xuáº¥t'})
+            return jsonify({'success': False, 'error': 'Không có dữ liệu để xuất'})
         
-        # Táº¡o document
+        # Tạo document
         doc = Document()
         
-        # TiÃªu Ä‘á»
+        # Tiêu đề
         title = doc.add_paragraph()
-        title.add_run(f'GIáº¢I TRÃŒNH CHáº¤M CÃ”NG - {project_name}').bold = True
+        title.add_run(f'GIẢI TRÌNH CHẤM CÔNG - {project_name}').bold = True
         title.alignment = 1  # Center
         
-        doc.add_paragraph(f'ThÃ¡ng: {month}')
+        doc.add_paragraph(f'Tháng: {month}')
         doc.add_paragraph()
         
-        # Táº¡o báº£ng
+        # Tạo bảng
         table = doc.add_table(rows=1, cols=5)
         table.style = 'Table Grid'
         
         # Header
-        headers = ['TÃŠN', 'NGÃ€Y', 'GIáº¢I TRÃŒNH', 'HÃŒNH áº¢NH', 'GHI CHÃš']
+        headers = ['TÊN', 'NGÀY', 'GIẢI TRÌNH', 'HÌNH ẢNH', 'GHI CHÚ']
         for i, header in enumerate(headers):
             table.rows[0].cells[i].text = header
         
-        # ThÃªm dá»¯ liá»‡u
+        # Thêm dữ liệu
         for record in records:
             row = table.add_row()
             row.cells[0].text = record.get('person_name', '')
             row.cells[1].text = record.get('date', '')
-            row.cells[2].text = record.get('issue_description', 'NhÃ¢n viÃªn cÃ³ trá»±c, bá»• sung')
+            row.cells[2].text = record.get('issue_description', 'Nhân viên có trực, bổ sung')
             
-            # ThÃªm áº£nh náº¿u cÃ³
+            # Thêm ảnh nếu có
             matched_image = record.get('matched_image')
             if matched_image and os.path.exists(matched_image):
                 try:
                     run = row.cells[3].paragraphs[0].add_run()
                     run.add_picture(matched_image, width=Cm(3))
                 except Exception:
-                    row.cells[3].text = '[Lá»—i áº£nh]'
+                    row.cells[3].text = '[Lỗi ảnh]'
             else:
-                row.cells[3].text = '[KhÃ´ng cÃ³ áº£nh]'
+                row.cells[3].text = '[Không có ảnh]'
             
             row.cells[4].text = ''
         
-        # LÆ°u file
+        # Lưu file
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"GIAI_TRINH_{project_name.replace(' ', '_')}_{timestamp}.docx"
         output_path = os.path.join(RESULTS_DIR, filename)
@@ -1029,33 +1597,63 @@ try:
 except ImportError:
     PDF_EXTRACTOR_AVAILABLE = False
 
-# ThÆ° má»¥c cho PDF
+# Thư mục cho PDF
 PDF_UPLOAD_DIR = os.path.join(BASE_DIR, "pdf_uploads")
 PDF_OUTPUT_DIR = os.path.join(BASE_DIR, "pdf_extracted")
+PDF_FACE_OUTPUT_DIR = os.path.join(BASE_DIR, "pdf_face_output")
 os.makedirs(PDF_UPLOAD_DIR, exist_ok=True)
 os.makedirs(PDF_OUTPUT_DIR, exist_ok=True)
+os.makedirs(PDF_FACE_OUTPUT_DIR, exist_ok=True)
+
+pdf_face_tasks = {}
+
+
+class PDFFaceTask:
+    def __init__(self, task_id):
+        self.task_id = task_id
+        self.status = 'pending'
+        self.progress = 0
+        self.total = 0
+        self.current = ''
+        self.files = []
+        self.errors = []
+        self.start_time = None
+        self.end_time = None
+
+    def to_dict(self):
+        return {
+            'task_id': self.task_id,
+            'status': self.status,
+            'progress': self.progress,
+            'total': self.total,
+            'current': self.current,
+            'files': self.files,
+            'errors': self.errors,
+            'start_time': self.start_time.isoformat() if self.start_time else None,
+            'end_time': self.end_time.isoformat() if self.end_time else None,
+        }
 
 @app.route('/api/pdf/check')
 def pdf_check_available():
-    """Kiá»ƒm tra xem tÃ­nh nÄƒng PDF cÃ³ sáºµn khÃ´ng"""
+    """Kiểm tra xem tính năng PDF có sẵn không"""
     available = PDF_EXTRACTOR_AVAILABLE and pdf_extractor.is_available()
     return jsonify({
         'available': available,
-        'message': 'Sáºµn sÃ ng' if available else 'Cáº§n cÃ i Ä‘áº·t: pip install pdf2docx PyMuPDF python-docx'
+        'message': 'Sẵn sàng' if available else 'Cần cài đặt: pip install pdf2docx PyMuPDF python-docx'
     })
 
 @app.route('/api/pdf/upload', methods=['POST'])
 def pdf_upload():
     """Upload file PDF"""
     if 'file' not in request.files:
-        return jsonify({'success': False, 'error': 'KhÃ´ng cÃ³ file Ä‘Æ°á»£c upload'}), 400
+        return jsonify({'success': False, 'error': 'Không có file được upload'}), 400
     
     file = request.files['file']
     if not file.filename:
-        return jsonify({'success': False, 'error': 'TÃªn file khÃ´ng há»£p lá»‡'}), 400
+        return jsonify({'success': False, 'error': 'Tên file không hợp lệ'}), 400
     
     if not file.filename.lower().endswith('.pdf'):
-        return jsonify({'success': False, 'error': 'Chá»‰ cháº¥p nháº­n file PDF'}), 400
+        return jsonify({'success': False, 'error': 'Chỉ chấp nhận file PDF'}), 400
     
     filename = secure_filename(file.filename)
     filepath = os.path.join(PDF_UPLOAD_DIR, filename)
@@ -1070,53 +1668,53 @@ def pdf_upload():
 
 @app.route('/api/pdf/extract', methods=['POST'])
 def pdf_extract():
-    """Báº¯t Ä‘áº§u tÃ¡ch PDF thÃ nh cÃ¡c file Word"""
+    """Bắt đầu tách PDF thành các file Word"""
     if not PDF_EXTRACTOR_AVAILABLE or not pdf_extractor.is_available():
         return jsonify({
             'success': False, 
-            'error': 'PDF Extractor khÃ´ng kháº£ dá»¥ng. Cáº§n cÃ i Ä‘áº·t: pip install pdf2docx PyMuPDF python-docx'
+            'error': 'PDF Extractor không khả dụng. Cần cài đặt: pip install pdf2docx PyMuPDF python-docx'
         }), 400
     
     data = request.json or {}
     filename = data.get('filename')
     
     if not filename:
-        return jsonify({'success': False, 'error': 'Thiáº¿u tÃªn file'}), 400
+        return jsonify({'success': False, 'error': 'Thiếu tên file'}), 400
     
     filepath = os.path.join(PDF_UPLOAD_DIR, secure_filename(filename))
     
     if not os.path.exists(filepath):
-        return jsonify({'success': False, 'error': 'File PDF khÃ´ng tá»“n táº¡i'}), 404
+        return jsonify({'success': False, 'error': 'File PDF không tồn tại'}), 404
     
-    # Táº¡o thÆ° má»¥c output riÃªng cho file nÃ y
+    # Tạo thư mục output riêng cho file này
     base_name = os.path.splitext(filename)[0]
     output_dir = os.path.join(PDF_OUTPUT_DIR, base_name)
     
-    # Báº¯t Ä‘áº§u task trong background
+    # Bắt đầu task trong background
     task_id = pdf_extractor.start_extraction_task(filepath, output_dir)
     
     return jsonify({
         'success': True,
         'task_id': task_id,
-        'message': 'ÄÃ£ báº¯t Ä‘áº§u tÃ¡ch PDF',
+        'message': 'Đã bắt đầu tách PDF',
         'output_dir': output_dir
     })
 
 @app.route('/api/pdf/status/<task_id>')
 def pdf_status(task_id):
-    """Kiá»ƒm tra tiáº¿n Ä‘á»™ tÃ¡ch PDF"""
+    """Kiểm tra tiến độ tách PDF"""
     if not PDF_EXTRACTOR_AVAILABLE:
-        return jsonify({'error': 'PDF Extractor khÃ´ng kháº£ dá»¥ng'}), 400
+        return jsonify({'error': 'PDF Extractor không khả dụng'}), 400
     
     task = pdf_extractor.get_task(task_id)
     if not task:
-        return jsonify({'error': 'Task khÃ´ng tá»“n táº¡i'}), 404
+        return jsonify({'error': 'Task không tồn tại'}), 404
     
     return jsonify(task.to_dict())
 
 @app.route('/api/pdf/files')
 def pdf_list_files():
-    """Liá»‡t kÃª cÃ¡c file Word Ä‘Ã£ tÃ¡ch"""
+    """Liệt kê các file Word đã tách"""
     files = []
     
     if os.path.exists(PDF_OUTPUT_DIR):
@@ -1139,11 +1737,11 @@ def pdf_list_files():
 
 @app.route('/api/pdf/files/<folder>')
 def pdf_list_folder_files(folder):
-    """Liá»‡t kÃª cÃ¡c file Word trong má»™t thÆ° má»¥c"""
+    """Liệt kê các file Word trong một thư mục"""
     folder_path = os.path.join(PDF_OUTPUT_DIR, secure_filename(folder))
     
     if not os.path.exists(folder_path):
-        return jsonify({'error': 'ThÆ° má»¥c khÃ´ng tá»“n táº¡i'}), 404
+        return jsonify({'error': 'Thư mục không tồn tại'}), 404
     
     files = pdf_extractor.list_extracted_files(folder_path) if PDF_EXTRACTOR_AVAILABLE else []
     
@@ -1156,29 +1754,29 @@ def pdf_list_folder_files(folder):
 
 @app.route('/api/pdf/download/<folder>/<filename>')
 def pdf_download(folder, filename):
-    """Táº£i file Word Ä‘Ã£ tÃ¡ch"""
-    # Decode URL-encoded names (khÃ´ng dÃ¹ng secure_filename vÃ¬ nÃ³ xÃ³a tiáº¿ng Viá»‡t)
+    """Tải file Word đã tách"""
+    # Decode URL-encoded names (không dùng secure_filename vì nó xóa tiếng Việt)
     from urllib.parse import unquote
     folder = unquote(folder)
     filename = unquote(filename)
     
-    # Báº£o vá»‡ path traversal
+    # Bảo vệ path traversal
     if '..' in folder or '..' in filename or '/' in folder or '\\' in folder:
         return jsonify({'error': 'Invalid path'}), 400
     
     file_path = os.path.join(PDF_OUTPUT_DIR, folder, filename)
     
-    # Kiá»ƒm tra file náº±m trong thÆ° má»¥c cho phÃ©p
+    # Kiểm tra file nằm trong thư mục cho phép
     if not os.path.abspath(file_path).startswith(os.path.abspath(PDF_OUTPUT_DIR)):
         return jsonify({'error': 'Invalid path'}), 400
     
     if os.path.exists(file_path):
         return send_file(file_path, as_attachment=True)
-    return jsonify({'error': 'File khÃ´ng tá»“n táº¡i', 'path': file_path}), 404
+    return jsonify({'error': 'File không tồn tại', 'path': file_path}), 404
 
 @app.route('/api/pdf/uploads')
 def pdf_list_uploads():
-    """Liá»‡t kÃª cÃ¡c file PDF Ä‘Ã£ upload"""
+    """Liệt kê các file PDF đã upload"""
     files = []
     
     if os.path.exists(PDF_UPLOAD_DIR):
@@ -1198,6 +1796,154 @@ def pdf_list_uploads():
         'files': files,
         'upload_dir': PDF_UPLOAD_DIR
     })
+
+
+@app.route('/api/pdf/face/analyze', methods=['POST'])
+def pdf_face_analyze():
+    """Phân tích khuôn mặt từ các file Word đã tách ra từ PDF"""
+    try:
+        data = request.json or {}
+        folder = data.get('folder')
+        threshold = data.get('distance_threshold')
+        try:
+            threshold = float(threshold) if threshold not in (None, '') else None
+        except Exception:
+            threshold = None
+
+        if not folder:
+            return jsonify({'success': False, 'error': 'Thiếu tên thư mục'}), 400
+        if '..' in folder or '/' in folder or '\\' in folder:
+            return jsonify({'success': False, 'error': 'Tên thư mục không hợp lệ'}), 400
+
+        input_dir = os.path.join(PDF_OUTPUT_DIR, folder)
+        if not os.path.isdir(input_dir):
+            return jsonify({'success': False, 'error': 'Thư mục PDF đã tách không tồn tại'}), 404
+
+        output_dir = os.path.join(PDF_FACE_OUTPUT_DIR, folder)
+        os.makedirs(output_dir, exist_ok=True)
+
+        task_id = f"pdf_face_{int(time.time() * 1000)}"
+        task = PDFFaceTask(task_id)
+        pdf_face_tasks[task_id] = task
+
+        project_name = data.get('project') or DEFAULT_PROJECT_NAME
+        p_dir = os.path.join(PORTRAIT_DIR, project_name) if os.path.exists(os.path.join(PORTRAIT_DIR, project_name)) else PORTRAIT_DIR
+        i_dir = os.path.join(INPUT_IMAGES_DIR, project_name) if os.path.exists(os.path.join(INPUT_IMAGES_DIR, project_name)) else INPUT_IMAGES_DIR
+
+        def _run():
+            task.status = 'running'
+            task.start_time = datetime.now()
+            try:
+                send_log(f" Bắt đầu phân tích khuôn mặt cho thư mục PDF: {folder} (Dự án: {project_name})", "info")
+                matcher = get_face_matcher()
+                if matcher:
+                    send_log("✅ Face Matcher đã sẵn sàng", "success")
+                else:
+                    send_log("⚠️ Face Matcher không khả dụng, sẽ bỏ qua tìm ảnh camera", "warning")
+
+                from src.pdf_face_analyzer import PDFFaceAnalyzer
+                analyzer = PDFFaceAnalyzer(
+                    p_dir,
+                    i_dir,
+                    matcher,
+                    accuracy_mode=True,
+                    match_distance_threshold=threshold,
+                    log_detail=True
+                )
+
+                def _log(msg, t='default'):
+                    send_log(msg, t)
+
+                def _progress(completed, total, name, file_path):
+                    task.total = total
+                    task.progress = completed
+                    task.current = name
+                    if file_path:
+                        task.files.append({
+                            'name': os.path.basename(file_path),
+                            'folder': folder,
+                        })
+
+                files = analyzer.analyze_folder(input_dir, output_dir, log_callback=_log, progress_callback=_progress)
+                task.total = len(files)
+                task.progress = len(files)
+                task.status = 'completed'
+                send_log(f"🎉 Hoàn tất! Đã xuất {len(files)} file Word từ PDF", "success")
+            except Exception as e:
+                import traceback
+                task.status = 'failed'
+                task.errors.append(str(e))
+                send_log(f"❌ Lỗi phân tích PDF: {e}", "error")
+                traceback.print_exc()
+            task.end_time = datetime.now()
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
+        return jsonify({
+            'success': True,
+            'task_id': task_id,
+            'message': f'Đã bắt đầu phân tích {folder}',
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({'success': False, 'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+@app.route('/api/pdf/face/status/<task_id>')
+def pdf_face_status(task_id):
+    """Kiểm tra tiến độ phân tích khuôn mặt từ PDF"""
+    task = pdf_face_tasks.get(task_id)
+    if not task:
+        return jsonify({'error': 'Task không tồn tại'}), 404
+    return jsonify(task.to_dict())
+
+
+@app.route('/api/pdf/face/files')
+def pdf_face_files():
+    """Liệt kê các file Word đã phân tích từ PDF"""
+    folders = []
+    if os.path.exists(PDF_FACE_OUTPUT_DIR):
+        for folder in os.listdir(PDF_FACE_OUTPUT_DIR):
+            folder_path = os.path.join(PDF_FACE_OUTPUT_DIR, folder)
+            if os.path.isdir(folder_path):
+                word_files = [
+                    {
+                        'name': f,
+                        'size': os.path.getsize(os.path.join(folder_path, f)),
+                        'modified': datetime.fromtimestamp(
+                            os.path.getmtime(os.path.join(folder_path, f))
+                        ).isoformat()
+                    }
+                    for f in os.listdir(folder_path) if f.lower().endswith('.docx')
+                ]
+                word_files.sort(key=lambda x: x['name'])
+                folders.append({
+                    'folder': folder,
+                    'files': word_files,
+                    'count': len(word_files)
+                })
+    return jsonify({'success': True, 'folders': folders, 'output_dir': PDF_FACE_OUTPUT_DIR})
+
+
+@app.route('/api/pdf/face/download/<folder>/<filename>')
+def pdf_face_download(folder, filename):
+    """Tải file Word đã phân tích từ PDF"""
+    from urllib.parse import unquote
+    folder = unquote(folder)
+    filename = unquote(filename)
+
+    if '..' in folder or '..' in filename or '/' in folder or '\\' in folder:
+        return jsonify({'error': 'Invalid path'}), 400
+
+    file_path = os.path.join(PDF_FACE_OUTPUT_DIR, folder, filename)
+
+    if not os.path.abspath(file_path).startswith(os.path.abspath(PDF_FACE_OUTPUT_DIR)):
+        return jsonify({'error': 'Invalid path'}), 400
+
+    if os.path.exists(file_path):
+        return send_file(file_path, as_attachment=True)
+    return jsonify({'error': 'File không tồn tại', 'path': file_path}), 404
 
 
 # ==================== API: EXCEL EXTRACTION ====================
@@ -1268,19 +2014,19 @@ class ExcelFaceTask:
 
 @app.route('/api/excel/upload', methods=['POST'])
 def excel_upload():
-    """Upload file Excel cháº¥m cÃ´ng (.xls/.xlsx)"""
+    """Upload file Excel chấm công (.xls/.xlsx)"""
     if 'file' not in request.files:
-        return jsonify({'success': False, 'error': 'KhÃ´ng cÃ³ file Ä‘Æ°á»£c upload'}), 400
+        return jsonify({'success': False, 'error': 'Không có file được upload'}), 400
 
     file = request.files['file']
     if not file.filename:
-        return jsonify({'success': False, 'error': 'TÃªn file khÃ´ng há»£p lá»‡'}), 400
+        return jsonify({'success': False, 'error': 'Tên file không hợp lệ'}), 400
 
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in ('.xls', '.xlsx'):
-        return jsonify({'success': False, 'error': 'Chá»‰ cháº¥p nháº­n file .xls hoáº·c .xlsx'}), 400
+        return jsonify({'success': False, 'error': 'Chỉ chấp nhận file .xls hoặc .xlsx'}), 400
 
-    # Giá»¯ tÃªn gá»‘c (cÃ³ tiáº¿ng Viá»‡t)
+    # Giữ tên gốc (có tiếng Việt)
     filename = file.filename
     filepath = os.path.join(EXCEL_UPLOAD_DIR, filename)
     file.save(filepath)
@@ -1374,10 +2120,10 @@ def excel_extract():
 
 @app.route('/api/excel/status/<task_id>')
 def excel_status(task_id):
-    """Kiá»ƒm tra tiáº¿n Ä‘á»™ tÃ¡ch Excel"""
+    """Kiểm tra tiến độ tách Excel"""
     task = excel_tasks.get(task_id)
     if not task:
-        return jsonify({'error': 'Task khÃ´ng tá»“n táº¡i'}), 404
+        return jsonify({'error': 'Task không tồn tại'}), 404
     return jsonify(task.to_dict())
 
 @app.route('/api/excel/files')
@@ -1423,7 +2169,7 @@ def excel_download(folder, filename):
 
     if os.path.exists(file_path):
         return send_file(file_path, as_attachment=True)
-    return jsonify({'error': 'File khÃ´ng tá»“n táº¡i', 'path': file_path}), 404
+    return jsonify({'error': 'File không tồn tại', 'path': file_path}), 404
 
 
 @app.route('/api/excel/face/analyze', methods=['POST'])
@@ -1451,11 +2197,15 @@ def excel_face_analyze():
         task = ExcelFaceTask(task_id)
         excel_face_tasks[task_id] = task
 
+        project_name = data.get('project') or DEFAULT_PROJECT_NAME
+        p_dir = os.path.join(PORTRAIT_DIR, project_name) if os.path.exists(os.path.join(PORTRAIT_DIR, project_name)) else PORTRAIT_DIR
+        i_dir = os.path.join(INPUT_IMAGES_DIR, project_name) if os.path.exists(os.path.join(INPUT_IMAGES_DIR, project_name)) else INPUT_IMAGES_DIR
+
         def _run():
             task.status = 'running'
             task.start_time = datetime.now()
             try:
-                send_log(f"🔍 Bắt đầu phân tích khuôn mặt cho thư mục: {folder}", "info")
+                send_log(f" Bắt đầu phân tích khuôn mặt cho thư mục: {folder} (Dự án: {project_name})", "info")
                 matcher = get_face_matcher()
                 if matcher:
                     send_log("✅ Face Matcher đã sẵn sàng", "success")
@@ -1464,8 +2214,8 @@ def excel_face_analyze():
 
                 from src.excel_face_analyzer import ExcelFaceAnalyzer
                 analyzer = ExcelFaceAnalyzer(
-                    PORTRAIT_DIR,
-                    INPUT_IMAGES_DIR,
+                    p_dir,
+                    i_dir,
                     matcher,
                     accuracy_mode=True,
                     match_distance_threshold=threshold,
@@ -1475,16 +2225,19 @@ def excel_face_analyze():
                 def _log(msg, t='default'):
                     send_log(msg, t)
 
-                files = analyzer.analyze_folder(input_dir, output_dir, log_callback=_log)
-                task.total = len(files)
-                for i, f in enumerate(files, 1):
-                    task.current = os.path.basename(f)
-                    task.files.append({
-                        'name': os.path.basename(f),
-                        'folder': folder,
-                    })
-                    task.progress = i
+                def _progress(completed, total, name, file_path):
+                    task.total = total
+                    task.progress = completed
+                    task.current = name
+                    if file_path:
+                        task.files.append({
+                            'name': os.path.basename(file_path),
+                            'folder': folder,
+                        })
 
+                files = analyzer.analyze_folder(input_dir, output_dir, log_callback=_log, progress_callback=_progress)
+                task.total = len(files)
+                task.progress = len(files)
                 task.status = 'completed'
                 send_log(f"🎉 Hoàn tất! Đã xuất {len(files)} file Word", "success")
             except Exception as e:
@@ -1565,7 +2318,7 @@ def excel_face_download(folder, filename):
 
 @app.route('/api/excel/uploads')
 def excel_list_uploads():
-    """Liá»‡t kÃª cÃ¡c file Excel Ä‘Ã£ upload"""
+    """Liệt kê các file Excel đã upload"""
     files = []
     if os.path.exists(EXCEL_UPLOAD_DIR):
         for f in os.listdir(EXCEL_UPLOAD_DIR):
@@ -1580,23 +2333,392 @@ def excel_list_uploads():
     files.sort(key=lambda x: x['modified'], reverse=True)
     return jsonify({'success': True, 'files': files, 'upload_dir': EXCEL_UPLOAD_DIR})
 
+
+# ==================== DELETE APIS ====================
+
+@app.route('/api/excel/delete-upload', methods=['POST'])
+def excel_delete_upload():
+    """Xóa file Excel đã tải lên"""
+    try:
+        data = request.get_json(silent=True) or {}
+        filename = data.get('filename', '')
+        if not filename:
+            return jsonify({'success': False, 'error': 'Tên file không hợp lệ'}), 400
+        safe_name = os.path.basename(filename)
+        file_path = os.path.join(EXCEL_UPLOAD_DIR, safe_name)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return jsonify({'success': True, 'message': f'Đã xóa {safe_name}'})
+        return jsonify({'success': False, 'error': 'File không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/excel/delete-folder', methods=['POST'])
+def excel_delete_folder():
+    """Xóa cả thư mục đợt tách Excel"""
+    try:
+        data = request.get_json(silent=True) or {}
+        folder = data.get('folder', '')
+        if not folder:
+            return jsonify({'success': False, 'error': 'Tên thư mục không hợp lệ'}), 400
+        safe_folder = os.path.basename(folder)
+        folder_path = os.path.join(EXCEL_OUTPUT_DIR, safe_folder)
+        deleted = False
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            shutil.rmtree(folder_path)
+            deleted = True
+        person_path = os.path.join(EXCEL_PERSON_DIR, safe_folder)
+        if os.path.exists(person_path) and os.path.isdir(person_path):
+            shutil.rmtree(person_path)
+            deleted = True
+        if deleted:
+            return jsonify({'success': True, 'message': f'Đã xóa đợt {safe_folder}'})
+        return jsonify({'success': False, 'error': 'Thư mục không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/excel/delete-file', methods=['POST'])
+def excel_delete_file():
+    """Xóa 1 file Word chi tiết trong đợt tách Excel"""
+    try:
+        data = request.get_json(silent=True) or {}
+        folder = data.get('folder', '')
+        filename = data.get('filename', '')
+        if not folder or not filename:
+            return jsonify({'success': False, 'error': 'Thông tin file không hợp lệ'}), 400
+        safe_folder = os.path.basename(folder)
+        safe_file = os.path.basename(filename)
+        file_path = os.path.join(EXCEL_OUTPUT_DIR, safe_folder, safe_file)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return jsonify({'success': True, 'message': f'Đã xóa {safe_file}'})
+        return jsonify({'success': False, 'error': 'File không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/excel/face/delete-folder', methods=['POST'])
+def excel_face_delete_folder():
+    """Xóa thư mục kết quả quét mặt Excel"""
+    try:
+        data = request.get_json(silent=True) or {}
+        folder = data.get('folder', '')
+        if not folder:
+            return jsonify({'success': False, 'error': 'Tên thư mục không hợp lệ'}), 400
+        safe_folder = os.path.basename(folder)
+        folder_path = os.path.join(EXCEL_FACE_OUTPUT_DIR, safe_folder)
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            shutil.rmtree(folder_path)
+            return jsonify({'success': True, 'message': f'Đã xóa kết quả {safe_folder}'})
+        return jsonify({'success': False, 'error': 'Thư mục không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/excel/face/delete-file', methods=['POST'])
+def excel_face_delete_file():
+    """Xóa 1 file kết quả quét mặt Excel"""
+    try:
+        data = request.get_json(silent=True) or {}
+        folder = data.get('folder', '')
+        filename = data.get('filename', '')
+        if not folder or not filename:
+            return jsonify({'success': False, 'error': 'Thông tin không hợp lệ'}), 400
+        safe_folder = os.path.basename(folder)
+        safe_file = os.path.basename(filename)
+        file_path = os.path.join(EXCEL_FACE_OUTPUT_DIR, safe_folder, safe_file)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return jsonify({'success': True, 'message': f'Đã xóa {safe_file}'})
+        return jsonify({'success': False, 'error': 'File không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/pdf/delete-upload', methods=['POST'])
+def pdf_delete_upload():
+    """Xóa file PDF đã tải lên"""
+    try:
+        data = request.get_json(silent=True) or {}
+        filename = data.get('filename', '')
+        if not filename:
+            return jsonify({'success': False, 'error': 'Tên file không hợp lệ'}), 400
+        safe_name = os.path.basename(filename)
+        file_path = os.path.join(PDF_UPLOAD_DIR, safe_name)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return jsonify({'success': True, 'message': f'Đã xóa {safe_name}'})
+        return jsonify({'success': False, 'error': 'File không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/pdf/delete-folder', methods=['POST'])
+def pdf_delete_folder():
+    """Xóa cả thư mục đợt tách PDF"""
+    try:
+        data = request.get_json(silent=True) or {}
+        folder = data.get('folder', '')
+        if not folder:
+            return jsonify({'success': False, 'error': 'Tên thư mục không hợp lệ'}), 400
+        safe_folder = os.path.basename(folder)
+        folder_path = os.path.join(PDF_OUTPUT_DIR, safe_folder)
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            shutil.rmtree(folder_path)
+            return jsonify({'success': True, 'message': f'Đã xóa đợt {safe_folder}'})
+        return jsonify({'success': False, 'error': 'Thư mục không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/pdf/delete-file', methods=['POST'])
+def pdf_delete_file():
+    """Xóa 1 file trong thư mục đợt tách PDF"""
+    try:
+        data = request.get_json(silent=True) or {}
+        folder = data.get('folder', '')
+        filename = data.get('filename', '')
+        if not folder or not filename:
+            return jsonify({'success': False, 'error': 'Thông tin không hợp lệ'}), 400
+        safe_folder = os.path.basename(folder)
+        safe_file = os.path.basename(filename)
+        file_path = os.path.join(PDF_OUTPUT_DIR, safe_folder, safe_file)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return jsonify({'success': True, 'message': f'Đã xóa {safe_file}'})
+        return jsonify({'success': False, 'error': 'File không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/pdf/face/delete-folder', methods=['POST'])
+def pdf_face_delete_folder():
+    """Xóa thư mục kết quả quét mặt PDF"""
+    try:
+        data = request.get_json(silent=True) or {}
+        folder = data.get('folder', '')
+        if not folder:
+            return jsonify({'success': False, 'error': 'Tên thư mục không hợp lệ'}), 400
+        safe_folder = os.path.basename(folder)
+        folder_path = os.path.join(PDF_FACE_OUTPUT_DIR, safe_folder)
+        if os.path.exists(folder_path) and os.path.isdir(folder_path):
+            shutil.rmtree(folder_path)
+            return jsonify({'success': True, 'message': f'Đã xóa kết quả {safe_folder}'})
+        return jsonify({'success': False, 'error': 'Thư mục không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/pdf/face/delete-file', methods=['POST'])
+def pdf_face_delete_file():
+    """Xóa 1 file kết quả quét mặt PDF"""
+    try:
+        data = request.get_json(silent=True) or {}
+        folder = data.get('folder', '')
+        filename = data.get('filename', '')
+        if not folder or not filename:
+            return jsonify({'success': False, 'error': 'Thông tin không hợp lệ'}), 400
+        safe_folder = os.path.basename(folder)
+        safe_file = os.path.basename(filename)
+        file_path = os.path.join(PDF_FACE_OUTPUT_DIR, safe_folder, safe_file)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return jsonify({'success': True, 'message': f'Đã xóa {safe_file}'})
+        return jsonify({'success': False, 'error': 'File không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/results/delete', methods=['POST'])
+def results_delete_file():
+    """Xóa file trong thư mục results"""
+    try:
+        data = request.get_json(silent=True) or {}
+        filename = data.get('filename', '')
+        if not filename:
+            return jsonify({'success': False, 'error': 'Tên file không hợp lệ'}), 400
+        safe_file = os.path.basename(filename)
+        file_path = os.path.join(RESULTS_DIR, safe_file)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return jsonify({'success': True, 'message': f'Đã xóa {safe_file}'})
+        return jsonify({'success': False, 'error': 'File không tồn tại'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ==================== ZALO SERVICE PROXY ====================
+
+ZALO_SERVICE_URL = "http://localhost:3001"
+
+def _proxy_zalo(path, method='GET', data=None):
+    """Proxy request to Node.js Zalo service"""
+    import urllib.request
+    import urllib.error
+    url = f"{ZALO_SERVICE_URL}{path}"
+    try:
+        if data is not None:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(data).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method=method
+            )
+        else:
+            req = urllib.request.Request(url, method=method)
+        
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode('utf-8')
+            return json.loads(body), resp.status
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8')
+        try:
+            return json.loads(body), e.code
+        except Exception:
+            return {'success': False, 'error': body}, e.code
+    except urllib.error.URLError as e:
+        return {'success': False, 'error': f'Zalo Service không hoạt động: {str(e)}'}, 503
+    except Exception as e:
+        return {'success': False, 'error': str(e)}, 500
+
+
+@app.route('/api/zalo/status')
+def zalo_status():
+    """Kiểm tra trạng thái kết nối Zalo"""
+    result, status = _proxy_zalo('/api/status')
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/login/qr', methods=['POST'])
+def zalo_login_qr():
+    """Bắt đầu đăng nhập bằng QR code"""
+    data = request.get_json(silent=True) or {}
+    result, status = _proxy_zalo('/api/login/qr', method='POST', data=data)
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/login/qr/image')
+def zalo_login_qr_image():
+    """Lấy hình ảnh QR code"""
+    result, status = _proxy_zalo('/api/login/qr/image')
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/login/qr/raw')
+def zalo_login_qr_raw():
+    """Lấy trực tiếp file ảnh QR code (binary PNG)"""
+    import urllib.request
+    import urllib.error
+    url = f"{ZALO_SERVICE_URL}/api/login/qr/raw"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+            return Response(data, mimetype='image/png')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 404
+
+
+@app.route('/api/zalo/login/qr/status')
+def zalo_login_qr_status():
+    """Kiểm tra trạng thái quét QR"""
+    result, status = _proxy_zalo('/api/login/qr/status')
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/logout', methods=['POST'])
+def zalo_logout():
+    """Đăng xuất Zalo"""
+    result, status = _proxy_zalo('/api/logout', method='POST')
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/groups')
+def zalo_groups():
+    """Lấy danh sách group Zalo"""
+    result, status = _proxy_zalo('/api/groups')
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/groups/<group_id>/download', methods=['POST'])
+def zalo_download(group_id):
+    """Tải ảnh từ group Zalo"""
+    data = request.get_json(silent=True) or {}
+    result, status = _proxy_zalo(f'/api/groups/{group_id}/download', method='POST', data=data)
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/download/progress')
+def zalo_download_progress():
+    """SSE endpoint theo dõi tiến trình tải ảnh"""
+    import urllib.request
+    import urllib.error
+    
+    def generate():
+        try:
+            req = urllib.request.Request(f"{ZALO_SERVICE_URL}/api/download/progress")
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                while True:
+                    line = resp.readline()
+                    if not line:
+                        break
+                    yield line.decode('utf-8')
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive'})
+
+
+@app.route('/api/zalo/download/progress/poll')
+def zalo_download_progress_poll():
+    """Polling endpoint cho tiến trình tải ảnh"""
+    result, status = _proxy_zalo('/api/download/progress/poll')
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/health')
+def zalo_health():
+    """Kiểm tra Zalo service có đang chạy không"""
+    result, status = _proxy_zalo('/api/health')
+    return jsonify(result), status
+
+
+@app.route('/api/open/folder', methods=['POST'])
+def open_system_folder():
+    """Mở thư mục trong File Explorer (Windows)"""
+    data = request.json or {}
+    target_type = data.get('type', 'input_images')
+    subpath = data.get('subpath', '').strip()
+    
+    if target_type == 'input_images':
+        folder = os.path.join(INPUT_IMAGES_DIR, subpath) if subpath else INPUT_IMAGES_DIR
+    elif target_type == 'results':
+        folder = os.path.join(RESULTS_DIR, subpath) if subpath else RESULTS_DIR
+    else:
+        folder = BASE_DIR
+        
+    os.makedirs(folder, exist_ok=True)
+    try:
+        if sys.platform == 'win32':
+            os.startfile(folder)
+        else:
+            import subprocess
+            subprocess.Popen(['xdg-open', folder])
+        return jsonify({'success': True, 'path': folder})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ==================== MAIN ====================
 
 
 if __name__ == '__main__':
-    print(f"""
-â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-â•‘     PHáº¦N Má»€M NHáº¬N DIá»†N KHUÃ”N Máº¶T & TRÃCH XUáº¤T NGÃ€Y THÃNG    â•‘
-â• â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•£
-â•‘  Server Ä‘ang cháº¡y táº¡i: http://localhost:{FLASK_PORT}                   â•‘
-â•‘  Input Images: {INPUT_IMAGES_DIR:<44} â•‘
-â•‘  Database:     {DATABASE_DIR:<44} â•‘
-â•‘  Results:      {RESULTS_DIR:<44} â•‘
-â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    """)
-    
-    print("Äang quÃ©t database...")
-    scan_database()
-    print(f"ÄÃ£ load {len(database)} ngÆ°á»i trong database\n")
-    
+    if hasattr(sys.stdout, 'reconfigure'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+    print("=" * 60)
+    print(f"Server dang chay tai: http://localhost:{FLASK_PORT}")
+    print(f"Input Images: {INPUT_IMAGES_DIR}")
+    print(f"Results:      {RESULTS_DIR}")
+    print("=" * 60)
+
+    try:
+        scan_database()
+    except Exception:
+        pass
+
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG, threaded=True)

@@ -32,5 +32,5 @@ FLASK_PORT = 5000
 FLASK_DEBUG = True
 
 # Tạo thư mục nếu chưa tồn tại
-for directory in [INPUT_IMAGES_DIR, DATABASE_DIR, RESULTS_DIR]:
+for directory in [INPUT_IMAGES_DIR, RESULTS_DIR]:
     os.makedirs(directory, exist_ok=True)

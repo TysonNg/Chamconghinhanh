@@ -12,6 +12,14 @@ import threading
 import logging
 import traceback
 
+# Ensure console supports utf-8 encoding on Windows
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 # Thêm thư mục gốc vào path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if getattr(sys, 'frozen', False):
@@ -91,9 +99,57 @@ def main():
             exists = os.path.exists(path)
             log_info(f"  [{('✓' if exists else '✗')}] {name}: {path}")
         
+        # Khởi động Zalo Service (Node.js) nếu có
+        zalo_process = None
+        zalo_service_dir = os.path.join(BASE_DIR, 'zalo-service')
+        if os.path.exists(zalo_service_dir):
+            try:
+                import subprocess
+                # Kiểm tra Node.js
+                node_check = subprocess.run(['node', '--version'], capture_output=True, text=True, timeout=5)
+                if node_check.returncode == 0:
+                    log_info(f"  Node.js: {node_check.stdout.strip()}")
+                    
+                    # Kiểm tra node_modules
+                    if not os.path.exists(os.path.join(zalo_service_dir, 'node_modules')):
+                        log_info("  Đang cài đặt dependencies cho Zalo Service...")
+                        subprocess.run(['npm', 'install'], cwd=zalo_service_dir, timeout=120,
+                                     capture_output=True, shell=True)
+                    
+                    # Khởi động Zalo service
+                    log_info("  Đang khởi động Zalo Service trên port 3001...")
+                    zalo_process = subprocess.Popen(
+                        ['node', 'server.js'],
+                        cwd=zalo_service_dir,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                    )
+                    time.sleep(1)
+                    if zalo_process.poll() is None:
+                        log_info("  ✓ Zalo Service đã khởi động!")
+                    else:
+                        log_error("  ✗ Zalo Service không thể khởi động")
+                        zalo_process = None
+                else:
+                    log_info("  ⚠ Node.js chưa cài, bỏ qua Zalo Service")
+            except FileNotFoundError:
+                log_info("  ⚠ Node.js chưa cài, bỏ qua Zalo Service")
+            except Exception as e:
+                log_error(f"  ✗ Lỗi khởi động Zalo Service: {e}")
+        
         # Chạy Flask (blocking)
         log_info(f"Đang khởi động Flask server tại 127.0.0.1:{FLASK_PORT}...")
-        app.run(host='127.0.0.1', port=FLASK_PORT, debug=False, threaded=True, use_reloader=False)
+        try:
+            app.run(host='127.0.0.1', port=FLASK_PORT, debug=False, threaded=True, use_reloader=False)
+        finally:
+            if zalo_process and zalo_process.poll() is None:
+                log_info("Đang dừng Zalo Service...")
+                zalo_process.terminate()
+                try:
+                    zalo_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    zalo_process.kill()
         
     except Exception as e:
         error_msg = f"LỖI NGHIÊM TRỌNG: {str(e)}\n{traceback.format_exc()}"
@@ -116,4 +172,6 @@ def main():
         input("Nhấn Enter để đóng...")
 
 if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

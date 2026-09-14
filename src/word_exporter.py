@@ -183,7 +183,7 @@ class WordExporter:
                 cells[3].text = "[Không tìm thấy ảnh]"
             
             # Ghi chú
-            cells[4].text = ''
+            cells[4].text = record.get('issue_description', '')
         
         # Lưu file
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

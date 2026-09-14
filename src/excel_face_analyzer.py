@@ -11,10 +11,13 @@ import unicodedata
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import xlrd
 from openpyxl import load_workbook
 
-from src.excel_extractor import ExcelToWordExporter
+from src.excel_extractor import ExcelToWordExporter, is_same_or_close_time
 
 
 def _normalize_text(text: str) -> str:
@@ -198,9 +201,12 @@ class ExcelPersonFileParser:
 
             gio_vao = self._get_cell(row, 'gio_vao')
             gio_ra = self._get_cell(row, 'gio_ra')
+            same_in_out = False
+            if gio_vao and gio_ra:
+                same_in_out = is_same_or_close_time(gio_vao, gio_ra, max_diff_minutes=5)
             is_absent = not gio_vao and not gio_ra
-            missing_checkout = bool(gio_vao and not gio_ra)
-            missing_checkin = bool(not gio_vao and gio_ra)
+            missing_checkout = bool(gio_vao and not gio_ra) and not same_in_out
+            missing_checkin = bool(not gio_vao and gio_ra) and not same_in_out
 
             month = rec_date.month
             year = rec_date.year
@@ -212,6 +218,7 @@ class ExcelPersonFileParser:
                 'gio_vao': gio_vao,
                 'gio_ra': gio_ra,
                 'is_absent': is_absent,
+                'same_in_out': same_in_out,
                 'missing_checkout': missing_checkout,
                 'missing_checkin': missing_checkin,
             })
@@ -245,7 +252,13 @@ class ExcelFaceAnalyzer:
         self.match_distance_threshold = match_distance_threshold
         self.log_detail = log_detail
 
-    def analyze_folder(self, input_dir: str, output_dir: str, log_callback=None) -> List[str]:
+    def analyze_folder(
+        self,
+        input_dir: str,
+        output_dir: str,
+        log_callback=None,
+        progress_callback=None
+    ) -> List[str]:
         os.makedirs(output_dir, exist_ok=True)
 
         # Parse all person excel files
@@ -271,8 +284,12 @@ class ExcelFaceAnalyzer:
                 picked[key] = (score, person)
 
         final_persons = [v[1] for v in picked.values()]
+        total_persons = len(final_persons)
         if log_callback:
-            log_callback(f"📌 Tổng số người sẽ xử lý: {len(final_persons)}", "info")
+            log_callback(f"📌 Tổng số người sẽ xử lý: {total_persons}", "info")
+
+        if total_persons == 0:
+            return []
 
         exporter = ExcelToWordExporter(
             self.portrait_dir,
@@ -284,18 +301,53 @@ class ExcelFaceAnalyzer:
             log_detail=self.log_detail
         )
 
+        # Tính toán số luồng làm việc tối ưu (50% - 75% CPU)
+        cpu_cores = os.cpu_count() or 4
+        workers = max(2, min(6, int(cpu_cores * 0.75)))
+        if log_callback:
+            log_callback(f"🚀 Kích hoạt quét song song đa luồng ({workers} workers / {cpu_cores} nhân CPU)", "info")
+
         results = []
-        for person in final_persons:
+        completed_count = 0
+        lock = threading.Lock()
+
+        def _process_one_person(person):
+            nonlocal completed_count
+            name = person['name']
+            issue_days = sum(
+                1 for r in person['records']
+                if r.get('is_absent') or r.get('missing_checkout') or r.get('missing_checkin') or r.get('same_in_out')
+            )
             try:
-                if log_callback:
-                    issue_days = sum(
-                        1 for r in person['records']
-                        if r.get('is_absent') or r.get('missing_checkout') or r.get('missing_checkin')
-                    )
-                    log_callback(f"👤 {person['name']}: {issue_days} ngày cần đối chiếu ảnh", "default")
-                path = exporter.export_person(person, log_callback=log_callback)
-                results.append(path)
-            except Exception:
-                if log_callback:
-                    log_callback(f"❌ Lỗi xuất {person['name']}", "error")
+                out_path = exporter.export_person(person, log_callback=None)
+                with lock:
+                    completed_count += 1
+                    pct = int((completed_count / total_persons) * 100)
+                    if log_callback:
+                        log_callback(f"👤 [{completed_count}/{total_persons} - {pct}%] Xong: {name} ({issue_days} ngày đối soát)", "default")
+                    if progress_callback:
+                        progress_callback(completed_count, total_persons, name, out_path)
+                return out_path
+            except Exception as e:
+                with lock:
+                    completed_count += 1
+                    pct = int((completed_count / total_persons) * 100)
+                    if log_callback:
+                        log_callback(f"❌ [{completed_count}/{total_persons}] Lỗi xuất {name}: {e}", "error")
+                    if progress_callback:
+                        progress_callback(completed_count, total_persons, name, None)
+                return None
+
+        # Chạy song song qua ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_person = {executor.submit(_process_one_person, p): p for p in final_persons}
+            for future in as_completed(future_to_person):
+                p_path = future.result()
+                if p_path:
+                    results.append(p_path)
+
+        # Lưu bộ nhớ đệm cache xuống ổ đĩa
+        if self.matcher and hasattr(self.matcher, 'save_cache'):
+            self.matcher.save_cache()
+
         return results

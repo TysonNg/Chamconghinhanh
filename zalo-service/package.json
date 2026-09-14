@@ -1,0 +1,18 @@
+{
+  "name": "zalo-service",
+  "version": "1.0.0",
+  "description": "Zalo image downloader service for attendance tracking",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "puppeteer-core": "^25.10.0",
+    "zca-js": "^2.0.0"
+  }
+}

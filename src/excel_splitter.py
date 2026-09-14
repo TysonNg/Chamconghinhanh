@@ -3,10 +3,10 @@
 Module tách Excel chấm công dạng "CHI TIẾT CHẤM CÔNG"
 Mỗi nhân viên -> 1 file Excel riêng, giữ nguyên header và cột.
 """
-
 import os
 import re
 import unicodedata
+from datetime import date, datetime, time
 from typing import Dict, List, Optional, Tuple
 
 import xlrd
@@ -40,8 +40,25 @@ class _ExcelReader:
             wb = xlrd.open_workbook(self.path)
             sheet = wb.sheet_by_index(0)
             for r in range(sheet.nrows):
-                row = [sheet.cell_value(r, c) for c in range(sheet.ncols)]
+                row = [self._convert_xls_cell(wb, sheet.cell(r, c)) for c in range(sheet.ncols)]
                 self.rows.append(row)
+
+    def _convert_xls_cell(self, workbook, cell):
+        if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+            return ''
+
+        if cell.ctype == xlrd.XL_CELL_DATE:
+            year, month, day, hour, minute, second = xlrd.xldate_as_tuple(
+                cell.value,
+                workbook.datemode
+            )
+            if year == 0 and month == 0 and day == 0:
+                return time(hour, minute, second)
+            if hour or minute or second:
+                return datetime(year, month, day, hour, minute, second)
+            return date(year, month, day)
+
+        return cell.value
 
 
 class ExcelAttendanceSplitter:

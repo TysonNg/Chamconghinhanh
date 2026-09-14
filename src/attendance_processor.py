@@ -9,6 +9,8 @@ from datetime import datetime
 from docx import Document
 from typing import List, Dict, Optional, Tuple
 
+from src.excel_extractor import is_same_or_close_time
+
 
 class AttendanceProcessor:
     """Xử lý file Word chấm công và phát hiện ngày vắng/thiếu dữ liệu"""
@@ -134,6 +136,13 @@ class AttendanceProcessor:
         elif not has_valid_checkout:
             record['has_issue'] = True
             record['issue_type'] = 'missing_checkout'  # Thiếu giờ ra
+        elif has_valid_checkin and has_valid_checkout:
+            first_in = next((v for v in [vao1, vao2, vao3] if self._is_valid_time(v)), '')
+            last_out = next((v for v in [ra3, ra2, ra1] if self._is_valid_time(v)), '')
+            if is_same_or_close_time(first_in, last_out, max_diff_minutes=5):
+                record['has_issue'] = True
+                record['issue_type'] = 'same_in_out'
+                record['invalid_values'] = [first_in, last_out]
         
         return record
     
@@ -155,6 +164,7 @@ class AttendanceProcessor:
                         'missing_both': 'Thiếu giờ vào và ra',
                         'missing_checkin': 'Thiếu giờ vào',
                         'missing_checkout': 'Thiếu giờ ra',
+                        'same_in_out': 'Trùng giờ vào/ra',
                         'invalid_text': 'Dữ liệu không hợp lệ: ' + ', '.join(record.get('invalid_values', []))
                     }.get(record['issue_type'], 'Thiếu dữ liệu')
                     

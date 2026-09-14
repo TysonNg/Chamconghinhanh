@@ -4,9 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phần Mềm Chấm Công & Nhận Diện</title>
-    <link rel="stylesheet" href="/static/css/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>Phần Mềm Chấm Công & Quét Mặt</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=20260315_5">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
 <body>
@@ -14,31 +14,61 @@
         <!-- Sidebar -->
         <aside class="sidebar">
             <div class="logo">
-                <div class="logo-icon">📋</div>
-                <span>Chấm Công</span>
+                <svg class="logo-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="4" width="18" height="16" rx="1"/>
+                    <line x1="7" y1="8" x2="17" y2="8"/>
+                    <line x1="7" y1="12" x2="17" y2="12"/>
+                    <line x1="7" y1="16" x2="13" y2="16"/>
+                </svg>
+                <span class="logo-text">Chấm Công</span>
             </div>
 
             <nav class="nav-menu">
-                <a href="javascript:void(0)" class="nav-item active" data-tab="analyze">
-                    <span class="nav-icon">🔍</span>
-                    <span>Phân Tích</span>
+                <a href="?tab=process" class="nav-item active" data-tab="process">
+                    <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+                        <polyline points="2 17 12 22 22 17"/>
+                        <polyline points="2 12 12 17 22 12"/>
+                    </svg>
+                    <span>Xử Lý Chấm Công</span>
                 </a>
-                <a href="javascript:void(0)" class="nav-item" data-tab="pdf">
-                    <span class="nav-icon">📄</span>
-                    <span>Tách PDF</span>
+                <a href="?tab=results" class="nav-item" data-tab="results">
+                    <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                        <polyline points="10 9 9 9 8 9"/>
+                    </svg>
+                    <span>Báo Cáo & Kết Quả</span>
                 </a>
-                <a href="javascript:void(0)" class="nav-item" data-tab="excel">
-                    <span class="nav-icon">📊</span>
-                    <span>Tách Excel</span>
+                <a href="?tab=analyze" class="nav-item" data-tab="analyze">
+                    <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <span>Phân Tích Cũ (Word)</span>
                 </a>
-                <a href="javascript:void(0)" class="nav-item" data-tab="results">
-                    <span class="nav-icon">📋</span>
-                    <span>Kết Quả</span>
+                <a href="?tab=photos" class="nav-item" data-tab="photos">
+                    <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                    </svg>
+                    <span>Quản Lý Ảnh</span>
+                </a>
+                <a href="?tab=zalo" class="nav-item" data-tab="zalo">
+                    <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                        <path d="M12 8v4l3 3"/>
+                    </svg>
+                    <span>Tải Ảnh Zalo</span>
+                    <span class="zalo-nav-badge" id="zalo-sidebar-badge"></span>
                 </a>
             </nav>
 
             <div class="sidebar-footer">
-                <div class="version">v2.0.0</div>
+                <span>Phiên bản Desktop</span>
+                <span>v2.1.0</span>
             </div>
         </aside>
 
@@ -46,57 +76,489 @@
         <main class="main-content">
             <!-- Header -->
             <header class="header">
-                <h1 class="page-title">Phân Tích Chấm Công</h1>
+                <h1 class="page-title">Xử Lý Chấm Công</h1>
                 <div class="header-actions">
-                    <button class="btn btn-primary" onclick="refreshData()">
-                        🔄 Làm mới
+                    <button class="btn btn-secondary btn-sm" id="btn-refresh-all" onclick="refreshData(this)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <polyline points="1 20 1 14 7 14"></polyline>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                        <span>Làm mới</span>
                     </button>
                 </div>
             </header>
 
-            <!-- Tab Phân Tích -->
-            <div class="tab-content active" id="tab-analyze">
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon">📁</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="stat-files">0</div>
-                            <div class="stat-label">File Chấm Công</div>
+            <!-- ==================== TAB 1: XỬ LÝ CHẤM CÔNG (EXCEL & PDF SUB-TABS) ==================== -->
+            <div class="tab-content active" id="tab-process">
+                <!-- Sub-tab Bar -->
+                <div class="subtab-bar">
+                    <button class="subtab-btn active" id="subtab-btn-excel" onclick="switchProcessSubtab('excel')">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="8" y1="13" x2="16" y2="13"></line>
+                            <line x1="8" y1="17" x2="16" y2="17"></line>
+                        </svg>
+                        <span>File Excel Chấm Công</span>
+                    </button>
+                    <button class="subtab-btn" id="subtab-btn-pdf" onclick="switchProcessSubtab('pdf')">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <path d="M10 12h4"></path>
+                            <path d="M10 16h4"></path>
+                        </svg>
+                        <span>File PDF Chấm Công</span>
+                    </button>
+                </div>
+
+                <!-- SUB-TAB EXCEL -->
+                <div class="subtab-content active" id="subtab-excel">
+                    <!-- Compact Metrics Ribbon -->
+                    <div class="metrics-ribbon">
+                        <div class="metric-item accent">
+                            <span class="metric-label">File Excel Upload:</span>
+                            <span class="metric-value" id="stat-excel-uploads">0</span>
+                        </div>
+                        <div class="metric-divider"></div>
+                        <div class="metric-item">
+                            <span class="metric-label">Nhân Viên Đã Tách:</span>
+                            <span class="metric-value" id="stat-excel-persons">0</span>
+                        </div>
+                        <div class="metric-divider"></div>
+                        <div class="metric-item warning">
+                            <span class="metric-label">Tổng Ngày Vắng/Thiếu:</span>
+                            <span class="metric-value" id="stat-excel-absent">0</span>
                         </div>
                     </div>
-                    <div class="stat-card">
-                        <div class="stat-icon">⚠️</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="stat-missing">0</div>
-                            <div class="stat-label">Bản Ghi Thiếu</div>
+
+                    <!-- Upload Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Tải Lên File Excel Chấm Công</h2>
+                        </div>
+                        <div class="card-body">
+                            <div class="upload-container-compact">
+                                <div class="upload-zone-compact" id="excel-upload-zone" onclick="document.getElementById('excel-file-input').click()">
+                                    <svg class="upload-icon-compact" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="17 8 12 3 7 8"></polyline>
+                                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                                    </svg>
+                                    <div class="upload-info-group">
+                                        <div class="upload-title">Kéo thả file Excel vào đây hoặc nhấp để duyệt file</div>
+                                        <div class="upload-subtitle">Hỗ trợ định dạng .xlsx, .xls (bảng chi tiết chấm công)</div>
+                                    </div>
+                                    <input type="file" id="excel-file-input" accept=".xls,.xlsx" style="display: none;" onchange="handleExcelFileSelect(this)">
+                                </div>
+
+                                <div id="excel-selected-file" class="upload-action-row" style="display: none;">
+                                    <div class="selected-file-text">
+                                        File đã chọn: <strong id="excel-filename"></strong>
+                                    </div>
+                                    <div class="upload-controls">
+                                        <div class="control-group">
+                                            <label for="excel-project-select">Dự án:</label>
+                                            <select id="excel-project-select" class="form-input project-dropdown" style="min-width: 170px; height: 32px; padding: 2px 8px;"></select>
+                                        </div>
+                                        <div class="control-group">
+                                            <label for="excel-face-threshold">Ngưỡng match:</label>
+                                            <input id="excel-face-threshold" type="number" step="0.01" min="0.20" max="0.80" value="0.40" style="width: 80px;">
+                                        </div>
+                                        <button class="btn btn-primary" onclick="extractExcel()" id="btn-excel-extract">
+                                            Bắt Đầu Tách
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Progress -->
+                                <div class="progress-section" id="excel-progress-section" style="display: none;">
+                                    <div class="progress-header">
+                                        <span class="progress-title" id="excel-progress-title">Đang xử lý...</span>
+                                        <span class="progress-percent" id="excel-progress-percent">0%</span>
+                                    </div>
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" id="excel-progress-fill" style="width: 0%"></div>
+                                    </div>
+                                    <div class="progress-detail" id="excel-progress-detail"></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                    <div class="stat-card">
-                        <div class="stat-icon">👤</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="stat-persons">0</div>
-                            <div class="stat-label">Người Có Vấn Đề</div>
+
+                    <!-- Danh sách file Excel đã upload -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Danh Sách File Excel Đã Tải Lên</h2>
+                            <button class="btn btn-secondary btn-sm" onclick="loadExcelUploads(this)">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                                <span>Làm mới</span>
+                            </button>
+                        </div>
+                        <div class="card-body" style="padding: 0;">
+                            <div class="table-container" style="border: none;">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 60px;">STT</th>
+                                            <th>Tên File</th>
+                                            <th style="width: 140px;">Kích Thước</th>
+                                            <th style="width: 140px; text-align: center;">Thao Tác</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="excel-uploads-table-body">
+                                        <tr>
+                                            <td colspan="4" class="empty-message">Chưa có file Excel nào</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
-                    <div class="stat-card">
-                        <div class="stat-icon">🖼️</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="stat-matched">0</div>
-                            <div class="stat-label">Ảnh Đã Match</div>
+
+                    <!-- File Word chi tiết chấm công theo người -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>File Word Chi Tiết Chấm Công Theo Nhân Viên</h2>
+                            <button class="btn btn-secondary btn-sm" onclick="loadExcelExtractedFiles(this)">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                                <span>Làm mới</span>
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <!-- Progress Quét Mặt -->
+                            <div class="progress-section" id="excel-face-progress-section" style="display: none; margin-bottom: 16px;">
+                                <div class="progress-header">
+                                    <span class="progress-title" id="excel-face-progress-title">Đang xử lý...</span>
+                                    <span class="progress-percent" id="excel-face-progress-percent">0%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="excel-face-progress-fill" style="width: 0%"></div>
+                                </div>
+                                <div class="progress-detail" id="excel-face-progress-detail"></div>
+                            </div>
+                            <div id="excel-extracted-files">
+                                <p class="empty-message">Chưa có file Word nào được tạo</p>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Analyze Section -->
+                <!-- SUB-TAB PDF -->
+                <div class="subtab-content" id="subtab-pdf">
+                    <!-- Compact Metrics Ribbon -->
+                    <div class="metrics-ribbon">
+                        <div class="metric-item accent">
+                            <span class="metric-label">File PDF Upload:</span>
+                            <span class="metric-value" id="stat-pdf-uploads">0</span>
+                        </div>
+                        <div class="metric-divider"></div>
+                        <div class="metric-item">
+                            <span class="metric-label">Thư Mục Đã Tách:</span>
+                            <span class="metric-value" id="stat-pdf-extracted">0</span>
+                        </div>
+                    </div>
+
+                    <!-- Upload Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Tải Lên File PDF Chấm Công</h2>
+                        </div>
+                        <div class="card-body">
+                            <div class="upload-container-compact">
+                                <div class="upload-zone-compact" id="pdf-upload-zone" onclick="document.getElementById('pdf-file-input').click()">
+                                    <svg class="upload-icon-compact" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                        <polyline points="14 2 14 8 20 8"></polyline>
+                                        <line x1="12" y1="18" x2="12" y2="12"></line>
+                                        <line x1="9" y1="15" x2="15" y2="15"></line>
+                                    </svg>
+                                    <div class="upload-info-group">
+                                        <div class="upload-title">Kéo thả file PDF vào đây hoặc nhấp để duyệt file</div>
+                                        <div class="upload-subtitle">Hỗ trợ file .pdf dạng bảng chấm công</div>
+                                    </div>
+                                    <input type="file" id="pdf-file-input" accept=".pdf" style="display: none;">
+                                </div>
+
+                                <div id="pdf-selected-file" class="upload-action-row" style="display: none;">
+                                    <div class="selected-file-text">
+                                        File đã chọn: <strong id="pdf-filename"></strong>
+                                    </div>
+                                    <div class="upload-controls">
+                                        <div class="control-group">
+                                            <label for="pdf-project-select">Dự án:</label>
+                                            <select id="pdf-project-select" class="form-input project-dropdown" style="min-width: 170px; height: 32px; padding: 2px 8px;"></select>
+                                        </div>
+                                        <div class="control-group">
+                                            <label for="pdf-face-threshold">Ngưỡng match:</label>
+                                            <input id="pdf-face-threshold" type="number" step="0.01" min="0.20" max="0.80" value="0.40" style="width: 80px;">
+                                        </div>
+                                        <button class="btn btn-primary" onclick="extractPDF()" id="btn-extract">
+                                            Bắt Đầu Tách
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Progress -->
+                                <div class="progress-section" id="pdf-progress-section" style="display: none;">
+                                    <div class="progress-header">
+                                        <span class="progress-title" id="pdf-progress-title">Đang xử lý...</span>
+                                        <span class="progress-percent" id="pdf-progress-percent">0%</span>
+                                    </div>
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" id="pdf-progress-fill" style="width: 0%"></div>
+                                    </div>
+                                    <div class="progress-detail" id="pdf-progress-detail"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Danh sách file PDF đã upload -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Danh Sách File PDF Đã Tải Lên</h2>
+                            <button class="btn btn-secondary btn-sm" onclick="loadPDFUploads(this)">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                                <span>Làm mới</span>
+                            </button>
+                        </div>
+                        <div class="card-body" style="padding: 0;">
+                            <div class="table-container" style="border: none;">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 60px;">STT</th>
+                                            <th>Tên File</th>
+                                            <th style="width: 140px;">Kích Thước</th>
+                                            <th style="width: 140px; text-align: center;">Thao Tác</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="pdf-uploads-table-body">
+                                        <tr>
+                                            <td colspan="4" class="empty-message">Chưa có file PDF nào</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Thư mục Word đã tách từ PDF -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Thư Mục File Word Đã Tách Từ PDF</h2>
+                            <button class="btn btn-secondary btn-sm" onclick="loadPDFExtractedFiles(this)">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                                <span>Làm mới</span>
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <!-- Progress Quét Mặt PDF -->
+                            <div class="progress-section" id="pdf-face-progress-section" style="display: none; margin-bottom: 16px;">
+                                <div class="progress-header">
+                                    <span class="progress-title" id="pdf-face-progress-title">Đang xử lý...</span>
+                                    <span class="progress-percent" id="pdf-face-progress-percent">0%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="pdf-face-progress-fill" style="width: 0%"></div>
+                                </div>
+                                <div class="progress-detail" id="pdf-face-progress-detail"></div>
+                            </div>
+                            <div id="pdf-extracted-files">
+                                <p class="empty-message">Chưa có thư mục nào được tách</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ==================== TAB 2: BÁO CÁO & KẾT QUẢ ==================== -->
+            <div class="tab-content" id="tab-results">
+                <!-- Sub-tab Bar Kết Quả -->
+                <div class="subtab-bar">
+                    <button class="subtab-btn active" id="subtab-result-btn-excel" onclick="switchResultSubtab('excel')">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="8" y1="13" x2="16" y2="13"></line>
+                            <line x1="8" y1="17" x2="16" y2="17"></line>
+                        </svg>
+                        <span>Kết Quả Quét Mặt (Excel)</span>
+                    </button>
+                    <button class="subtab-btn" id="subtab-result-btn-pdf" onclick="switchResultSubtab('pdf')">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <path d="M10 12h4"></path>
+                            <path d="M10 16h4"></path>
+                        </svg>
+                        <span>Kết Quả Quét Mặt (PDF)</span>
+                    </button>
+                    <button class="subtab-btn" id="subtab-result-btn-summary" onclick="switchResultSubtab('summary')">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                            <polyline points="10 9 9 9 8 9"></polyline>
+                        </svg>
+                        <span>Báo Cáo Tổng Hợp</span>
+                    </button>
+                </div>
+
+                <!-- SUB-TAB RESULT 1: EXCEL FACE FILES -->
+                <div class="subtab-content active" id="subtab-result-excel">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>File Word Đã Quét Mặt Từ Excel (Kèm Ảnh Camera)</h2>
+                            <button class="btn btn-secondary btn-sm" onclick="loadExcelFaceFiles(this)">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                                <span>Làm mới</span>
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="excel-face-files">
+                                <p class="empty-message">Chưa có file Word nào được quét mặt</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-TAB RESULT 2: PDF FACE FILES -->
+                <div class="subtab-content" id="subtab-result-pdf">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>File Word Đã Quét Mặt Từ PDF (Kèm Ảnh Camera)</h2>
+                            <button class="btn btn-secondary btn-sm" onclick="loadPDFFaceFiles(this)">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                                <span>Làm mới</span>
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="pdf-face-files">
+                                <p class="empty-message">Chưa có file nào được quét mặt</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-TAB RESULT 3: SUMMARY REPORTS -->
+                <div class="subtab-content" id="subtab-result-summary">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Danh Sách Báo Cáo & File Kết Quả (results/)</h2>
+                            <button class="btn btn-secondary btn-sm" onclick="loadResultFiles(this)">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                                <span>Làm mới</span>
+                            </button>
+                        </div>
+                        <div class="card-body" style="padding: 0;">
+                            <div class="table-container" style="border: none;">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 60px;">STT</th>
+                                            <th>Tên File</th>
+                                            <th style="width: 140px;">Kích Thước</th>
+                                            <th style="width: 140px; text-align: center;">Thao Tác</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="results-table-body">
+                                        <tr>
+                                            <td colspan="4" class="empty-message">Chưa có file kết quả nào trong thư mục results</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Export Settings -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Cài Đặt Xuất Báo Cáo Tổng Hợp</h2>
+                        </div>
+                        <div class="card-body">
+                            <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+                            <div class="form-group" style="flex: 1; min-width: 240px;">
+                                <label for="project-name">Tên Dự Án:</label>
+                                <input type="text" id="project-name" class="form-input" value="Chung cư Tân Thuận Đông">
+                            </div>
+                            <div class="form-group" style="flex: 1; min-width: 240px;">
+                                <label for="export-month">Tháng Báo Cáo:</label>
+                                <input type="text" id="export-month" class="form-input" value="01/2026">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            </div>
+
+            <!-- ==================== TAB 3: PHÂN TÍCH TỔNG HỢP CŨ (WORD) ==================== -->
+            <div class="tab-content" id="tab-analyze">
+                <div class="metrics-ribbon">
+                    <div class="metric-item">
+                        <span class="metric-label">File Chấm Công:</span>
+                        <span class="metric-value" id="stat-files">0</span>
+                    </div>
+                    <div class="metric-divider"></div>
+                    <div class="metric-item warning">
+                        <span class="metric-label">Bản Ghi Thiếu:</span>
+                        <span class="metric-value" id="stat-missing">0</span>
+                    </div>
+                    <div class="metric-divider"></div>
+                    <div class="metric-item">
+                        <span class="metric-label">Người Có Vấn Đề:</span>
+                        <span class="metric-value" id="stat-persons">0</span>
+                    </div>
+                    <div class="metric-divider"></div>
+                    <div class="metric-item accent">
+                        <span class="metric-label">Ảnh Đã Khớp:</span>
+                        <span class="metric-value" id="stat-matched">0</span>
+                    </div>
+                </div>
+
                 <div class="card">
                     <div class="card-header">
-                        <h2>Phân Tích Tổng Hợp</h2>
-                        <button class="btn btn-success" onclick="runAnalysis()" id="btn-analyze">
-                            🚀 Bắt Đầu Phân Tích
+                        <h2>Đối Soát File Word Bảng Công (chamcong/)</h2>
+                        <button class="btn btn-primary" onclick="runAnalysis()" id="btn-analyze">
+                            Bắt Đầu Phân Tích
                         </button>
                     </div>
                     <div class="card-body">
-                        <p>Quét file chấm công, tìm ngày thiếu và match ảnh camera tương ứng.</p>
+                        <p style="color: var(--text-secondary); margin-bottom: 14px;">
+                            Đọc file Word bảng công trong thư mục chamcong/, tìm ngày thiếu giờ hoặc vắng mặt và so khớp ảnh camera tương ứng.
+                        </p>
 
                         <!-- Progress -->
                         <div class="progress-section" id="progress-section" style="display: none;">
@@ -113,10 +575,19 @@
                         <!-- Log Panel -->
                         <div class="log-panel" id="log-panel" style="display: none;">
                             <div class="log-header">
-                                <span class="log-title">📋 Log Chi Tiết</span>
+                                <span>Nhật Ký Xử Lý Chi Tiết</span>
                                 <div class="log-actions">
-                                    <button class="btn-icon" onclick="clearLogs()" title="Xóa log">🗑️</button>
-                                    <button class="btn-icon" onclick="toggleLogPanel()" title="Thu gọn">➖</button>
+                                    <button class="btn-icon" onclick="clearLogs()" title="Xóa log">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="3 6 5 6 21 6"></polyline>
+                                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                        </svg>
+                                    </button>
+                                    <button class="btn-icon" onclick="toggleLogPanel()" title="Thu gọn/Mở rộng">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                                        </svg>
+                                    </button>
                                 </div>
                             </div>
                             <div class="log-content" id="log-content"></div>
@@ -128,307 +599,544 @@
                 <div class="card" id="results-card" style="display: none;">
                     <div class="card-header">
                         <h2>Danh Sách Thiếu Dữ Liệu</h2>
-                        <button class="btn btn-primary" onclick="exportWord()">
-                            📄 Xuất File Word
-                        </button>
+                        <button class="btn btn-success" onclick="exportWord()">Xuất Báo Cáo Word</button>
                     </div>
-                    <div class="card-body">
-                        <div class="table-container">
+                    <div class="card-body" style="padding: 0;">
+                        <div class="table-container" style="border: none;">
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>STT</th>
-                                        <th>Tên</th>
-                                        <th>Ngày</th>
-                                        <th>Thứ</th>
-                                        <th>Vấn Đề</th>
-                                        <th>Ảnh Camera</th>
+                                        <th style="width: 60px;">STT</th>
+                                        <th>Tên Nhân Viên</th>
+                                        <th style="width: 120px;">Ngày</th>
+                                        <th style="width: 100px;">Thứ</th>
+                                        <th style="width: 140px;">Vấn Đề</th>
+                                        <th>Ảnh Camera Khớp</th>
                                     </tr>
                                 </thead>
-                                <tbody id="analysis-table-body">
-                                </tbody>
+                                <tbody id="analysis-table-body"></tbody>
                             </table>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Tab Kết Quả -->
-            <div class="tab-content" id="tab-results">
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Danh Sách File Kết Quả</h2>
-                        <button class="btn btn-secondary" onclick="loadResultFiles()">
-                            🔄 Làm mới
+            <!-- ==================== TAB 4: QUẢN LÝ ẢNH ==================== -->
+            <div class="tab-content" id="tab-photos">
+                <!-- Project Bar -->
+                <div class="project-header-bar">
+                    <div class="project-selector-group">
+                        <div class="project-label">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                            </svg>
+                            <span>Dự Án:</span>
+                        </div>
+                        <select id="global-project-select" class="form-input project-select-main" onchange="onProjectChange(this.value)">
+                            <!-- Dynamic Options -->
+                        </select>
+                        <button class="btn btn-secondary btn-sm" onclick="openCreateProjectModal()" title="Thêm dự án mới">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                            <span>Thêm Dự Án</span>
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="openRenameProjectModal()" title="Đổi tên dự án">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                            <span>Đổi Tên</span>
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="confirmDeleteProject()" title="Xóa dự án">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
                         </button>
                     </div>
-                    <div class="card-body">
-                        <div class="table-container">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>STT</th>
-                                        <th>Tên File</th>
-                                        <th>Kích Thước</th>
-                                        <th>Thao Tác</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="results-table-body">
-                                    <tr>
-                                        <td colspan="4" class="empty-message">Chưa có file kết quả nào</td>
-                                    </tr>
-                                </tbody>
-                            </table>
+
+                    <div class="project-metrics">
+                        <div class="metric-pill">
+                            <span class="pill-label">Nhân Viên:</span>
+                            <span class="pill-value" id="project-emp-count">0</span>
+                        </div>
+                        <div class="metric-pill">
+                            <span class="pill-label">Ngày Có Ảnh:</span>
+                            <span class="pill-value" id="project-camera-days">0</span>
+                        </div>
+                        <div class="metric-pill accent">
+                            <span class="pill-label">Tổng Ảnh Camera:</span>
+                            <span class="pill-value" id="project-camera-total">0</span>
                         </div>
                     </div>
                 </div>
 
-                <!-- Export Settings -->
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Cài Đặt Xuất File</h2>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label>Tên Dự Án:</label>
-                            <input type="text" id="project-name" class="form-input" value="Chung cư Tân Thuận Đông">
+                <!-- Sub-tab Bar -->
+                <div class="subtab-bar">
+                    <button class="subtab-btn active" id="subtab-photo-btn-daily" onclick="switchPhotoSubtab('daily')">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                        </svg>
+                        <span>Ảnh Camera Theo Ngày</span>
+                    </button>
+                    <button class="subtab-btn" id="subtab-photo-btn-portraits" onclick="switchPhotoSubtab('portraits')">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                        <span>Ảnh Chân Dung Nhân Viên</span>
+                    </button>
+                </div>
+
+                <!-- SUB-TAB 1: ẢNH CAMERA THEO NGÀY -->
+                <div class="subtab-content active" id="subtab-photo-daily">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Chọn Ngày Trong Tháng (01 - 31)</h2>
+                            <div class="card-header-actions">
+                                <button class="btn btn-secondary btn-sm" onclick="loadDailyPhotosStats(this)">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="23 4 23 10 17 10"></polyline>
+                                        <polyline points="1 20 1 14 7 14"></polyline>
+                                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                    </svg>
+                                    <span>Làm mới</span>
+                                </button>
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label>Tháng:</label>
-                            <input type="text" id="export-month" class="form-input" value="01/2026">
+                        <div class="card-body">
+                            <!-- 31 Days Grid -->
+                            <div class="days-picker-grid" id="days-picker-grid">
+                                <!-- Generated 01 to 31 buttons -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Selected Day Photo Management Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>
+                                <span>Bộ Sưu Tập Ảnh Camera - Ngày </span>
+                                <span class="badge-day-highlight" id="selected-day-badge">01</span>
+                                <span style="font-weight: normal; font-size: 13px; color: var(--text-muted); margin-left: 8px;" id="selected-day-subinfo">(0 ảnh)</span>
+                            </h2>
+                            <div class="card-header-actions">
+                                <button class="btn btn-danger btn-sm" onclick="confirmDeleteAllDayPhotos()" id="btn-delete-all-day-photos" style="display: none;">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    </svg>
+                                    <span>Xóa tất cả ảnh ngày này</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- Upload dropzone for selected day -->
+                            <div class="upload-dropzone-inline" id="daily-upload-dropzone" onclick="document.getElementById('daily-photos-input').click()">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                                <div class="dropzone-text">
+                                    <strong>Kéo thả ảnh camera của ngày vào đây hoặc nhấp để chọn ảnh</strong>
+                                    <span>Hỗ trợ chọn nhiều ảnh cùng lúc (.jpg, .jpeg, .png, .bmp)</span>
+                                </div>
+                                <input type="file" id="daily-photos-input" multiple accept=".jpg,.jpeg,.png,.bmp" style="display: none;" onchange="handleDailyPhotosUpload(this)">
+                            </div>
+
+                            <!-- Thumbnails Gallery Grid -->
+                            <div class="thumbnails-gallery-grid" id="daily-photos-gallery">
+                                <!-- Photos rendered here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-TAB 2: ẢNH CHÂN DUNG NHÂN VIÊN -->
+                <div class="subtab-content" id="subtab-photo-portraits">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="header-search-bar">
+                                <div class="search-input-wrapper">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="11" cy="11" r="8"></circle>
+                                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                    </svg>
+                                    <input type="text" id="employee-search-input" placeholder="Tìm kiếm theo tên nhân viên..." oninput="onEmployeeSearch(this.value)">
+                                </div>
+                            </div>
+                            <div class="card-header-actions">
+                                <button class="btn btn-primary btn-sm" onclick="openCreateEmployeeModal()">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                                        <circle cx="12" cy="7" r="4"></circle>
+                                        <line x1="20" y1="8" x2="20" y2="14"></line>
+                                        <line x1="23" y1="11" x2="17" y2="11"></line>
+                                    </svg>
+                                    <span>Thêm Nhân Viên</span>
+                                </button>
+                                <button class="btn btn-secondary btn-sm" onclick="loadPortraits(this)">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="23 4 23 10 17 10"></polyline>
+                                        <polyline points="1 20 1 14 7 14"></polyline>
+                                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                    </svg>
+                                    <span>Làm mới</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- Employee Cards Grid -->
+                            <div class="employee-cards-grid" id="employee-cards-grid">
+                                <!-- Cards rendered here -->
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Tab Tách PDF -->
-            <div class="tab-content" id="tab-pdf">
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon">📄</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="stat-pdf-uploads">0</div>
-                            <div class="stat-label">File PDF Đã Upload</div>
+            <!-- ==================== TAB 5: TẢI ẢNH TỪ ZALO ==================== -->
+            <div class="tab-content" id="tab-zalo">
+                <!-- Zalo Connection Ribbon -->
+                <div class="zalo-status-card card mb-4">
+                    <div class="zalo-status-inner">
+                        <div class="zalo-brand-badge">
+                            <div class="zalo-icon-wrapper">
+                                <svg class="zalo-svg-logo" viewBox="0 0 48 48" width="38" height="38" fill="none">
+                                    <rect width="48" height="48" rx="10" fill="#0068FF"/>
+                                    <path d="M11 25.5C11 17.49 16.82 11 24 11s13 6.49 13 14.5c0 8.01-5.82 14.5-13 14.5-2.29 0-4.45-.66-6.3-1.83L11 40l1.9-5.32C11.72 32.32 11 29.04 11 25.5z" fill="#fff"/>
+                                    <path d="M21.5 20.5h-5a.75.75 0 0 0-.75.75v1c0 .41.34.75.75.75h2.55l-3.2 5.34a.75.75 0 0 0 .65 1.16h5.25a.75.75 0 0 0 .75-.75v-1a.75.75 0 0 0-.75-.75h-2.8l3.2-5.34a.75.75 0 0 0-.65-1.16zM28.5 21.5a4 4 0 0 0-4 4v.5a4 4 0 0 0 8 0v-.5a4 4 0 0 0-4-4zm1.5 4.5a1.5 1.5 0 0 1-3 0v-.5a1.5 1.5 0 0 1 3 0v.5zM34.5 20.5a.75.75 0 0 0-.75.75v7.5a.75.75 0 0 0 1.5 0v-7.5a.75.75 0 0 0-.75-.75z" fill="#0068FF"/>
+                                </svg>
+                            </div>
+                            <div class="zalo-brand-text">
+                                <div class="zalo-title-row">
+                                    <span class="zalo-title">Đồng Bộ Ảnh Chấm Công Zalo</span>
+                                    <span class="zalo-badge" id="zalo-conn-status-badge">Đang kết nối service...</span>
+                                </div>
+                                <div class="zalo-subtitle" id="zalo-conn-subtitle">Tự động tải ảnh check-in từ nhóm Zalo về thư mục dự án theo từng ngày</div>
+                            </div>
                         </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon">📁</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="stat-pdf-extracted">0</div>
-                            <div class="stat-label">Thư Mục Đã Tách</div>
-                        </div>
-                    </div>
-                </div>
 
-                <!-- Upload PDF -->
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Upload File PDF</h2>
-                    </div>
-                    <div class="card-body">
-                        <div class="upload-zone" id="pdf-upload-zone">
-                            <div class="upload-icon">📄</div>
-                            <div class="upload-text">Kéo thả file PDF hoặc click để chọn</div>
-                            <div class="upload-info">Hỗ trợ file .pdf</div>
-                            <input type="file" id="pdf-file-input" accept=".pdf" style="display: none;">
+                        <!-- User info when logged in -->
+                        <div class="zalo-user-pill" id="zalo-user-pill" style="display: none;">
+                            <img id="zalo-user-avatar" src="" alt="Avatar" class="zalo-user-avatar">
+                            <div class="zalo-user-meta">
+                                <span class="zalo-user-name" id="zalo-user-name">Người dùng Zalo</span>
+                                <span class="zalo-user-uid" id="zalo-user-uid">Đã kết nối</span>
+                            </div>
                         </div>
-                        <div id="pdf-selected-file" style="margin-top: 16px; display: none;">
-                            <p><strong>File đã chọn:</strong> <span id="pdf-filename"></span></p>
-                            <button class="btn btn-success" onclick="extractPDF()" id="btn-extract">
-                                🚀 Bắt Đầu Tách
+
+                        <!-- Actions right -->
+                        <div class="zalo-status-actions">
+                            <button class="btn btn-primary" id="btn-zalo-login-qr" onclick="startZaloQrLogin()">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="3" width="7" height="7"></rect>
+                                    <rect x="14" y="3" width="7" height="7"></rect>
+                                    <rect x="14" y="14" width="7" height="7"></rect>
+                                    <rect x="3" y="14" width="7" height="7"></rect>
+                                </svg>
+                                <span>Đăng Nhập Zalo (QR)</span>
+                            </button>
+                            <button class="btn btn-danger btn-sm" id="btn-zalo-logout" onclick="logoutZalo()" style="display: none;">
+                                <span>Đăng Xuất</span>
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="btn-zalo-check" title="Kiểm tra trạng thái kết nối" onclick="checkZaloStatus(true)">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
                             </button>
                         </div>
-
-                        <!-- Progress -->
-                        <div class="progress-section" id="pdf-progress-section" style="display: none;">
-                            <div class="progress-header">
-                                <span class="progress-title" id="pdf-progress-title">Đang xử lý...</span>
-                                <span class="progress-percent" id="pdf-progress-percent">0%</span>
-                            </div>
-                            <div class="progress-bar">
-                                <div class="progress-fill" id="pdf-progress-fill" style="width: 0%"></div>
-                            </div>
-                            <div class="progress-detail" id="pdf-progress-detail"></div>
-                        </div>
                     </div>
                 </div>
 
-                <!-- PDF Files List -->
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Danh Sách File PDF Đã Upload</h2>
-                        <button class="btn btn-secondary" onclick="loadPDFUploads()">
-                            🔄 Làm mới
-                        </button>
+                <!-- QR Login Panel (Hiển thị khi bắt đầu đăng nhập QR) -->
+                <div class="card mb-4" id="zalo-qr-card" style="display: none;">
+                    <div class="card-header d-flex justify-between align-center">
+                        <div class="d-flex align-center gap-2">
+                            <span class="pulse-dot warning"></span>
+                            <h3 style="font-size: 15px; font-weight: 600; margin: 0;">Quét Mã QR Đăng Nhập Zalo</h3>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-secondary btn-sm" onclick="startZaloQrLogin(true)" title="Tạo mã QR mới nếu mã cũ hết hạn hoặc không quét được">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                                <span>Lấy Mã QR Mới</span>
+                            </button>
+                            <button class="btn btn-secondary btn-sm" onclick="cancelZaloLogin()">Đóng</button>
+                        </div>
                     </div>
                     <div class="card-body">
-                        <div class="table-container">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>STT</th>
-                                        <th>Tên File</th>
-                                        <th>Kích Thước</th>
-                                        <th>Thao Tác</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="pdf-uploads-table-body">
-                                    <tr>
-                                        <td colspan="4" class="empty-message">Chưa có file PDF nào</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Extracted Files -->
-                <div class="card">
-                    <div class="card-header">
-                        <h2>File Word Đã Tách</h2>
-                        <button class="btn btn-secondary" onclick="loadPDFExtractedFiles()">
-                            🔄 Làm mới
-                        </button>
-                    </div>
-                    <div class="card-body">
-                        <div id="pdf-extracted-files">
-                            <p class="empty-message">Chưa có file nào được tách</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Tab Tách Excel -->
-            <div class="tab-content" id="tab-excel">
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon">📊</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="stat-excel-uploads">0</div>
-                            <div class="stat-label">File Excel Đã Upload</div>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon">👥</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="stat-excel-persons">0</div>
-                            <div class="stat-label">Nhân Viên Đã Xuất</div>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon">⚠️</div>
-                        <div class="stat-info">
-                            <div class="stat-value" id="stat-excel-absent">0</div>
-                            <div class="stat-label">Tổng Ngày Vắng/Thiếu</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Upload Excel -->
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Upload File Excel Chấm Công</h2>
-                    </div>
-                    <div class="card-body">
-                        <div class="upload-zone" id="excel-upload-zone" onclick="document.getElementById('excel-file-input').click()">
-                            <div class="upload-icon">📊</div>
-                            <div class="upload-text">Kéo thả file Excel hoặc click để chọn</div>
-                            <div class="upload-info">Hỗ trợ file .xls, .xlsx. Sau khi tách sẽ tạo file Excel và file Word in theo từng người.</div>
-                            <input type="file" id="excel-file-input" accept=".xls,.xlsx" style="display: none;" onchange="handleExcelFileSelect(this)">
-                        </div>
-                        <div id="excel-selected-file" style="margin-top: 16px; display: none;">
-                            <p><strong>File đã chọn:</strong> <span id="excel-filename"></span></p>
-                            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                                <button class="btn btn-success" onclick="extractExcel()" id="btn-excel-extract">
-                                    🚀 Bắt Đầu Tách
+                        <div class="zalo-qr-wrapper">
+                            <div class="zalo-qr-box">
+                                <div id="zalo-qr-loading" class="zalo-qr-loading">
+                                    <div class="spinner"></div>
+                                    <span style="font-size: 13px; color: var(--text-secondary); margin-top: 8px;">Đang khởi tạo mã QR...</span>
+                                </div>
+                                <img id="zalo-qr-img" src="" alt="Mã QR Zalo" style="display: none;" class="zalo-qr-image">
+                                <button type="button" class="btn-text-link mt-2" onclick="startZaloQrLogin(true)" style="font-size: 12px; display: inline-flex; align-items: center; gap: 4px; color: var(--primary);">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="23 4 23 10 17 10"></polyline>
+                                        <polyline points="1 20 1 14 7 14"></polyline>
+                                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                    </svg>
+                                    <span>Mã hết hạn? Bấm để tạo mã mới</span>
                                 </button>
-                                <div style="display:flex;align-items:center;gap:8px;">
-                                    <label for="excel-face-threshold" style="font-weight:600;">Ngưỡng match:</label>
-                                    <input id="excel-face-threshold" type="number" step="0.01" min="0.20" max="0.80"
-                                           placeholder="vd: 0.35" style="width:120px;">
+                            </div>
+                            <div class="zalo-qr-instructions">
+                                <div class="instruction-step">
+                                    <span class="step-num">1</span>
+                                    <span>Mở ứng dụng <strong>Zalo</strong> trên điện thoại</span>
+                                </div>
+                                <div class="instruction-step">
+                                    <span class="step-num">2</span>
+                                    <span>Bấm biểu tượng <strong>Quét mã QR</strong> ở góc trên bên phải</span>
+                                </div>
+                                <div class="instruction-step">
+                                    <span class="step-num">3</span>
+                                    <span>Hướng camera vào mã QR này và chọn <strong>Đăng nhập</strong> trên điện thoại</span>
+                                </div>
+                                <div class="qr-status-msg mt-3" id="zalo-qr-status-msg">
+                                    <span class="status-indicator-dot warning"></span> Đang chờ quét mã QR...
                                 </div>
                             </div>
                         </div>
-
-                        <!-- Progress -->
-                        <div class="progress-section" id="excel-progress-section" style="display: none;">
-                            <div class="progress-header">
-                                <span class="progress-title" id="excel-progress-title">Đang xử lý...</span>
-                                <span class="progress-percent" id="excel-progress-percent">0%</span>
-                            </div>
-                            <div class="progress-bar">
-                                <div class="progress-fill" id="excel-progress-fill" style="width: 0%"></div>
-                            </div>
-                            <div class="progress-detail" id="excel-progress-detail"></div>
-                        </div>
                     </div>
                 </div>
 
-                <!-- Excel Uploads List -->
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Danh Sách File Excel Đã Upload</h2>
-                        <button class="btn btn-secondary" onclick="loadExcelUploads()">
-                            🔄 Làm mới
-                        </button>
-                    </div>
-                    <div class="card-body">
-                        <div class="table-container">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>STT</th>
-                                        <th>Tên File</th>
-                                        <th>Kích Thước</th>
-                                        <th>Thao Tác</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="excel-uploads-table-body">
-                                    <tr>
-                                        <td colspan="4" class="empty-message">Chưa có file Excel nào</td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                <!-- Two-Column Main Download Section -->
+                <div class="zalo-grid-layout">
+                    <!-- Left Column: Cấu hình tải ảnh -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Cấu Hình Tải Ảnh Chấm Công</h2>
                         </div>
-                    </div>
-                </div>
+                        <div class="card-body">
+                            <!-- 1. Chọn nhóm Zalo -->
+                            <div class="form-group mb-3 zalo-group-picker-wrapper" id="zalo-group-picker-wrapper">
+                                <div class="d-flex justify-between align-center mb-1">
+                                    <label style="font-weight: 600; font-size: 13px;">1. Chọn Nhóm Zalo Chấm Công:</label>
+                                    <button type="button" class="btn-text-link" onclick="loadZaloGroups(true)">Làm mới danh sách</button>
+                                </div>
 
-                <!-- Extracted Excel Files -->
-                <div class="card">
-                    <div class="card-header">
-                        <h2>File Word Chi Tiết Chấm Công Theo Người</h2>
-                        <button class="btn btn-secondary" onclick="loadExcelExtractedFiles()">
-                            🔄 Làm mới
-                        </button>
-                    </div>
-                    <div class="card-body">
-                        <div id="excel-extracted-files">
-                            <p class="empty-message">Chưa có file Word nào được tạo</p>
-                        </div>
-                    </div>
-                </div>
+                                <!-- Box hiển thị nhóm ĐÃ CHỌN (Xác nhận rõ ràng) -->
+                                <div class="zalo-selected-group-card" id="zalo-selected-group-card" style="display: none;">
+                                    <div class="zalo-selected-left">
+                                        <div class="zalo-check-circle">
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                                <polyline points="20 6 9 17 4 12"></polyline>
+                                            </svg>
+                                        </div>
+                                        <div class="zalo-selected-info">
+                                            <div class="zalo-selected-name-row">
+                                                <span class="zalo-confirmed-label">ĐÃ CHỌN NHÓM:</span>
+                                                <strong class="zalo-selected-name" id="zalo-selected-name">Tên nhóm</strong>
+                                                <span class="zalo-selected-badge" id="zalo-selected-members">0 thành viên</span>
+                                            </div>
+                                            <div class="zalo-selected-sub" id="zalo-selected-sub">ID: ...</div>
+                                        </div>
+                                    </div>
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="toggleZaloGroupDropdown(true)" title="Chọn nhóm Zalo khác">
+                                        <span>Đổi Nhóm</span>
+                                    </button>
+                                </div>
 
-                <!-- Face Analysis Word Files -->
-                <div class="card">
-                    <div class="card-header">
-                        <h2>File Word Đã Phân Tích Từ Excel</h2>
-                        <button class="btn btn-secondary" onclick="loadExcelFaceFiles()">
-                            🔄 Làm mới
-                        </button>
-                    </div>
-                    <div class="card-body">
-                        <div class="progress-section" id="excel-face-progress-section" style="display: none;">
-                            <div class="progress-header">
-                                <span class="progress-title" id="excel-face-progress-title">Đang xử lý...</span>
-                                <span class="progress-percent" id="excel-face-progress-percent">0%</span>
+                                <!-- Box nút mở dropdown khi CHƯA CHỌN -->
+                                <div class="zalo-group-trigger" id="zalo-group-trigger" onclick="toggleZaloGroupDropdown()">
+                                    <span id="zalo-group-trigger-text">-- Nhấp vào đây để chọn nhóm Zalo --</span>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </div>
+
+                                <!-- Dropdown Menu xổ xuống -->
+                                <div class="zalo-group-dropdown-menu" id="zalo-group-dropdown-menu" style="display: none;">
+                                    <div class="zalo-dropdown-search-wrap">
+                                        <input type="text" id="zalo-group-search" class="form-input" placeholder="Gõ tìm nhanh trong danh sách nhóm..." oninput="filterZaloGroups()">
+                                        <button type="button" class="zalo-search-clear-btn" onclick="clearZaloGroupSearch()">&times;</button>
+                                    </div>
+                                    <div class="zalo-dropdown-list" id="zalo-group-items-list">
+                                        <div class="zalo-dropdown-empty">Đang tải danh sách nhóm...</div>
+                                    </div>
+                                    <div class="zalo-dropdown-footer">
+                                        <span id="zalo-group-count-text">0 nhóm</span>
+                                        <button type="button" class="btn-text-sm" onclick="toggleZaloGroupDropdown(false)">Đóng lại</button>
+                                    </div>
+                                </div>
+
+                                <!-- Hidden input để lưu id và name nhóm đã chọn -->
+                                <input type="hidden" id="zalo-selected-group-id" value="">
+                                <input type="hidden" id="zalo-selected-group-title" value="">
                             </div>
-                            <div class="progress-bar">
-                                <div class="progress-fill" id="excel-face-progress-fill" style="width: 0%"></div>
+
+                            <!-- 2. Chọn dự án đích -->
+                            <div class="form-group mb-3">
+                                <label for="zalo-target-project" style="font-weight: 600; font-size: 13px; margin-bottom: 4px; display: block;">2. Lưu Vào Thư Mục Dự Án:</label>
+                                <select id="zalo-target-project" class="form-input"></select>
+                                <div class="text-hint mt-1">Ảnh sẽ được lưu tự động vào <code>input_images/{Dự án}/{Ngày}/</code> để sẵn sàng quét mặt.</div>
                             </div>
-                            <div class="progress-detail" id="excel-face-progress-detail"></div>
+
+                            <!-- 3. Chọn khoảng thời gian -->
+                            <div class="form-group mb-3">
+                                <label style="font-weight: 600; font-size: 13px; display: block; margin-bottom: 6px;">3. Chọn Thời Gian Cần Tải:</label>
+                                <div class="date-preset-pills mb-2">
+                                    <button type="button" class="pill-btn active" data-preset="today" onclick="setZaloDatePreset('today')">Hôm nay</button>
+                                    <button type="button" class="pill-btn" data-preset="yesterday" onclick="setZaloDatePreset('yesterday')">Hôm qua</button>
+                                    <button type="button" class="pill-btn" data-preset="3days" onclick="setZaloDatePreset('3days')">3 ngày qua</button>
+                                    <button type="button" class="pill-btn" data-preset="7days" onclick="setZaloDatePreset('7days')">7 ngày qua</button>
+                                    <button type="button" class="pill-btn" data-preset="all" onclick="setZaloDatePreset('all')">Tất cả gần đây</button>
+                                </div>
+                                <div class="date-range-row">
+                                    <div class="date-input-wrap">
+                                        <span class="date-label">Từ ngày:</span>
+                                        <input type="date" id="zalo-date-from" class="form-input">
+                                    </div>
+                                    <div class="date-input-wrap">
+                                        <span class="date-label">Đến ngày:</span>
+                                        <input type="date" id="zalo-date-to" class="form-input">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Tùy chọn nâng cao -->
+                            <details class="zalo-advanced-box mb-3">
+                                <summary class="zalo-advanced-summary">
+                                    <span>Tùy chọn nâng cao (Định dạng thư mục & Giới hạn tin nhắn)</span>
+                                </summary>
+                                <div class="zalo-advanced-content pt-2">
+                                    <div class="form-group mb-2">
+                                        <label for="zalo-folder-format" style="font-size: 12px; font-weight: 500;">Định dạng thư mục ngày:</label>
+                                        <select id="zalo-folder-format" class="form-input">
+                                            <option value="date" selected>YYYY-MM-DD (VD: 2026-09-13) - Chuẩn rõ ràng</option>
+                                            <option value="day">DD (VD: 13) - Khớp số ngày trong tháng</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group mb-2">
+                                        <label for="zalo-msg-limit" style="font-size: 12px; font-weight: 500;">Số lượng ảnh quét tối đa:</label>
+                                        <select id="zalo-msg-limit" class="form-input">
+                                            <option value="100">100 ảnh gần nhất</option>
+                                            <option value="200" selected>200 ảnh gần nhất (Khuyên dùng)</option>
+                                            <option value="500">500 ảnh gần nhất</option>
+                                            <option value="1000">1000 ảnh gần nhất</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group" style="margin-top: 10px;">
+                                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; color: var(--text-primary); user-select: none;">
+                                            <input type="checkbox" id="zalo-show-browser" style="accent-color: var(--primary); width: 16px; height: 16px;">
+                                            <span>Hiện cửa sổ trình duyệt Chrome/Edge khi tải (để quan sát trực quan)</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <!-- Nút bắt đầu tải ảnh -->
+                            <button class="btn btn-primary btn-lg w-100" id="btn-start-zalo-download" onclick="startZaloDownload()">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="7 10 12 15 17 10"></polyline>
+                                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                                </svg>
+                                <span>Bắt Đầu Tải Ảnh Về Máy</span>
+                            </button>
                         </div>
-                        <div id="excel-face-files">
-                            <p class="empty-message">Chưa có file Word nào</p>
+                    </div>
+
+                    <!-- Right Column: Tiến trình & Nhật ký -->
+                    <div class="card">
+                        <div class="card-header d-flex justify-between align-center">
+                            <h2>Tiến Trình & Kết Quả Tải</h2>
+                            <button class="btn btn-secondary btn-sm" onclick="openInputImagesFolder()" title="Mở thư mục input_images trên máy tính">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                                </svg>
+                                <span>Mở Thư Mục Ảnh</span>
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <!-- Metrics ribbon -->
+                            <div class="zalo-metrics-strip mb-3">
+                                <div class="zalo-metric-box">
+                                    <span class="metric-num" id="zalo-stat-total">0</span>
+                                    <span class="metric-lbl">Ảnh tìm thấy</span>
+                                </div>
+                                <div class="zalo-metric-box success">
+                                    <span class="metric-num" id="zalo-stat-downloaded">0</span>
+                                    <span class="metric-lbl">Đã tải về</span>
+                                </div>
+                                <div class="zalo-metric-box info">
+                                    <span class="metric-num" id="zalo-stat-skipped">0</span>
+                                    <span class="metric-lbl">Bỏ qua (đã có)</span>
+                                </div>
+                                <div class="zalo-metric-box danger">
+                                    <span class="metric-num" id="zalo-stat-failed">0</span>
+                                    <span class="metric-lbl">Lỗi tải</span>
+                                </div>
+                            </div>
+
+                            <div class="text-muted mb-3" aria-live="polite">
+                                Ảnh xem trước: <strong id="zalo-stat-low-quality">0</strong>
+                                · Không rõ ngày gửi: <strong id="zalo-stat-unknown-date">0</strong>
+                            </div>
+
+                            <!-- Progress Bar -->
+                            <div class="zalo-progress-wrapper mb-3">
+                                <div class="d-flex justify-between align-center mb-1">
+                                    <span class="progress-status-text" id="zalo-progress-status">Sẵn sàng tải ảnh...</span>
+                                    <span class="progress-percent-text" id="zalo-progress-percent">0%</span>
+                                </div>
+                                <div class="zalo-progress-track">
+                                    <div class="zalo-progress-fill" id="zalo-progress-fill" style="width: 0%;"></div>
+                                </div>
+                                <div class="zalo-current-file-text mt-1" id="zalo-current-file-text">Chưa có tác vụ tải nào đang chạy.</div>
+                            </div>
+
+                            <!-- Live Log Terminal -->
+                            <div class="zalo-log-container">
+                                <div class="zalo-log-header">
+                                    <span>Nhật Ký Tải Ảnh</span>
+                                    <button class="btn-text-sm" onclick="clearZaloLogs()">Xóa log</button>
+                                </div>
+                                <div class="zalo-log-terminal" id="zalo-log-terminal">
+                                    <div class="log-line info">[Hệ thống] Sẵn sàng tải ảnh từ Zalo. Đăng nhập và chọn nhóm để bắt đầu.</div>
+                                </div>
+                            </div>
+
+                            <!-- Hoàn thành banner -->
+                            <div class="zalo-completion-banner mt-3" id="zalo-completion-banner" style="display: none;">
+                                <div class="d-flex align-center gap-2">
+                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2">
+                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                                    </svg>
+                                    <div>
+                                        <strong style="color: var(--success); font-size: 13px;">Hoàn tất tải ảnh thành công!</strong>
+                                        <div style="font-size: 12px; color: var(--text-secondary);" id="zalo-completion-details">Ảnh đã được tự động phân loại vào thư mục ngày tương ứng trong Quản Lý Ảnh.</div>
+                                    </div>
+                                </div>
+                                <div class="d-flex gap-2 mt-2">
+                                    <button class="btn btn-primary btn-sm" onclick="navigateToPhotosTab()" id="btn-goto-photos-tab">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                            <circle cx="12" cy="13" r="4"/>
+                                        </svg>
+                                        <span>Xem trong Quản Lý Ảnh &rarr;</span>
+                                    </button>
+                                    <button class="btn btn-secondary btn-sm" onclick="navigateToProcessTab()">
+                                        <span>Chuyển Sang Chấm Công &rarr;</span>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -436,24 +1144,143 @@
         </main>
     </div>
 
+    <!-- ==================== MODALS ==================== -->
+
+    <!-- Modal: Tạo Dự Án Mới -->
+    <div class="modal-backdrop" id="modal-create-project" style="display: none;">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>Thêm Dự Án Mới</h3>
+                <button class="modal-close-btn" onclick="closeModal('modal-create-project')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="new-project-name">Tên Dự Án:</label>
+                    <input type="text" id="new-project-name" class="form-input" placeholder="Ví dụ: Tòa nhà Bitexco, Chung cư Sunrise...">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('modal-create-project')">Hủy</button>
+                <button class="btn btn-primary" onclick="submitCreateProject()">Tạo Dự Án</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Đổi Tên Dự Án -->
+    <div class="modal-backdrop" id="modal-rename-project" style="display: none;">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>Đổi Tên Dự Án</h3>
+                <button class="modal-close-btn" onclick="closeModal('modal-rename-project')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="rename-project-name">Tên Dự Án Mới:</label>
+                    <input type="text" id="rename-project-name" class="form-input">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('modal-rename-project')">Hủy</button>
+                <button class="btn btn-primary" onclick="submitRenameProject()">Lưu Thay Đổi</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Thêm Nhân Viên Mới -->
+    <div class="modal-backdrop" id="modal-create-employee" style="display: none;">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>Thêm Nhân Viên Vào Dự Án</h3>
+                <button class="modal-close-btn" onclick="closeModal('modal-create-employee')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="new-employee-name">Họ và Tên Nhân Viên:</label>
+                    <input type="text" id="new-employee-name" class="form-input" placeholder="Ví dụ: Nguyễn Văn A">
+                </div>
+                <div class="form-group">
+                    <label for="new-employee-photos">Ảnh Chân Dung (tùy chọn, có thể chọn nhiều ảnh):</label>
+                    <input type="file" id="new-employee-photos" class="form-input" multiple accept=".jpg,.jpeg,.png,.bmp">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('modal-create-employee')">Hủy</button>
+                <button class="btn btn-primary" onclick="submitCreateEmployee()">Thêm Nhân Viên</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Thuyên Chuyển Nhân Viên Sang Dự Án Khác -->
+    <div class="modal-backdrop" id="modal-transfer-employee" style="display: none;">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>Thuyên Chuyển Nhân Viên Sang Dự Án Khác</h3>
+                <button class="modal-close-btn" onclick="closeModal('modal-transfer-employee')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 14px; color: var(--text-secondary);">
+                    Thuyên chuyển nhân viên <strong id="transfer-employee-name" style="color: var(--primary);"></strong> và toàn bộ ảnh chân dung sang dự án mới:
+                </p>
+                <div class="form-group">
+                    <label for="transfer-target-project">Dự Án Đích:</label>
+                    <select id="transfer-target-project" class="form-input"></select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('modal-transfer-employee')">Hủy</button>
+                <button class="btn btn-primary" onclick="submitTransferEmployee()">Xác Nhận Chuyển</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Quản Lý Ảnh Chân Dung Của 1 Nhân Viên -->
+    <div class="modal-backdrop" id="modal-employee-photos" style="display: none;">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-header">
+                <h3>
+                    <span>Ảnh Chân Dung: </span>
+                    <strong id="emp-photos-modal-name" style="color: var(--primary);"></strong>
+                </h3>
+                <button class="modal-close-btn" onclick="closeModal('modal-employee-photos')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Upload Dropzone for this employee -->
+                <div class="upload-dropzone-inline" onclick="document.getElementById('emp-photos-upload-input').click()">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    <div class="dropzone-text">
+                        <strong>Thêm ảnh chân dung cho nhân viên này</strong>
+                        <span>Nhấp hoặc kéo thả ảnh vào đây</span>
+                    </div>
+                    <input type="file" id="emp-photos-upload-input" multiple accept=".jpg,.jpeg,.png,.bmp" style="display: none;" onchange="handleUploadEmployeePhoto(this)">
+                </div>
+
+                <div class="thumbnails-gallery-grid" id="emp-photos-gallery" style="margin-top: 16px;">
+                    <!-- Photos rendered here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('modal-employee-photos')">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lightbox Zoom Modal -->
+    <div class="modal-backdrop lightbox-backdrop" id="modal-lightbox" style="display: none;" onclick="closeModal('modal-lightbox')">
+        <div class="lightbox-container" onclick="event.stopPropagation()">
+            <img id="lightbox-img" src="" alt="Zoom Photo">
+            <div class="lightbox-caption" id="lightbox-caption"></div>
+            <button class="lightbox-close-btn" onclick="closeModal('modal-lightbox')">&times;</button>
+        </div>
+    </div>
+
     <!-- Toast Notification -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/js/app.js?v=20260314"></script>
-    <script>
-        // Fallback to ensure tabs work even if app.js fails to load
-        document.querySelectorAll('.nav-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                e.preventDefault();
-                document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
-                item.classList.add('active');
-                const tabId = item.dataset.tab;
-                document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
-                const tabEl = document.getElementById(`tab-${tabId}`);
-                if (tabEl) tabEl.classList.add('active');
-            });
-        });
-    </script>
+    <script src="/static/js/app.js?v=20260315_9"></script>
 </body>
 
 </html>

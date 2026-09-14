@@ -1,7 +1,7 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
-Module xá»­ lÃ½ file Excel cháº¥m cÃ´ng (Ä‘á»‹nh dáº¡ng Ä‘áº·c biá»‡t vá»›i cá»™t lÃ  ngÃ y)
-TrÃ­ch xuáº¥t thÃ´ng tin tá»«ng ngÆ°á»i vÃ  xuáº¥t ra file Word riÃªng
+Module xử lý file Excel chấm công (định dạng đặc biệt với cột là ngày)
+Trích xuất thông tin từng người và xuất ra file Word riêng
 """
 
 import os
@@ -32,18 +32,46 @@ def set_cell_border(cell, border_color="000000"):
     tcPr.append(tcBorders)
 
 
+def is_same_or_close_time(t1_str: str, t2_str: str, max_diff_minutes: int = 5) -> bool:
+    """
+    Kiểm tra xem giờ vào và giờ ra có trùng nhau hoặc chênh lệch <= max_diff_minutes hay không.
+    Hỗ trợ chuỗi như '07:30', '07:30:00', '7:30', và chuỗi nhiều dòng (lấy mốc đầu của t1 và mốc cuối của t2).
+    """
+    if not t1_str or not t2_str:
+        return False
+    s1 = str(t1_str).strip()
+    s2 = str(t2_str).strip()
+    if not s1 or not s2:
+        return False
+    if s1 == s2:
+        return True
+    time_pattern = re.compile(r'(\d{1,2}):(\d{2})')
+    m1 = time_pattern.search(s1)
+    matches2 = list(time_pattern.finditer(s2))
+    if not m1 or not matches2:
+        return False
+    m2 = matches2[-1]
+    h1, min1 = int(m1.group(1)), int(m1.group(2))
+    h2, min2 = int(m2.group(1)), int(m2.group(2))
+    total_min1 = (h1 * 60 + min1) % 1440
+    total_min2 = (h2 * 60 + min2) % 1440
+    diff = abs(total_min1 - total_min2)
+    min_diff = min(diff, 1440 - diff)
+    return min_diff <= max_diff_minutes
+
+
 class ExcelChamCongExtractor:
     """
-    Äá»c file Excel cháº¥m cÃ´ng dáº¡ng pivot (cá»™t = ngÃ y, má»—i ngÆ°á»i 6 dÃ²ng)
-    vÃ  tÃ¡ch thÃ nh dá»¯ liá»‡u tá»«ng ngÆ°á»i.
+    Đọc file Excel chấm công dạng pivot (cột = ngày, mỗi người 6 dòng)
+    và tách thành dữ liệu từng người.
     
-    Cáº¥u trÃºc má»—i khá»‘i ngÆ°á»i:
-      Row N+0: ID:xxx TÃªn:yyy PhÃ²ng ban:zzz Ca:www
-      Row N+1: 1  2  3  4 ... 16   (sá»‘ ngÃ y ná»­a Ä‘áº§u thÃ¡ng)
-      Row N+2: giá» vÃ o\ngiá» ra ... (dá»¯ liá»‡u ná»­a Ä‘áº§u thÃ¡ng)
-      Row N+3: 17 18 19 ... cuá»‘i  (sá»‘ ngÃ y ná»­a sau thÃ¡ng)
-      Row N+4: giá» vÃ o\ngiá» ra ... (dá»¯ liá»‡u ná»­a sau thÃ¡ng)
-      Row N+5: (trá»‘ng - phÃ¢n cÃ¡ch)
+    Cấu trúc mỗi khối người:
+      Row N+0: ID:xxx Tên:yyy Phòng ban:zzz Ca:www
+      Row N+1: 1  2  3  4 ... 16   (số ngày nửa đầu tháng)
+      Row N+2: giờ vào\ngiờ ra ... (dữ liệu nửa đầu tháng)
+      Row N+3: 17 18 19 ... cuối  (số ngày nửa sau tháng)
+      Row N+4: giờ vào\ngiờ ra ... (dữ liệu nửa sau tháng)
+      Row N+5: (trống - phân cách)
     """
 
     def __init__(self, excel_path: str):
@@ -116,7 +144,7 @@ class ExcelChamCongExtractor:
     # ------------------------------------------------------------------
 
     def _parse_info_row(self, row_idx: int) -> Optional[Dict]:
-        """Parse dÃ²ng thÃ´ng tin: 'ID:xxx TÃªn:yyy PhÃ²ng ban:zzz Ca:www'"""
+        """Parse dòng thông tin: 'ID:xxx Tên:yyy Phòng ban:zzz Ca:www'"""
         o_variants = "oòóỏõọôồốổỗộơờớởỡợ"
         e_variants = "eèéẻẽẹêềếểễệ"
         ten_pat = f"T[{e_variants}]n"
@@ -144,7 +172,7 @@ class ExcelChamCongExtractor:
 
     def _parse_days_and_times(self, day_row_idx: int, time_row_idx: int) -> Dict[int, Dict]:
         """
-        Parse má»™t cáº·p (dÃ²ng ngÃ y, dÃ²ng giá») â†’ dict {ngÃ y: {gio_vao, gio_ra, vang}}
+        Parse một cặp (dòng ngày, dòng giờ) → dict {ngày: {gio_vao, gio_ra, vang}}
         """
         results = {}
         ncols = self.sheet.ncols
@@ -165,28 +193,33 @@ class ExcelChamCongExtractor:
 
             if time_val and str(time_val).strip():
                 lines = [l.strip() for l in str(time_val).split('\n') if l.strip()]
-                # First valid time = giá» vÃ o, last valid time = giá» ra
+                # First valid time = giờ vào, last valid time = giờ ra
                 time_pattern = re.compile(r'^\d{1,2}:\d{2}$')
                 valid_times = [l for l in lines if time_pattern.match(l)]
                 if valid_times:
                     gio_vao = valid_times[0]
                     gio_ra = valid_times[-1] if len(valid_times) > 1 else ''
-                    is_absent = False  # cÃ³ Ã­t nháº¥t 1 giá»
-                    # Náº¿u chá»‰ cÃ³ 1 giá» = thiáº¿u giá» ra
+                    is_absent = False  # có ít nhất 1 giờ
+                    # Nếu chỉ có 1 giờ = thiếu giờ ra
                     if len(valid_times) == 1:
-                        is_absent = False  # cÃ³ máº·t nhÆ°ng thiáº¿u 1 cá»™t
+                        is_absent = False  # có mặt nhưng thiếu 1 cột
+
+            same_in_out = False
+            if gio_vao and gio_ra:
+                same_in_out = is_same_or_close_time(gio_vao, gio_ra, max_diff_minutes=5)
 
             results[day_num] = {
                 'gio_vao': gio_vao,
                 'gio_ra': gio_ra,
                 'is_absent': is_absent,
-                'missing_checkout': bool(gio_vao and not gio_ra),
-                'missing_checkin': bool(not gio_vao and gio_ra),
+                'same_in_out': same_in_out,
+                'missing_checkout': bool(gio_vao and not gio_ra) and not same_in_out,
+                'missing_checkin': bool(not gio_vao and gio_ra) and not same_in_out,
             }
         return results
 
     def _parse_all(self):
-        """QuÃ©t toÃ n bá»™ sheet vÃ  á»§y quyá»n parse cho Ä‘á»‹nh dáº¡ng phÃ¹ há»£p"""
+        """Quét toàn bộ sheet và ủy quyền parse cho định dạng phù hợp"""
         # Detect list format by scanning header row
         header_map = self._detect_list_header()
         if header_map:
@@ -197,7 +230,7 @@ class ExcelChamCongExtractor:
         self._dedupe_persons_by_name()
 
     def _parse_pivot_format(self):
-        """Parse Ä‘á»‹nh dáº¡ng Pivot (ngang): má»—i nhÃ¢n sá»± gá»“m khá»‘i 6 dÃ²ng"""
+        """Parse định dạng Pivot (ngang): mỗi nhân sự gồm khối 6 dòng"""
         # Get date range from row 1
         date_info = str(self.sheet.cell_value(1, 0))
         m = re.search(r'(\d{4}-\d{1,2}-\d{1,2})~(\d{4}-\d{1,2}-\d{1,2})', date_info)
@@ -234,11 +267,12 @@ class ExcelChamCongExtractor:
                     records.append({
                         'day': day_num,
                         'date': rec_date.strftime('%d/%m/%Y'),
-                        'weekday': ['CN', 'Hai', 'Ba', 'TÆ°', 'NÄƒm', 'SÃ¡u', 'Báº£y'][rec_date.weekday() % 7
+                        'weekday': ['CN', 'Hai', 'Ba', 'Tư', 'Năm', 'Sáu', 'Bảy'][rec_date.weekday() % 7
                                     if rec_date.weekday() != 6 else 0],
                         'gio_vao': day_data['gio_vao'],
                         'gio_ra': day_data['gio_ra'],
                         'is_absent': day_data['is_absent'],
+                        'same_in_out': day_data.get('same_in_out', False),
                         'missing_checkout': day_data['missing_checkout'],
                         'missing_checkin': day_data['missing_checkin'],
                     })
@@ -255,7 +289,7 @@ class ExcelChamCongExtractor:
             r += 1
 
     def _parse_list_format(self):
-        """Parse Ä‘á»‹nh dáº¡ng List dá»c: Má»—i dÃ²ng thá»ƒ hiá»‡n 1 ca lÃ m viá»‡c cá»§a nhÃ¢n sá»± trong ngÃ y nháº¥t Ä‘á»‹nh"""
+        """Parse định dạng List dọc: Mỗi dòng thể hiện 1 ca làm việc của nhân sự trong ngày nhất định"""
         persons_dict = {}
         
         # Check title row for month/year or use fallback
@@ -345,12 +379,12 @@ class ExcelChamCongExtractor:
                 p_records[day_key] = {
                     'day': day_num,
                     'date': rec_date.strftime('%d/%m/%Y'),
-                    'weekday': ['CN', 'Hai', 'Ba', 'TÆ°', 'NÄƒm', 'SÃ¡u', 'Báº£y'][rec_date.weekday() % 7 if rec_date.weekday() != 6 else 0],
+                    'weekday': ['CN', 'Hai', 'Ba', 'Tư', 'Năm', 'Sáu', 'Bảy'][rec_date.weekday() % 7 if rec_date.weekday() != 6 else 0],
                     'vao_list': [],
                     'ra_list': []
                 }
 
-            # Ná»‘i cÃ¡c giá» ca láº¡i
+            # Nối các giờ ca lại
             if gio_vao: p_records[day_key]['vao_list'].append(gio_vao)
             if gio_ra: p_records[day_key]['ra_list'].append(gio_ra)
 
@@ -365,6 +399,14 @@ class ExcelChamCongExtractor:
                 missing_checkout = bool(len(vaos) > len(ras))
                 missing_checkin = bool(len(ras) > len(vaos))
                 
+                same_in_out = False
+                if len(vaos) > 0 and len(ras) > 0:
+                    same_in_out = is_same_or_close_time(vaos[0], ras[-1], max_diff_minutes=5)
+                
+                if same_in_out:
+                    missing_checkout = False
+                    missing_checkin = False
+
                 records.append({
                     'day': r['day'],
                     'date': r['date'],
@@ -372,6 +414,7 @@ class ExcelChamCongExtractor:
                     'gio_vao': '\n'.join(vaos),
                     'gio_ra': '\n'.join(ras),
                     'is_absent': is_absent,
+                    'same_in_out': same_in_out,
                     'missing_checkin': missing_checkin,
                     'missing_checkout': missing_checkout
                 })
@@ -379,7 +422,7 @@ class ExcelChamCongExtractor:
             pdata['records'] = records
             self._persons_data.append(pdata)
     def _normalize_name(self, name: str) -> str:
-        """Chuáº©n hÃ³a tÃªn Ä‘á»ƒ so sÃ¡nh"""
+        """Chuẩn hóa tên để so sánh"""
         if not name:
             return ""
         name = unicodedata.normalize('NFD', name)
@@ -388,7 +431,7 @@ class ExcelChamCongExtractor:
         return name
 
     def _count_work_days(self, person: Dict) -> int:
-        """Äáº¿m sá»‘ ngÃ y cÃ³ lÃ m viá»‡c (khÃ´ng vÃ¡ng)"""
+        """Đếm số ngày có làm việc (không váng)"""
         count = 0
         for rec in person.get('records', []):
             if not rec.get('is_absent', True):
@@ -397,8 +440,8 @@ class ExcelChamCongExtractor:
 
     def _dedupe_persons_by_name(self):
         """
-        Náº¿u trÃ¹ng tÃªn, chá»n báº£n ghi cÃ³ sá»‘ ngÃ y Ä‘i lÃ m nhiá»u hÆ¡n.
-        Náº¿u báº±ng nhau, chá»n báº£n ghi cÃ³ nhiá»u record hÆ¡n.
+        Nếu trùng tên, chọn bản ghi có số ngày đi làm nhiều hơn.
+        Nếu bằng nhau, chọn bản ghi có nhiều record hơn.
         """
         if not self._persons_data:
             return
@@ -432,23 +475,26 @@ class ExcelChamCongExtractor:
         return self._persons_data
 
     def get_absent_records(self, person: Dict) -> List[Dict]:
-        """Láº¥y danh sÃ¡ch ngÃ y váº¯ng hoáº·c thiáº¿u giá» vÃ o/ra"""
+        """Lấy danh sách ngày vắng hoặc thiếu giờ vào/ra hoặc trùng giờ"""
         absent = []
         for rec in person['records']:
-            if rec['is_absent'] or rec['missing_checkout'] or rec['missing_checkin']:
-                issue = 'Váº¯ng máº·t'
+            if rec.get('same_in_out'):
+                issue = f"Trùng giờ vào/ra ({rec['gio_vao']} - {rec['gio_ra']})"
+                absent.append({**rec, 'issue': issue})
+            elif rec['is_absent'] or rec['missing_checkout'] or rec['missing_checkin']:
+                issue = 'Vắng mặt'
                 if rec['missing_checkin']:
-                    issue = f"Thiáº¿u giá» vÃ o (giá» ra: {rec['gio_ra']})"
+                    issue = f"Thiếu giờ vào (giờ ra: {rec['gio_ra']})"
                 elif rec['missing_checkout']:
-                    issue = f"Thiáº¿u giá» ra (giá» vÃ o: {rec['gio_vao']})"
+                    issue = f"Thiếu giờ ra (giờ vào: {rec['gio_vao']})"
                 absent.append({**rec, 'issue': issue})
         return absent
 
 
 class ExcelToWordExporter:
     """
-    Nháº­n dá»¯ liá»‡u tá»« ExcelChamCongExtractor vÃ  táº¡o file Word
-    cho tá»«ng ngÆ°á»i, theo format CHI TIáº¾T CHáº¤M CÃ”NG.
+    Nhận dữ liệu từ ExcelChamCongExtractor và tạo file Word
+    cho từng người, theo format CHI TIẾT CHẤM CÔNG.
     """
 
     def __init__(
@@ -472,6 +518,34 @@ class ExcelToWordExporter:
         self._portrait_cache = {}
         self._scan_portraits()
 
+    def _find_day_folder(self, day_str: str, date_raw: str = "") -> Optional[str]:
+        """Tìm thư mục ngày tương ứng (hỗ trợ định dạng: '01', '2026-09-01', '01-09-2026')"""
+        if not self.input_images_dir or not os.path.exists(self.input_images_dir):
+            return None
+        direct = os.path.join(self.input_images_dir, day_str)
+        if os.path.exists(direct):
+            return direct
+        try:
+            for d in os.listdir(self.input_images_dir):
+                if os.path.isdir(os.path.join(self.input_images_dir, d)):
+                    if d == day_str or d.endswith(f"-{day_str}") or d.startswith(f"{day_str}-"):
+                        return os.path.join(self.input_images_dir, d)
+        except Exception:
+            pass
+        parent_input = os.path.dirname(self.input_images_dir)
+        if os.path.exists(parent_input):
+            direct_parent = os.path.join(parent_input, day_str)
+            if os.path.exists(direct_parent):
+                return direct_parent
+            try:
+                for d in os.listdir(parent_input):
+                    p_d = os.path.join(parent_input, d)
+                    if os.path.isdir(p_d) and (d == day_str or d.endswith(f"-{day_str}") or d.startswith(f"{day_str}-")):
+                        return p_d
+            except Exception:
+                pass
+        return None
+
     def _scan_portraits(self):
         if not os.path.exists(self.portrait_dir):
             return
@@ -479,11 +553,23 @@ class ExcelToWordExporter:
         for item in os.listdir(self.portrait_dir):
             item_path = os.path.join(self.portrait_dir, item)
             if os.path.isdir(item_path):
-                for f in os.listdir(item_path):
-                    if os.path.splitext(f)[1].lower() in exts:
-                        key = self._normalize(item)
-                        self._portrait_cache.setdefault(key, []).append(
-                            os.path.join(item_path, f))
+                sub_items = os.listdir(item_path)
+                sub_dirs = [s for s in sub_items if os.path.isdir(os.path.join(item_path, s))]
+                if sub_dirs:
+                    # Thư mục dự án
+                    for sub in sub_dirs:
+                        person_path = os.path.join(item_path, sub)
+                        for f in os.listdir(person_path):
+                            if os.path.splitext(f)[1].lower() in exts:
+                                key = self._normalize(sub)
+                                self._portrait_cache.setdefault(key, []).append(
+                                    os.path.join(person_path, f))
+                else:
+                    for f in sub_items:
+                        if os.path.splitext(f)[1].lower() in exts:
+                            key = self._normalize(item)
+                            self._portrait_cache.setdefault(key, []).append(
+                                os.path.join(item_path, f))
             else:
                 if os.path.splitext(item)[1].lower() in exts:
                     key = self._normalize(os.path.splitext(item)[0])
@@ -513,7 +599,7 @@ class ExcelToWordExporter:
         return best if best_score >= 2 else None
 
     def export_person(self, person: Dict, log_callback=None) -> str:
-        """Xuáº¥t file Word cho má»™t ngÆ°á»i, tráº£ vá» Ä‘Æ°á»ng dáº«n file"""
+        """Xuất file Word cho một người, trả về đường dẫn file"""
         name = person['name']
         month = person['month']
         year = person['year']
@@ -528,27 +614,27 @@ class ExcelToWordExporter:
         section.left_margin = Cm(2)
         section.right_margin = Cm(1.5)
 
-        # === TiÃªu Ä‘á» ===
+        # === Tiêu đề ===
         title = doc.add_paragraph()
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = title.add_run('CHI TIáº¾T CHáº¤M CÃ”NG')
+        run = title.add_run('CHI TIẾT CHẤM CÔNG')
         run.bold = True
         run.font.size = Pt(14)
 
-        # ThÃ´ng tin ngÆ°á»i
+        # Thông tin người
         info_para = doc.add_paragraph()
         info_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
         info_run = info_para.add_run(
-            f'TÃªn nhÃ¢n viÃªn: {name.upper()}     '
-            f'ThÃ¡ng: {month:02d}/{year}'
+            f'Tên nhân viên: {name.upper()}     '
+            f'Tháng: {month:02d}/{year}'
         )
         info_run.bold = True
         info_run.font.size = Pt(11)
 
         doc.add_paragraph()
 
-        # === Báº£ng cháº¥m cÃ´ng ===
-        headers = ['STT', 'NgÃ y', 'Thá»©', 'Giá» vÃ o', 'Giá» ra', 'Ghi chÃº', 'áº¢nh Camera']
+        # === Bảng chấm công ===
+        headers = ['STT', 'Ngày', 'Thứ', 'Giờ vào', 'Giờ ra', 'Ghi chú', 'Ảnh Camera']
         col_widths = [Cm(1.0), Cm(2.7), Cm(1.5), Cm(2.2), Cm(2.2), Cm(3.2), Cm(3.5)]
 
         table = doc.add_table(rows=1, cols=len(headers))
@@ -571,8 +657,8 @@ class ExcelToWordExporter:
             row = table.add_row()
             cells = row.cells
 
-            # Highlight absent / missing rows
-            is_issue = rec['is_absent'] or rec['missing_checkout'] or rec['missing_checkin']
+            # Highlight absent / missing / same_in_out rows
+            is_issue = rec['is_absent'] or rec['missing_checkout'] or rec['missing_checkin'] or rec.get('same_in_out', False)
             if is_issue:
                 absent_days.append(rec)
 
@@ -585,12 +671,14 @@ class ExcelToWordExporter:
             ]
 
             note = ''
-            if rec['is_absent']:
-                note = 'Váº¯ng máº·t'
+            if rec.get('same_in_out'):
+                note = 'Trùng giờ vào/ra'
+            elif rec['is_absent']:
+                note = 'Vắng mặt'
             elif rec['missing_checkin']:
-                note = 'Thiáº¿u giá» vÃ o'
+                note = 'Thiếu giờ vào'
             elif rec['missing_checkout']:
-                note = 'Thiáº¿u giá» ra'
+                note = 'Thiếu giờ ra'
 
             data.append(note)
 
@@ -601,17 +689,17 @@ class ExcelToWordExporter:
                 run = p.add_run(val)
                 run.font.size = Pt(9)
                 if is_issue and note:
-                    run.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)  # Äá»
+                    run.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)  # Đỏ
             
-            # Xá»­ lÃ½ áº£nh camera cho cá»™t cuá»‘i cÃ¹ng
+            # Xử lý ảnh camera cho cột cuối cùng
             cells[6].width = col_widths[6]
             if is_issue and self.input_images_dir and self.face_matcher:
                 day_str = rec['date'].split('/')[0].zfill(2)
-                day_folder = os.path.join(self.input_images_dir, day_str)
+                day_folder = self._find_day_folder(day_str, rec.get('date', ''))
                 matched_img = None
                 
                 if os.path.exists(day_folder):
-                    # TÃ¬m táº¥t cáº£ file áº£nh trong thÆ° má»¥c ngÃ y nÃ y
+                    # Tìm tất cả file ảnh trong thư mục ngày này
                     camera_images = []
                     for root, _, files in os.walk(day_folder):
                         for f in files:
@@ -620,7 +708,7 @@ class ExcelToWordExporter:
                     
                     if camera_images:
                         if log_callback:
-                            log_callback(f"    ðŸ” {name} (ngÃ y {day_str}): So sÃ¡nh {len(camera_images)} áº£nh...", "default")
+                            log_callback(f"     {name} (ngày {day_str}): So sánh {len(camera_images)} ảnh...", "default")
                         try:
                             matched_img = self.face_matcher.match_face_in_images(
                                 name,
@@ -631,15 +719,15 @@ class ExcelToWordExporter:
                             )
                         except Exception as e:
                             if log_callback:
-                                log_callback(f"    âŒ Lá»—i OpenCV/DeepFace khi so sÃ¡nh {name}: {e}", "warning")
+                                log_callback(f"     Lỗi OpenCV/DeepFace khi so sánh {name}: {e}", "warning")
                     else:
                         if log_callback:
-                            log_callback(f"    âš ï¸ {name} (ngÃ y {day_str}): ThÆ° má»¥c áº£nh rá»—ng", "warning")
+                            log_callback(f"     {name} (ngày {day_str}): Thư mục ảnh rỗng", "warning")
                 else:
                     if log_callback:
-                        log_callback(f"    âš ï¸ {name} (ngÃ y {day_str}): KhÃ´ng cÃ³ thÆ° má»¥c áº£nh", "warning")
+                        log_callback(f"     {name} (ngày {day_str}): Không có thư mục ảnh", "warning")
                 
-                # ChÃ¨n áº£nh vÃ o Ã´
+                # Chèn ảnh vào ô
                 p = cells[6].paragraphs[0]
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 if matched_img and os.path.exists(matched_img):
@@ -647,25 +735,25 @@ class ExcelToWordExporter:
                         run = p.add_run()
                         run.add_picture(matched_img, width=Cm(3))
                         if log_callback:
-                            log_callback(f"    âœ… {name}: ÄÃ£ chÃ¨n áº£nh {os.path.basename(matched_img)}", "success")
+                            log_callback(f"     {name}: Đã chèn ảnh {os.path.basename(matched_img)}", "success")
                     except Exception as e:
-                        p.add_run(f"[Lá»—i áº£nh]").font.size = Pt(8)
+                        p.add_run(f"[Lỗi ảnh]").font.size = Pt(8)
                 else:
                     if os.path.exists(day_folder) and camera_images:
-                        p.add_run("KhÃ´ng khá»›p").font.size = Pt(8)
+                        p.add_run("Không khớp").font.size = Pt(8)
                     elif not os.path.exists(day_folder):
-                        p.add_run("KhÃ´ng cÃ³ dl").font.size = Pt(8)
+                        p.add_run("Không có dl").font.size = Pt(8)
             else:
                 p = cells[6].paragraphs[0]
                 run = p.add_run()
                 run.font.size = Pt(9)
 
-        # === TÃ³m táº¯t váº¯ng ===
+        # === Tóm tắt vắng ===
         if absent_days:
             doc.add_paragraph()
             summary_para = doc.add_paragraph()
             summary_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            sr = summary_para.add_run(f'Tá»•ng ngÃ y váº¯ng/thiáº¿u dá»¯ liá»‡u: {len(absent_days)} ngÃ y')
+            sr = summary_para.add_run(f'Tổng ngày vắng/thiếu dữ liệu: {len(absent_days)} ngày')
             sr.bold = True
             sr.font.size = Pt(10)
 
@@ -676,12 +764,12 @@ class ExcelToWordExporter:
         doc.save(output_path)
 
         if log_callback:
-            log_callback(f'âœ… ÄÃ£ xuáº¥t: {filename} ({len(records)} ngÃ y, {len(absent_days)} váº¯ng/thiáº¿u)')
+            log_callback(f' Đã xuất: {filename} ({len(records)} ngày, {len(absent_days)} vắng/thiếu)')
 
         return output_path
 
     def export_all(self, persons: List[Dict], log_callback=None) -> List[str]:
-        """Xuáº¥t file Word cho táº¥t cáº£ má»i ngÆ°á»i"""
+        """Xuất file Word cho tất cả mọi người"""
         results = []
         for person in persons:
             try:
@@ -689,30 +777,30 @@ class ExcelToWordExporter:
                 results.append(path)
             except Exception as e:
                 if log_callback:
-                    log_callback(f'âŒ Lá»—i xuáº¥t {person["name"]}: {e}', 'error')
+                    log_callback(f' Lỗi xuất {person["name"]}: {e}', 'error')
         return results
 
 
-# â”€â”€â”€ CLI test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── CLI test ────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     import sys
     sys.stdout.reconfigure(encoding='utf-8')
 
-    excel_path = r'd:\Projects\phan mem quet mat\000001_02BÃ¡o cÃ¡o 28.02.2026.xls'
-    portrait_dir = r'd:\Projects\phan mem quet mat\áº¢nh BV'
+    excel_path = r'd:\Projects\phan mem quet mat\000001_02Báo cáo 28.02.2026.xls'
+    portrait_dir = r'd:\Projects\phan mem quet mat\Ảnh BV'
     output_dir = r'd:\Projects\phan mem quet mat\results\excel_export'
 
-    print('ðŸ“‚ Äang Ä‘á»c file Excel...')
+    print(' Đang đọc file Excel...')
     extractor = ExcelChamCongExtractor(excel_path)
     persons = extractor.get_persons()
-    print(f'âœ… TÃ¬m tháº¥y {len(persons)} ngÆ°á»i')
+    print(f' Tìm thấy {len(persons)} người')
     for p in persons[:5]:
         absent = extractor.get_absent_records(p)
-        print(f'  - {p["name"]}: {len(p["records"])} ngÃ y, {len(absent)} váº¯ng/thiáº¿u')
+        print(f'  - {p["name"]}: {len(p["records"])} ngày, {len(absent)} vắng/thiếu')
 
-    print('\nðŸ“ Äang xuáº¥t file Word...')
+    print('\n📝 Đang xuất file Word...')
     exporter = ExcelToWordExporter(portrait_dir, output_dir)
     files = exporter.export_all(persons, log_callback=print)
-    print(f'\nðŸŽ‰ ÄÃ£ xuáº¥t {len(files)} file Word vÃ o: {output_dir}')
+    print(f'\n Đã xuất {len(files)} file Word vào: {output_dir}')
 
 

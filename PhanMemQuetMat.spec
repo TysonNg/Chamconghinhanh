@@ -53,6 +53,7 @@ a = Analysis(
         'src.text_extractor', 'src.async_processor',
         'src.database_manager', 'src.excel_extractor',
         'src.excel_splitter', 'src.excel_face_analyzer', 'src.excel_list_word_exporter',
+        'src.pdf_face_analyzer',
     ],
     hookspath=[],
     hooksconfig={},
