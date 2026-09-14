@@ -4,7 +4,6 @@
  */
 
 // ==================== State ====================
-let analysisResults = null;
 let pdfTaskId = null;
 let pdfFaceTaskId = null;
 let pdfFilename = null;
@@ -89,9 +88,9 @@ function showToast(message, type = 'info', actionText = null, actionCallback = n
 const VALID_TABS = {
     process: ['excel', 'pdf'],
     results: ['excel', 'pdf', 'summary'],
-    analyze: [],
     photos: ['daily', 'portraits'],
-    zalo: []
+    zalo: [],
+    supplement: []
 };
 
 let currentActiveTab = 'process';
@@ -209,10 +208,10 @@ function switchTab(tabId, targetSubtab = null, pushHistory = true) {
 
     const titles = {
         process: 'Xử Lý Chấm Công',
-        analyze: 'Phân Tích Cũ (Word)',
         results: 'Báo Cáo & Kết Quả',
         photos: 'Quản Lý Ảnh',
-        zalo: 'Đồng Bộ & Tải Ảnh Zalo'
+        zalo: 'Đồng Bộ & Tải Ảnh Zalo',
+        supplement: 'Bổ Sung Ảnh Chấm Công'
     };
     const titleEl = document.querySelector('.page-title');
     if (titleEl) titleEl.textContent = titles[tabId] || 'Chấm Công';
@@ -235,6 +234,10 @@ function switchTab(tabId, targetSubtab = null, pushHistory = true) {
     } else if (tabId === 'zalo') {
         if (typeof initZaloTab === 'function') {
             initZaloTab();
+        }
+    } else if (tabId === 'supplement') {
+        if (typeof supplementLoadRecords === 'function') {
+            supplementLoadRecords();
         }
     }
 
@@ -274,131 +277,6 @@ document.querySelectorAll('.nav-item').forEach(item => {
         switchTab(tabId, null, true);
     });
 });
-// ==================== Analysis ====================
-
-async function runAnalysis() {
-    const btn = document.getElementById('btn-analyze');
-    const progressSection = document.getElementById('progress-section');
-    const logPanel = document.getElementById('log-panel');
-
-    btn.disabled = true;
-    btn.textContent = ' Đang xử lý...';
-    progressSection.style.display = 'block';
-    logPanel.style.display = 'block';
-    clearLogs();
-
-    updateProgress('Đang quét file chấm công...', 10);
-    addLog(' Bắt đầu phân tích...', 'info');
-
-    // Connect to SSE for real-time logs
-    startLogStream();
-
-    try {
-        // Step 1: Phân tích chấm công
-        updateProgress('Đang phân tích ngày thiếu...', 30);
-        const result = await apiPost('/api/analyze-full');
-
-        // Stop SSE connection
-        stopLogStream();
-
-        if (result.success) {
-            analysisResults = result;
-
-            // Update stats
-            document.getElementById('stat-files').textContent = result.summary.total_persons || 0;
-            document.getElementById('stat-missing').textContent = result.summary.total_missing || 0;
-            document.getElementById('stat-persons').textContent = result.summary.persons_with_issues || 0;
-            document.getElementById('stat-matched').textContent = result.summary.total_matched || 0;
-
-            // Update table
-            updateProgress('Đang hiển thị kết quả...', 90);
-            displayResults(result.records);
-
-            updateProgress('Hoàn thành!', 100);
-            addLog(` Hoàn thành! Tìm thấy ${result.summary.total_missing} bản ghi thiếu, matched ${result.summary.total_matched} ảnh`, 'success');
-            showToast(`Tìm thấy ${result.summary.total_missing} bản ghi thiếu`, 'success');
-
-            document.getElementById('results-card').style.display = 'block';
-        } else {
-            addLog(` Lỗi: ${result.error}`, 'error');
-            showToast(result.error || 'Lỗi phân tích', 'error');
-        }
-    } catch (error) {
-        stopLogStream();
-        addLog(` Lỗi: ${error.message}`, 'error');
-        showToast('Lỗi: ' + error.message, 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = ' Bắt Đầu Phân Tích';
-        setTimeout(() => {
-            progressSection.style.display = 'none';
-        }, 2000);
-    }
-}
-
-function updateProgress(title, percent) {
-    document.getElementById('progress-title').textContent = title;
-    document.getElementById('progress-percent').textContent = `${percent}%`;
-    document.getElementById('progress-fill').style.width = `${percent}%`;
-}
-
-function displayResults(records) {
-    const tbody = document.getElementById('analysis-table-body');
-
-    if (!records || records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-message">Không tìm thấy bản ghi nào thiếu dữ liệu </td></tr>';
-        return;
-    }
-
-    tbody.innerHTML = records.map((record, index) => `
-        <tr>
-            <td>${index + 1}</td>
-            <td>${record.person_name}</td>
-            <td>${record.date}</td>
-            <td>${record.weekday}</td>
-            <td>${record.issue_description}</td>
-            <td>${record.matched_image
-            ? `<img src="/matched-image/${encodeURIComponent(record.matched_image)}" 
-                       alt="Matched" style="width:60px;height:60px;object-fit:cover;border-radius:4px;" 
-                       onerror="this.style.display='none';this.nextSibling.style.display='block'">
-                   <span style="display:none;color:#999;">Không có</span>`
-            : '<span style="color:#999;">Không có</span>'
-        }</td>
-        </tr>
-    `).join('');
-}
-
-// ==================== Export ====================
-
-async function exportWord() {
-    if (!analysisResults) {
-        showToast('Vui lòng chạy phân tích trước', 'warning');
-        return;
-    }
-
-    const projectName = document.getElementById('project-name').value.trim();
-    const month = document.getElementById('export-month').value.trim();
-
-    showToast('Đang xuất file Word...', 'info');
-
-    try {
-        const result = await apiPost('/api/export-word', {
-            project_name: projectName,
-            month: month,
-            records: analysisResults.records
-        });
-
-        if (result.success) {
-            showToast(`Đã xuất file: ${result.filename}`, 'success');
-            loadResultFiles();
-        } else {
-            showToast(result.error || 'Lỗi xuất file', 'error');
-        }
-    } catch (error) {
-        showToast('Lỗi: ' + error.message, 'error');
-    }
-}
-
 // ==================== Results ====================
 
 async function loadResultFiles(btn) {
@@ -3079,4 +2957,289 @@ document.addEventListener('click', (e) => {
         }
     }
 });
+
+
+// ==================== BỔ SUNG ẢNH CHẤM CÔNG (SUPPLEMENT) ====================
+
+function supplementFileSelected(input) {
+    const nameEl = document.getElementById('supp-file-name');
+    if (input.files && input.files[0]) {
+        nameEl.textContent = input.files[0].name;
+    } else {
+        nameEl.textContent = '';
+    }
+}
+
+function supplementDropFile(e) {
+    e.preventDefault();
+    const zone = document.getElementById('supplement-upload-zone');
+    zone.classList.remove('dragover');
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+        const input = document.getElementById('supp-file');
+        input.files = files;
+        supplementFileSelected(input);
+    }
+}
+
+async function supplementUpload(e) {
+    e.preventDefault();
+    const form = document.getElementById('supplement-upload-form');
+    const fileInput = document.getElementById('supp-file');
+    if (!fileInput.files || fileInput.files.length === 0) {
+        alert('Vui lòng chọn file ảnh!');
+        return;
+    }
+    
+    const btn = document.getElementById('btn-supp-upload');
+    btn.disabled = true;
+    btn.innerHTML = 'Đang upload...';
+    
+    try {
+        const formData = new FormData();
+        formData.append('photo', fileInput.files[0]);
+        formData.append('employee_name', document.getElementById('supp-employee').value);
+        formData.append('target_date', document.getElementById('supp-date').value);
+        formData.append('target_time', document.getElementById('supp-time').value);
+        formData.append('watermark_style', document.getElementById('supp-style').value);
+        formData.append('watermark_position', document.getElementById('supp-position').value);
+        formData.append('location_name', document.getElementById('supp-location').value);
+        formData.append('gps_coords', document.getElementById('supp-gps').value);
+        formData.append('remove_old_watermark', document.getElementById('supp-remove-old').checked ? 'true' : 'false');
+        formData.append('modify_exif', document.getElementById('supp-modify-exif').checked ? 'true' : 'false');
+        
+        const resp = await fetch('/api/supplement/upload', { method: 'POST', body: formData });
+        const data = await resp.json();
+        
+        if (data.success) {
+            alert('✅ Upload thành công! Record ID: ' + data.record.id);
+            fileInput.value = '';
+            document.getElementById('supp-file-name').textContent = '';
+            supplementLoadRecords();
+        } else {
+            alert('❌ Lỗi: ' + (data.error || 'Không rõ'));
+        }
+    } catch (err) {
+        alert('❌ Lỗi kết nối: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Upload & Tạo Record';
+    }
+}
+
+async function supplementLoadRecords() {
+    const container = document.getElementById('supplement-records-container');
+    if (!container) return;
+    container.innerHTML = '<p style="text-align:center; padding:16px; color:var(--text-secondary)">Đang tải...</p>';
+    
+    try {
+        const resp = await fetch('/api/supplement/records');
+        const data = await resp.json();
+        
+        if (!data.success || !data.records || data.records.length === 0) {
+            container.innerHTML = '<p style="color:var(--text-secondary); text-align:center; padding:24px;">Chưa có ảnh bổ sung nào.</p>';
+            return;
+        }
+        
+        let html = '<table class="data-table" style="width:100%;">';
+        html += '<thead><tr>';
+        html += '<th>ID</th><th>Nhân viên</th><th>Ngày</th><th>Giờ</th><th>Trạng thái</th><th>Hành động</th>';
+        html += '</tr></thead><tbody>';
+        
+        for (const r of data.records) {
+            const statusBadge = {
+                'pending': '<span style="color:#f59e0b;">&#9679; Chờ xử lý</span>',
+                'processing': '<span style="color:#3b82f6;">&#9679; Đang xử lý</span>',
+                'done': '<span style="color:#22c55e;">&#9679; Hoàn thành</span>',
+                'error': '<span style="color:#ef4444;">&#9679; Lỗi</span>',
+            }[r.status] || r.status;
+            
+            let actions = '';
+            if (r.status === 'pending') {
+                actions += `<button class="btn btn-primary btn-sm" onclick="supplementProcess('${r.id}')">Xử lý</button> `;
+            }
+            if (r.status === 'done') {
+                actions += `<button class="btn btn-success btn-sm" onclick="supplementDownload('${r.id}')">Tải</button> `;
+                actions += `<button class="btn btn-secondary btn-sm" onclick="supplementPreview('${r.id}')">Xem</button> `;
+            }
+            if (r.status === 'pending' || r.status === 'error') {
+                actions += `<button class="btn btn-secondary btn-sm" onclick="supplementPreview('${r.id}')">Preview</button> `;
+            }
+            actions += `<button class="btn btn-sm" style="color:#ef4444;" onclick="supplementDelete('${r.id}')">Xóa</button>`;
+            
+            const dateFormatted = r.target_date ? r.target_date.split('-').reverse().join('/') : '';
+            
+            html += `<tr>`;
+            html += `<td><code>${r.id}</code></td>`;
+            html += `<td>${r.employee_name || ''}</td>`;
+            html += `<td>${dateFormatted}</td>`;
+            html += `<td>${r.target_time || ''}</td>`;
+            html += `<td>${statusBadge}</td>`;
+            html += `<td style="white-space:nowrap;">${actions}</td>`;
+            html += `</tr>`;
+            
+            if (r.status === 'error' && r.error_message) {
+                html += `<tr><td colspan="6" style="color:#ef4444; font-size:0.85rem; padding:4px 12px;">❌ ${r.error_message}</td></tr>`;
+            }
+        }
+        
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<p style="color:#ef4444; text-align:center; padding:16px;">Lỗi: ${err.message}</p>`;
+    }
+}
+
+async function supplementProcess(recordId) {
+    if (!confirm('Bạn có chắc muốn xử lý record này?')) return;
+    try {
+        const resp = await fetch('/api/supplement/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ record_id: recordId })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            alert('✅ Xử lý thành công!');
+        } else {
+            alert('❌ Lỗi: ' + (data.error || 'Không rõ'));
+        }
+        supplementLoadRecords();
+    } catch (err) {
+        alert('❌ Lỗi: ' + err.message);
+    }
+}
+
+async function supplementProcessAll() {
+    if (!confirm('Xử lý tất cả ảnh đang chờ?')) return;
+    try {
+        const resp = await fetch('/api/supplement/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            const count = data.records ? data.records.length : 0;
+            alert(`✅ Đã xử lý ${count} ảnh!`);
+        } else {
+            alert('❌ Lỗi: ' + (data.error || 'Không rõ'));
+        }
+        supplementLoadRecords();
+    } catch (err) {
+        alert('❌ Lỗi: ' + err.message);
+    }
+}
+
+function supplementDownload(recordId) {
+    window.open(`/api/supplement/download/${recordId}`, '_blank');
+}
+
+async function supplementPreview(recordId) {
+    const modal = document.getElementById('supplement-preview-modal');
+    const img = document.getElementById('supp-preview-img');
+    const title = document.getElementById('supp-preview-title');
+    const validationDiv = document.getElementById('supp-preview-validation');
+    
+    img.src = `/api/supplement/preview/${recordId}?t=${Date.now()}`;
+    title.textContent = `Preview - ${recordId}`;
+    validationDiv.innerHTML = 'Đang kiểm tra chất lượng...';
+    modal.style.display = 'flex';
+    
+    // Load validation
+    try {
+        const resp = await fetch(`/api/supplement/validate/${recordId}`);
+        const data = await resp.json();
+        if (data.success && data.validation) {
+            const v = data.validation;
+            let html = '<div style="padding:8px; background:var(--bg-secondary); border-radius:8px; font-size:0.88rem;">';
+            html += `<p style="margin:0 0 6px;"><strong>Kết quả kiểm tra:</strong> ${v.valid ? '✅ Đạt' : '❌ Không đạt'}</p>`;
+            if (v.checks) {
+                for (const [key, check] of Object.entries(v.checks)) {
+                    html += `<p style="margin:2px 0;">${check.ok ? '✅' : '❌'} ${key}: ${JSON.stringify(check)}</p>`;
+                }
+            }
+            if (v.warnings && v.warnings.length > 0) {
+                html += '<p style="margin:6px 0 0; color:#f59e0b;">⚠️ ' + v.warnings.join(' | ') + '</p>';
+            }
+            html += '</div>';
+            validationDiv.innerHTML = html;
+        } else {
+            validationDiv.innerHTML = '';
+        }
+    } catch {
+        validationDiv.innerHTML = '';
+    }
+}
+
+async function supplementDelete(recordId) {
+    if (!confirm('Xóa record ' + recordId + '? File ảnh liên quan cũng sẽ bị xóa.')) return;
+    try {
+        const resp = await fetch('/api/supplement/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ record_id: recordId })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            supplementLoadRecords();
+        } else {
+            alert('❌ Lỗi xóa: ' + (data.error || 'Không rõ'));
+        }
+    } catch (err) {
+        alert('❌ Lỗi: ' + err.message);
+    }
+}
+
+async function supplementLoadMissing() {
+    const card = document.getElementById('supplement-missing-card');
+    const list = document.getElementById('supplement-missing-list');
+    card.style.display = 'block';
+    list.innerHTML = '<p style="text-align:center; color:var(--text-secondary);">Đang quét file chấm công...</p>';
+    
+    try {
+        const resp = await fetch('/api/supplement/missing');
+        const data = await resp.json();
+        
+        if (!data.success || !data.missing || data.missing.length === 0) {
+            list.innerHTML = '<p style="text-align:center; color:#22c55e; padding:12px;">✅ Không có ngày thiếu ảnh nào!</p>';
+            return;
+        }
+        
+        let html = '<table class="data-table" style="width:100%; font-size:0.88rem;">';
+        html += '<thead><tr><th>Nhân viên</th><th>Ngày</th><th>Thứ</th><th>Vấn đề</th><th></th></tr></thead><tbody>';
+        
+        for (const m of data.missing) {
+            html += '<tr>';
+            html += `<td>${m.person_name || ''}</td>`;
+            html += `<td>${m.date || ''}</td>`;
+            html += `<td>${m.weekday || ''}</td>`;
+            html += `<td style="color:#f59e0b;">${m.issue_description || ''}</td>`;
+            html += `<td><button class="btn btn-primary btn-sm" onclick="supplementFillFromMissing('${m.person_name}','${m.date}')">Bổ sung</button></td>`;
+            html += '</tr>';
+        }
+        
+        html += '</tbody></table>';
+        html += `<p style="margin-top:8px; font-size:0.85rem; color:var(--text-secondary);">Tổng: ${data.missing.length} bản ghi thiếu</p>`;
+        list.innerHTML = html;
+    } catch (err) {
+        list.innerHTML = `<p style="color:#ef4444;">❌ Lỗi: ${err.message}</p>`;
+    }
+}
+
+function supplementFillFromMissing(name, date) {
+    // Convert dd/mm/yyyy to yyyy-mm-dd for the date input
+    let isoDate = date;
+    if (date && date.includes('/')) {
+        const parts = date.split('/');
+        if (parts.length === 3) {
+            isoDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+    }
+    document.getElementById('supp-employee').value = name;
+    document.getElementById('supp-date').value = isoDate;
+    document.getElementById('supp-time').value = '08:00';
+    // Scroll to upload form
+    document.getElementById('supplement-upload-form').scrollIntoView({ behavior: 'smooth' });
+}
 

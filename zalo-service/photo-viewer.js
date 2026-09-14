@@ -88,7 +88,7 @@ async function resolvePhoto(page, photo) {
     // Restrict selection to the scanned media/chat surface; a URL alone must never
     // select a thumbnail in another open dialog. Process before virtualized rows disappear.
     const tile = await page.evaluateHandle(p => {
-        const images = Array.from(document.querySelectorAll('#innerScrollContainer img, .chat-message img.zimg-el, .msg-item img.zimg-el, .img-center-box img.zimg-el'));
+        const images = Array.from(document.querySelectorAll('#innerScrollContainer img, .chat-message img.zimg-el, .msg-item img.zimg-el, .img-center-box img.zimg-el, .img-center-box img, .media-item img'));
         return images.find(img => {
             if ((img.currentSrc || img.src) !== p.url || !img.getClientRects().length) return false;
             if (p.elementToken && img.dataset.zaloPhotoToken !== p.elementToken) return false;
@@ -102,34 +102,84 @@ async function resolvePhoto(page, photo) {
         await tile.dispose();
         return {...photo, qualityWarning: 'Không tìm thấy đúng ảnh trong giao diện để mở bản đầy đủ'};
     }
-    const previousDialogs = await page.evaluateHandle(() => Array.from(document.querySelectorAll('[role="dialog"]')).filter(el => el.getClientRects().length));
+    const previousDialogs = await page.evaluateHandle(() => Array.from(document.querySelectorAll('[role="dialog"], .modal-dialog, .modal')).filter(el => el.getClientRects().length));
     let dialog;
     const result = {...photo};
     try {
-        await tile.asElement().click();
-        // Deliberately capability-based. Do not guess Zalo class names or CDN variants.
+        await page.evaluate(el => {
+            const clickable = el.closest('.img-center-box, .media-item, .chat-message, .clickable') || el;
+            clickable.click();
+        }, tile);
+
+        // Wait for viewer modal or main image in Zalo Web / dialog
         dialog = await page.waitForFunction(previous => {
-            const dialogs = Array.from(document.querySelectorAll('[role="dialog"]')).filter(el => el.getClientRects().length && !previous.includes(el) && el.querySelector('img'));
-            return dialogs.length === 1 ? dialogs[0] : false;
-        }, {timeout: 3000}, previousDialogs);
+            // 1. Check real Zalo Web main viewer image
+            const mainImg = document.querySelector('.imageShowMainImage img, img.imageShowMainImage, .img-center-box.imageShowMainImage img');
+            if (mainImg && mainImg.getClientRects().length && (mainImg.currentSrc || mainImg.src)) {
+                return mainImg.closest('.modal-dialog, .modal, .fullscreen') || mainImg.parentElement || mainImg;
+            }
+
+            // 2. Check dialogs with images (support tests and standard role="dialog" modals)
+            const dialogs = Array.from(document.querySelectorAll('[role="dialog"], .modal-dialog, .modal')).filter(el => el.getClientRects().length && !previous.includes(el) && el.querySelector('img'));
+            return dialogs.length >= 1 ? dialogs[0] : false;
+        }, {timeout: 4000}, previousDialogs);
+
         const metadata = await dialog.evaluate(root => {
-            const time = root.querySelector('time[datetime]');
-            const fullDate = (time?.textContent || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-            return {timestamp: time?.getAttribute('datetime') || '',
-                date: fullDate ? `${fullDate[3]}-${fullDate[2].padStart(2, '0')}-${fullDate[1].padStart(2, '0')}` : ''};
+            const time = root.querySelector('time[datetime]') || document.querySelector('.imageShowMainImage time[datetime]');
+            const fullDate = (time?.textContent || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+                || (document.querySelector('.media-slider-header, .header-title')?.textContent || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            return {
+                timestamp: time?.getAttribute('datetime') || '',
+                date: fullDate ? `${fullDate[3]}-${fullDate[2].padStart(2, '0')}-${fullDate[1].padStart(2, '0')}` : ''
+            };
         });
         if (!result.timestamp && metadata.timestamp) result.timestamp = metadata.timestamp;
         if (!result.date && metadata.date) { result.date = metadata.date; result.dateSource = 'viewer'; }
+
+        // Strategy 1: Try native download button from viewer if present
+        let fullImg = null;
         try {
-            result.fullImage = await downloadFromViewer(page, dialog);
-        } catch (error) {
-            result.qualityWarning = error.message;
+            fullImg = await downloadFromViewer(page, dialog);
+        } catch {
+            // Download button not present or not native download, continue to direct blob fetch
+        }
+
+        // Strategy 2: Directly fetch high-res blob or src from viewer main image
+        if (!fullImg) {
+            const viewerImgSrc = await page.evaluate(() => {
+                const mainImg = document.querySelector('.imageShowMainImage img, img.imageShowMainImage, .img-center-box.imageShowMainImage img');
+                if (mainImg && (mainImg.currentSrc || mainImg.src)) {
+                    return mainImg.currentSrc || mainImg.src;
+                }
+                const dialogImg = document.querySelector('[role="dialog"] img, .modal-dialog img, .modal img');
+                return dialogImg ? (dialogImg.currentSrc || dialogImg.src) : null;
+            });
+
+            if (viewerImgSrc) {
+                try {
+                    fullImg = await readImage(page, { url: viewerImgSrc });
+                } catch (fetchErr) {
+                    result.qualityWarning = fetchErr.message;
+                }
+            }
+        }
+
+        if (fullImg) {
+            result.fullImage = fullImg;
+            delete result.qualityWarning;
+        } else if (!result.qualityWarning) {
+            result.qualityWarning = 'Không thể lấy dữ liệu ảnh gốc từ trình xem';
         }
     } catch {
         result.qualityWarning = 'Chưa xác minh được trình xem/nút tải bản đầy đủ của ảnh này';
     } finally {
         // Closing is necessary even if the viewer has no semantic dialog role.
         await page.keyboard.press('Escape').catch(() => {});
+        await page.evaluate(() => {
+            const closeBtn = document.querySelector('.fa-close, [title="Đóng"], .media-viewer-close, i.fa-Close_24_Line');
+            if (closeBtn) closeBtn.click();
+        }).catch(() => {});
+
         if (dialog) {
             await page.waitForFunction(root => !root.isConnected || !root.getClientRects().length, {timeout: 2000}, dialog).catch(() => {});
             await dialog.dispose();

@@ -42,13 +42,6 @@
                     </svg>
                     <span>Báo Cáo & Kết Quả</span>
                 </a>
-                <a href="?tab=analyze" class="nav-item" data-tab="analyze">
-                    <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="11" cy="11" r="8"/>
-                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                    </svg>
-                    <span>Phân Tích Cũ (Word)</span>
-                </a>
                 <a href="?tab=photos" class="nav-item" data-tab="photos">
                     <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
@@ -63,6 +56,16 @@
                     </svg>
                     <span>Tải Ảnh Zalo</span>
                     <span class="zalo-nav-badge" id="zalo-sidebar-badge"></span>
+                </a>
+                <a href="?tab=supplement" class="nav-item" data-tab="supplement">
+                    <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <polyline points="21 15 16 10 5 21"/>
+                        <line x1="12" y1="4" x2="12" y2="10"/>
+                        <line x1="9" y1="7" x2="15" y2="7"/>
+                    </svg>
+                    <span>Bổ Sung Ảnh</span>
                 </a>
             </nav>
 
@@ -524,102 +527,6 @@
             </div>
             </div>
 
-            <!-- ==================== TAB 3: PHÂN TÍCH TỔNG HỢP CŨ (WORD) ==================== -->
-            <div class="tab-content" id="tab-analyze">
-                <div class="metrics-ribbon">
-                    <div class="metric-item">
-                        <span class="metric-label">File Chấm Công:</span>
-                        <span class="metric-value" id="stat-files">0</span>
-                    </div>
-                    <div class="metric-divider"></div>
-                    <div class="metric-item warning">
-                        <span class="metric-label">Bản Ghi Thiếu:</span>
-                        <span class="metric-value" id="stat-missing">0</span>
-                    </div>
-                    <div class="metric-divider"></div>
-                    <div class="metric-item">
-                        <span class="metric-label">Người Có Vấn Đề:</span>
-                        <span class="metric-value" id="stat-persons">0</span>
-                    </div>
-                    <div class="metric-divider"></div>
-                    <div class="metric-item accent">
-                        <span class="metric-label">Ảnh Đã Khớp:</span>
-                        <span class="metric-value" id="stat-matched">0</span>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Đối Soát File Word Bảng Công (chamcong/)</h2>
-                        <button class="btn btn-primary" onclick="runAnalysis()" id="btn-analyze">
-                            Bắt Đầu Phân Tích
-                        </button>
-                    </div>
-                    <div class="card-body">
-                        <p style="color: var(--text-secondary); margin-bottom: 14px;">
-                            Đọc file Word bảng công trong thư mục chamcong/, tìm ngày thiếu giờ hoặc vắng mặt và so khớp ảnh camera tương ứng.
-                        </p>
-
-                        <!-- Progress -->
-                        <div class="progress-section" id="progress-section" style="display: none;">
-                            <div class="progress-header">
-                                <span class="progress-title" id="progress-title">Đang xử lý...</span>
-                                <span class="progress-percent" id="progress-percent">0%</span>
-                            </div>
-                            <div class="progress-bar">
-                                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
-                            </div>
-                            <div class="progress-detail" id="progress-detail"></div>
-                        </div>
-
-                        <!-- Log Panel -->
-                        <div class="log-panel" id="log-panel" style="display: none;">
-                            <div class="log-header">
-                                <span>Nhật Ký Xử Lý Chi Tiết</span>
-                                <div class="log-actions">
-                                    <button class="btn-icon" onclick="clearLogs()" title="Xóa log">
-                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <polyline points="3 6 5 6 21 6"></polyline>
-                                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                        </svg>
-                                    </button>
-                                    <button class="btn-icon" onclick="toggleLogPanel()" title="Thu gọn/Mở rộng">
-                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                                        </svg>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="log-content" id="log-content"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Results Table -->
-                <div class="card" id="results-card" style="display: none;">
-                    <div class="card-header">
-                        <h2>Danh Sách Thiếu Dữ Liệu</h2>
-                        <button class="btn btn-success" onclick="exportWord()">Xuất Báo Cáo Word</button>
-                    </div>
-                    <div class="card-body" style="padding: 0;">
-                        <div class="table-container" style="border: none;">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 60px;">STT</th>
-                                        <th>Tên Nhân Viên</th>
-                                        <th style="width: 120px;">Ngày</th>
-                                        <th style="width: 100px;">Thứ</th>
-                                        <th style="width: 140px;">Vấn Đề</th>
-                                        <th>Ảnh Camera Khớp</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="analysis-table-body"></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             <!-- ==================== TAB 4: QUẢN LÝ ẢNH ==================== -->
             <div class="tab-content" id="tab-photos">
@@ -1141,6 +1048,140 @@
                     </div>
                 </div>
             </div>
+
+            <!-- ==================== TAB 6: BỔ SUNG ẢNH CHẤM CÔNG ==================== -->
+            <div class="tab-content" id="tab-supplement">
+                {% include 'supplement_batches.html' %}
+                {# Legacy timestamp-edit UI retained in source only.
+                <!-- Header Card -->
+                <div class="card mb-4">
+                    <div class="card-body" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+                        <div style="flex:1; min-width:260px;">
+                            <h3 style="margin:0 0 6px 0; font-size:1.1rem;">📸 Bổ Sung Ảnh Chấm Công</h3>
+                            <p style="margin:0; color:var(--text-secondary); font-size:0.88rem;">Chụp bù ảnh nhân viên tại nơi làm việc → Hệ thống tự động xóa watermark cũ, tạo watermark ngày giờ mới, và sửa EXIF metadata.</p>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="supplementLoadMissing()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                            <span>Xem Ngày Thiếu</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Upload Form -->
+                <div class="card mb-4">
+                    <div class="card-header"><h3>📤 Upload Ảnh Chụp Bù</h3></div>
+                    <div class="card-body">
+                        <form id="supplement-upload-form" onsubmit="supplementUpload(event)" enctype="multipart/form-data">
+                            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px;">
+                                <div class="form-group">
+                                    <label for="supp-employee">Tên nhân viên *</label>
+                                    <input type="text" id="supp-employee" name="employee_name" required placeholder="Nguyễn Văn A" class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label for="supp-date">Ngày cần bổ sung *</label>
+                                    <input type="date" id="supp-date" name="target_date" required class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label for="supp-time">Giờ chấm công *</label>
+                                    <input type="time" id="supp-time" name="target_time" required class="form-control" value="08:00">
+                                </div>
+                                <div class="form-group">
+                                    <label for="supp-style">Style Watermark</label>
+                                    <select id="supp-style" name="watermark_style" class="form-control">
+                                        <option value="timestamp_camera">Timestamp Camera (Cam)</option>
+                                        <option value="gps_map_camera">GPS Map Camera (Trắng)</option>
+                                        <option value="simple">Đơn giản (Trắng)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="supp-position">Vị trí Watermark</label>
+                                    <select id="supp-position" name="watermark_position" class="form-control">
+                                        <option value="bottom-left">Dưới trái</option>
+                                        <option value="bottom-right">Dưới phải</option>
+                                        <option value="top-left">Trên trái</option>
+                                        <option value="top-right">Trên phải</option>
+                                        <option value="bottom-center">Dưới giữa</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="supp-location">Địa điểm (tùy chọn)</label>
+                                    <input type="text" id="supp-location" name="location_name" placeholder="Công trường ABC" class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label for="supp-gps">Tọa độ GPS (tùy chọn)</label>
+                                    <input type="text" id="supp-gps" name="gps_coords" placeholder="10.7769, 106.7009" class="form-control">
+                                </div>
+                            </div>
+                            <div style="margin-top:12px; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+                                <label class="form-check" style="display:flex; align-items:center; gap:6px; margin:0;">
+                                    <input type="checkbox" id="supp-remove-old" name="remove_old_watermark" checked>
+                                    <span style="font-size:0.88rem;">Xóa watermark cũ</span>
+                                </label>
+                                <label class="form-check" style="display:flex; align-items:center; gap:6px; margin:0;">
+                                    <input type="checkbox" id="supp-modify-exif" name="modify_exif" checked>
+                                    <span style="font-size:0.88rem;">Sửa EXIF metadata</span>
+                                </label>
+                            </div>
+                            <div style="margin-top:16px;">
+                                <div class="upload-zone" id="supplement-upload-zone" onclick="document.getElementById('supp-file').click()" ondrop="supplementDropFile(event)" ondragover="event.preventDefault(); this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')">
+                                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                    <p style="margin:8px 0 0; color:var(--text-secondary); font-size:0.9rem;">Kéo thả ảnh vào đây hoặc click để chọn file</p>
+                                    <p id="supp-file-name" style="margin:4px 0 0; color:var(--primary); font-size:0.85rem;"></p>
+                                    <input type="file" id="supp-file" name="photo" accept="image/*" style="display:none" onchange="supplementFileSelected(this)">
+                                </div>
+                            </div>
+                            <div style="margin-top:16px; display:flex; gap:10px;">
+                                <button type="submit" class="btn btn-primary" id="btn-supp-upload">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                    Upload & Tạo Record
+                                </button>
+                                <button type="button" class="btn btn-success" onclick="supplementProcessAll()">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                                    Xử Lý Tất Cả
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Missing Days -->
+                <div class="card mb-4" id="supplement-missing-card" style="display:none;">
+                    <div class="card-header"><h3>⚠️ Danh Sách Ngày Thiếu Ảnh</h3></div>
+                    <div class="card-body">
+                        <div id="supplement-missing-list" style="max-height:300px; overflow-y:auto;"></div>
+                    </div>
+                </div>
+
+                <!-- Records Table -->
+                <div class="card">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3>📋 Danh Sách Ảnh Bổ Sung</h3>
+                        <button class="btn btn-secondary btn-sm" onclick="supplementLoadRecords()">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                            Làm mới
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div id="supplement-records-container">
+                            <p style="color:var(--text-secondary); text-align:center; padding:24px;">Chưa có ảnh bổ sung nào. Hãy upload ảnh chụp bù ở form trên.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Preview Modal -->
+                <div id="supplement-preview-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.8); z-index:1000; justify-content:center; align-items:center; padding:24px;" onclick="this.style.display='none'">
+                    <div style="max-width:90vw; max-height:90vh; background:var(--bg-card); border-radius:12px; padding:16px; overflow:auto;" onclick="event.stopPropagation()">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                            <h3 id="supp-preview-title" style="margin:0;">Preview</h3>
+                            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('supplement-preview-modal').style.display='none'">✕ Đóng</button>
+                        </div>
+                        <img id="supp-preview-img" src="" style="max-width:100%; max-height:75vh; border-radius:8px; display:block; margin:0 auto;">
+                        <div id="supp-preview-validation" style="margin-top:12px;"></div>
+                    </div>
+                </div>
+            </div>
+                #}
+            </div>
         </main>
     </div>
 
@@ -1281,6 +1322,7 @@
     <div class="toast-container" id="toast-container"></div>
 
     <script src="/static/js/app.js?v=20260315_9"></script>
+    <script src="/static/js/supplement-batches.js?v=1"></script>
 </body>
 
 </html>

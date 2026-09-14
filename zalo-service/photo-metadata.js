@@ -91,7 +91,10 @@ function collectVisiblePhotos() {
         // Without a known chat boundary we must not borrow unrelated dates from the page.
         const date = boundary ? precedingHeader(message || img, boundary) : '';
         // Preserve the exact tile when the same URL was sent on multiple days.
-        const elementToken = img.dataset.zaloPhotoToken || (img.dataset.zaloPhotoToken = crypto.randomUUID());
+        const randToken = (window.crypto && typeof window.crypto.randomUUID === 'function')
+            ? window.crypto.randomUUID()
+            : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+        const elementToken = img.dataset.zaloPhotoToken || (img.dataset.zaloPhotoToken = randToken);
         return [{id: messageId ? `${messageId}:${imageIndex}` : `url:${url}`, messageId, elementToken,
             imageIndex, url, timestamp, date, dateSource: date ? 'header' : '',
             source: inMedia ? 'media_store' : 'chat_view'}];

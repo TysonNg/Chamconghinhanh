@@ -110,10 +110,20 @@ MAX_WORKERS = 4
 CHAMCONG_DIR = os.path.join(BASE_DIR, "chamcong")
 PORTRAIT_DIR = resolve_portrait_dir(BASE_DIR)
 NGAY_RONG_DIR = os.path.join(BASE_DIR, "ngay_rong")
+SUPPLEMENT_DIR = os.path.join(BASE_DIR, "supplement_data")
 
 # Tao thu muc neu chua ton tai
-for directory in [INPUT_IMAGES_DIR, RESULTS_DIR, CHAMCONG_DIR, PORTRAIT_DIR, NGAY_RONG_DIR]:
+for directory in [INPUT_IMAGES_DIR, RESULTS_DIR, CHAMCONG_DIR, PORTRAIT_DIR, NGAY_RONG_DIR, SUPPLEMENT_DIR]:
     os.makedirs(directory, exist_ok=True)
+
+# Lazy-loaded PhotoSupplement instance
+_photo_supplement = None
+def get_photo_supplement():
+    global _photo_supplement
+    if _photo_supplement is None:
+        from src.photo_supplement import PhotoSupplement
+        _photo_supplement = PhotoSupplement(SUPPLEMENT_DIR)
+    return _photo_supplement
 
 DEFAULT_PROJECT_NAME = "Chung cư Tân Thuận Đông"
 
@@ -197,6 +207,9 @@ app = Flask(__name__,
             static_folder=os.path.join(RESOURCE_DIR, 'static'))
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max upload
+
+from src.supplement_batches import register_batches
+register_batches(app, SUPPLEMENT_DIR)
 
 # ==================== TASK MANAGER ====================
 
@@ -1303,79 +1316,7 @@ def view_daily_photo():
         return send_file(os.path.abspath(file_path))
     return "Not found", 404
 
-# ==================== API: ATTENDANCE ====================
-
-# Đường dẫn cho attendance
-
-@app.route('/api/attendance/analyze', methods=['POST'])
-def analyze_attendance():
-    """Phân tích file chấm công và tìm các bản ghi thiếu"""
-    try:
-        from src.attendance_processor import AttendanceProcessor
-        
-        processor = AttendanceProcessor(CHAMCONG_DIR)
-        processor.scan_all_files()
-        missing = processor.get_missing_records()
-        summary = processor.get_summary()
-        
-        return jsonify({
-            'success': True,
-            'summary': summary,
-            'missing_records': missing
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/attendance/export', methods=['POST'])
-def export_attendance():
-    """Xuất file Word giải trình với ảnh"""
-    try:
-        from src.attendance_processor import AttendanceProcessor
-        from src.word_exporter import WordExporter
-        
-        data = request.json or {}
-        project_name = data.get('project_name', 'Chung cư Tân Thuận Đông')
-        month = data.get('month', None)
-        
-        # Xử lý chấm công
-        processor = AttendanceProcessor(CHAMCONG_DIR)
-        processor.scan_all_files()
-        missing = processor.get_missing_records()
-        
-        if not missing:
-            return jsonify({
-                'success': True,
-                'message': 'Không có bản ghi thiếu cần giải trình',
-                'output_file': None
-            })
-        
-        # Xuất Word
-        exporter = WordExporter(PORTRAIT_DIR, RESULTS_DIR)
-        output_file = exporter.create_summary_document(missing, project_name, month)
-        
-        return jsonify({
-            'success': True,
-            'message': f'Đã xuất {len(missing)} bản ghi thiếu',
-            'output_file': os.path.basename(output_file),
-            'total_missing': len(missing)
-        })
-    except Exception as e:
-        import traceback
-        return jsonify({'success': False, 'error': str(e), 'trace': traceback.format_exc()}), 500
-
-@app.route('/api/attendance/portraits')
-def get_portrait_stats():
-    """Thống kê ảnh chân dung"""
-    try:
-        from src.word_exporter import WordExporter
-        
-        exporter = WordExporter(PORTRAIT_DIR, RESULTS_DIR)
-        stats = exporter.get_portrait_stats()
-        return jsonify({'success': True, **stats})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-# ==================== API: FULL ANALYSIS (NEW) ====================
+# ==================== API: FACE MATCHER ====================
 
 # Face matcher instance (lazy loaded)
 _face_matcher = None
@@ -1414,179 +1355,6 @@ def get_face_matcher():
         traceback.print_exc()
         return None
     return _face_matcher
-
-@app.route('/api/analyze-full', methods=['POST'])
-def analyze_full():
-    """Phân tích tổng hợp: tìm ngày thiếu + match ảnh camera bằng nhận diện khuôn mặt"""
-    try:
-        from src.attendance_processor import AttendanceProcessor
-        
-        # Step 1: Phân tích chấm công
-        send_log(" Step 1: Đang phân tích file chấm công...", "info")
-        processor = AttendanceProcessor(CHAMCONG_DIR)
-        processor.scan_all_files()
-        missing_records = processor.get_missing_records()
-        summary = processor.get_summary()
-        send_log(f" Tìm thấy {len(missing_records)} bản ghi thiếu từ {summary.get('total_persons', 0)} người", "info")
-        
-        # Step 2: Khởi tạo face matcher
-        send_log(" Step 2: Đang khởi tạo Face Matcher...", "info")
-        matcher = get_face_matcher()
-        if matcher:
-            send_log(" Face Matcher đã sẵn sàng", "success")
-        else:
-            send_log(" Face Matcher không khả dụng, sẽ dùng fallback", "warning")
-        
-        # Step 3: Match ảnh camera cho mỗi bản ghi thiếu
-        send_log(f" Step 3: Bắt đầu matching ảnh cho {len(missing_records)} bản ghi...", "info")
-        matched_count = 0
-        
-        for i, record in enumerate(missing_records):
-            date_str = record['date']  # format: dd/mm/yyyy
-            day = date_str.split('/')[0].zfill(2)  # extract dd
-            person_name = record['person_name']
-            
-            # Tìm thư mục ngày tương ứng
-            day_folder = os.path.join(INPUT_IMAGES_DIR, day)
-            
-            record['matched_image'] = None
-            
-            if os.path.exists(day_folder):
-                images = get_image_files(day_folder)
-                send_log(f"  [{i+1}/{len(missing_records)}] {person_name} (ngày {day}): Tìm thấy {len(images)} ảnh trong thư mục", "default")
-                
-                if images and matcher:
-                    # Dùng face recognition để tìm ảnh match
-                    try:
-                        matched_image = matcher.match_face_in_images(person_name, images)
-                        if matched_image:
-                            record['matched_image'] = matched_image
-                            matched_count += 1
-                            send_log(f"  [{i+1}/{len(missing_records)}] ✓ {person_name} -> {os.path.basename(matched_image)}", "success")
-                        else:
-                            send_log(f"  [{i+1}/{len(missing_records)}]  {person_name}: Không tìm thấy ảnh match", "warning")
-                    except Exception as match_err:
-                        send_log(f"  [{i+1}/{len(missing_records)}]  {person_name}: Lỗi matcher ({match_err})", "error")
-                elif images:
-                    send_log(f"  [{i+1}/{len(missing_records)}]  {person_name}: FaceMatcher chưa sẵn sàng, bỏ qua", "warning")
-                else:
-                    send_log(f"  [{i+1}/{len(missing_records)}]  Thư mục {day} rỗng", "warning")
-            else:
-                send_log(f"  [{i+1}/{len(missing_records)}]  Không tìm thấy thư mục: {day_folder}", "error")
-                record['matched_image'] = None
-        
-        summary['total_matched'] = matched_count
-        send_log(f" Hoàn thành! Matched {matched_count}/{len(missing_records)} bản ghi", "success")
-        
-        return jsonify({
-            'success': True,
-            'summary': summary,
-            'records': missing_records
-        })
-    except Exception as e:
-        import traceback
-        send_log(f" Lỗi: {e}", "error")
-        return jsonify({'success': False, 'error': str(e), 'trace': traceback.format_exc()}), 500
-
-@app.route('/matched-image/<path:filepath>')
-def serve_matched_image(filepath):
-    """Serve ảnh đã match"""
-    # Decode URL path nếu cần
-    import urllib.parse
-    filepath = urllib.parse.unquote(filepath)
-    
-    # Thử với đường dẫn nguyên gốc
-    if os.path.exists(filepath):
-        return send_file(filepath)
-    
-    # Thử với đường dẫn tuyệt đối từ BASE_DIR
-    abs_path = os.path.join(BASE_DIR, filepath)
-    if os.path.exists(abs_path):
-        return send_file(abs_path)
-    
-    # Thử thay thế backslash/forward slash
-    filepath_fixed = filepath.replace('/', os.sep).replace('\\', os.sep)
-    abs_path_fixed = os.path.join(BASE_DIR, filepath_fixed)
-    if os.path.exists(abs_path_fixed):
-        return send_file(abs_path_fixed)
-    
-    print(f"[serve_matched_image] File không tồn tại:")
-    print(f"  filepath: {filepath}")
-    print(f"  abs_path: {abs_path}")
-    print(f"  abs_path_fixed: {abs_path_fixed}")
-    print(f"  BASE_DIR: {BASE_DIR}")
-    
-    return jsonify({'error': 'File không tồn tại', 'filepath': filepath}), 404
-
-@app.route('/api/export-word', methods=['POST'])
-def export_word():
-    """Xuất file Word với ảnh camera đã match"""
-    try:
-        from docx import Document
-        from docx.shared import Inches, Cm
-        
-        data = request.json or {}
-        project_name = data.get('project_name', 'Chung cư Tân Thuận Đông')
-        month = data.get('month', '')
-        records = data.get('records', [])
-        
-        if not records:
-            return jsonify({'success': False, 'error': 'Không có dữ liệu để xuất'})
-        
-        # Tạo document
-        doc = Document()
-        
-        # Tiêu đề
-        title = doc.add_paragraph()
-        title.add_run(f'GIẢI TRÌNH CHẤM CÔNG - {project_name}').bold = True
-        title.alignment = 1  # Center
-        
-        doc.add_paragraph(f'Tháng: {month}')
-        doc.add_paragraph()
-        
-        # Tạo bảng
-        table = doc.add_table(rows=1, cols=5)
-        table.style = 'Table Grid'
-        
-        # Header
-        headers = ['TÊN', 'NGÀY', 'GIẢI TRÌNH', 'HÌNH ẢNH', 'GHI CHÚ']
-        for i, header in enumerate(headers):
-            table.rows[0].cells[i].text = header
-        
-        # Thêm dữ liệu
-        for record in records:
-            row = table.add_row()
-            row.cells[0].text = record.get('person_name', '')
-            row.cells[1].text = record.get('date', '')
-            row.cells[2].text = record.get('issue_description', 'Nhân viên có trực, bổ sung')
-            
-            # Thêm ảnh nếu có
-            matched_image = record.get('matched_image')
-            if matched_image and os.path.exists(matched_image):
-                try:
-                    run = row.cells[3].paragraphs[0].add_run()
-                    run.add_picture(matched_image, width=Cm(3))
-                except Exception:
-                    row.cells[3].text = '[Lỗi ảnh]'
-            else:
-                row.cells[3].text = '[Không có ảnh]'
-            
-            row.cells[4].text = ''
-        
-        # Lưu file
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"GIAI_TRINH_{project_name.replace(' ', '_')}_{timestamp}.docx"
-        output_path = os.path.join(RESULTS_DIR, filename)
-        doc.save(output_path)
-        
-        return jsonify({
-            'success': True,
-            'filename': filename,
-            'path': output_path
-        })
-    except Exception as e:
-        import traceback
-        return jsonify({'success': False, 'error': str(e), 'trace': traceback.format_exc()}), 500
 
 # ==================== API: PDF EXTRACTION ====================
 
@@ -2720,6 +2488,183 @@ def open_system_folder():
             subprocess.Popen(['xdg-open', folder])
         return jsonify({'success': True, 'path': folder})
     except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== BỔ SUNG ẢNH CHẤM CÔNG ====================
+
+@app.route('/api/supplement/records', methods=['GET'])
+def supplement_get_records():
+    """Lấy danh sách tất cả records bổ sung ảnh"""
+    try:
+        ps = get_photo_supplement()
+        status_filter = request.args.get('status', '')
+        if status_filter:
+            records = ps.get_records_by_status(status_filter)
+        else:
+            records = ps.get_all_records()
+        return jsonify({'success': True, 'records': records})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/supplement/upload', methods=['POST'])
+def supplement_upload():
+    """Upload ảnh chụp bù và tạo record mới"""
+    try:
+        if 'photo' not in request.files:
+            return jsonify({'success': False, 'error': 'Không có file ảnh'}), 400
+        
+        file = request.files['photo']
+        if not file.filename:
+            return jsonify({'success': False, 'error': 'File rỗng'}), 400
+        
+        employee_name = request.form.get('employee_name', '').strip()
+        target_date = request.form.get('target_date', '').strip()
+        target_time = request.form.get('target_time', '').strip()
+        
+        if not employee_name or not target_date or not target_time:
+            return jsonify({'success': False, 'error': 'Thiếu thông tin: tên nhân viên, ngày, giờ'}), 400
+        
+        # Validate date format
+        try:
+            datetime.strptime(target_date, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'success': False, 'error': 'Định dạng ngày không hợp lệ (cần YYYY-MM-DD)'}), 400
+        
+        # Validate time format  
+        if not re.match(r'^\d{2}:\d{2}(:\d{2})?$', target_time):
+            return jsonify({'success': False, 'error': 'Định dạng giờ không hợp lệ (cần HH:MM hoặc HH:MM:SS)'}), 400
+        if len(target_time) == 5:
+            target_time += ':00'
+        
+        # Lưu file tạm
+        ext = os.path.splitext(file.filename)[1].lower() or '.jpg'
+        temp_path = os.path.join(SUPPLEMENT_DIR, f"temp_upload{ext}")
+        file.save(temp_path)
+        
+        # Tạo record
+        ps = get_photo_supplement()
+        record = ps.upload_photo(
+            temp_path, employee_name, target_date, target_time,
+            watermark_style=request.form.get('watermark_style', 'timestamp_camera'),
+            watermark_position=request.form.get('watermark_position', 'bottom-left'),
+            location_name=request.form.get('location_name', ''),
+            gps_coords=request.form.get('gps_coords', ''),
+            remove_old_watermark=request.form.get('remove_old_watermark', 'true').lower() == 'true',
+            modify_exif=request.form.get('modify_exif', 'true').lower() == 'true',
+        )
+        
+        # Xóa file tạm
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+        
+        return jsonify({'success': True, 'record': record.to_dict()})
+    except Exception as e:
+        logging.error(f"Supplement upload error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/supplement/process', methods=['POST'])
+def supplement_process():
+    """Xử lý ảnh: xóa watermark cũ + tạo watermark mới + sửa EXIF"""
+    try:
+        data = request.json or {}
+        record_id = data.get('record_id', '')
+        record_ids = data.get('record_ids', [])
+        
+        ps = get_photo_supplement()
+        
+        if record_id:
+            result = ps.process_record(record_id)
+            return jsonify({'success': True, 'record': result.to_dict()})
+        elif record_ids:
+            results = ps.batch_process(record_ids)
+            return jsonify({'success': True, 'records': [r.to_dict() for r in results]})
+        else:
+            # Xử lý tất cả pending
+            results = ps.batch_process()
+            return jsonify({'success': True, 'records': [r.to_dict() for r in results]})
+    except Exception as e:
+        logging.error(f"Supplement process error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/supplement/download/<record_id>')
+def supplement_download(record_id):
+    """Tải ảnh đã xử lý"""
+    try:
+        ps = get_photo_supplement()
+        record = ps.get_record(record_id)
+        if not record or not record.processed_path:
+            return jsonify({'success': False, 'error': 'Record không tồn tại hoặc chưa xử lý'}), 404
+        
+        if not os.path.exists(record.processed_path):
+            return jsonify({'success': False, 'error': 'File không tồn tại'}), 404
+        
+        return send_file(
+            record.processed_path,
+            as_attachment=True,
+            download_name=os.path.basename(record.processed_path)
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/supplement/preview/<record_id>')
+def supplement_preview(record_id):
+    """Xem preview ảnh (gốc hoặc đã xử lý)"""
+    try:
+        ps = get_photo_supplement()
+        preview_path = ps.get_preview(record_id)
+        if not preview_path or not os.path.exists(preview_path):
+            return jsonify({'success': False, 'error': 'Không có ảnh preview'}), 404
+        
+        return send_file(preview_path, mimetype='image/jpeg')
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/supplement/validate/<record_id>')
+def supplement_validate(record_id):
+    """Kiểm tra chất lượng ảnh đã xử lý"""
+    try:
+        ps = get_photo_supplement()
+        result = ps.validate_result(record_id)
+        return jsonify({'success': True, 'validation': result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/supplement/delete', methods=['POST'])
+def supplement_delete():
+    """Xóa record và files liên quan"""
+    try:
+        data = request.json or {}
+        record_id = data.get('record_id', '')
+        if not record_id:
+            return jsonify({'success': False, 'error': 'Thiếu record_id'}), 400
+        
+        ps = get_photo_supplement()
+        success = ps.delete_record(record_id)
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/supplement/missing')
+def supplement_missing_days():
+    """Lấy danh sách ngày thiếu ảnh từ attendance processor"""
+    try:
+        from src.attendance_processor import AttendanceProcessor
+        processor = AttendanceProcessor(CHAMCONG_DIR)
+        processor.scan_all_files()
+        missing = processor.get_missing_records()
+        return jsonify({'success': True, 'missing': missing})
+    except Exception as e:
+        logging.error(f"Supplement missing days error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

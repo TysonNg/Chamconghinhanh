@@ -1,0 +1,16 @@
+<div class="card"><div class="card-body">
+  <h3>Hồ sơ ảnh bổ sung</h3>
+  <p>Giữ nguyên ảnh và EXIF. Ngày bổ sung là ngày hồ sơ, không xác nhận thời điểm chụp. Không gọi AI.</p>
+  <form id="batch-create">
+    <label>Nhân viên <input class="form-control" name="employee" required maxlength="200"></label>
+    <label>Ngày hồ sơ <input class="form-control" type="date" name="supplement_date" required></label>
+    <label>Chọn 1–31 ảnh (mỗi ảnh ≤20MB, tổng ≤100MB)
+      <input class="form-control" type="file" name="photos" accept="image/jpeg,image/png,image/webp,image/bmp" multiple required>
+    </label>
+    <button class="btn btn-primary" type="submit">Tạo batch</button>
+  </form>
+  <p id="batch-message" role="status" aria-live="polite"></p>
+  <button class="btn btn-secondary" id="batch-refresh" type="button">Làm mới danh sách</button>
+  <div id="batch-list"></div>
+  <section id="batch-detail"></section>
+</div></div>

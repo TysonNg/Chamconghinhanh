@@ -45,15 +45,15 @@ a = Analysis(
         # Other
         'queue', 'json', 'csv', 'threading', 'concurrent.futures',
         'logging', 'traceback', 'ctypes', 'tempfile', 'shutil',
-        'unicodedata', 're', 'urllib.parse', 'xlrd',
+        'unicodedata', 're', 'urllib.parse', 'xlrd', 'piexif',
         # src modules
         'src', 'src.app', 'src.config', 'src.face_detector',
-        'src.face_matcher', 'src.attendance_processor',
-        'src.word_exporter', 'src.pdf_extractor',
+        'src.face_matcher', 'src.pdf_extractor',
         'src.text_extractor', 'src.async_processor',
         'src.database_manager', 'src.excel_extractor',
         'src.excel_splitter', 'src.excel_face_analyzer', 'src.excel_list_word_exporter',
         'src.pdf_face_analyzer', 'src.zalo_service_manager',
+        'src.watermark_engine', 'src.photo_supplement',
     ],
     hookspath=[],
     hooksconfig={},
