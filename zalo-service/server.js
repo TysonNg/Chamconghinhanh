@@ -8,6 +8,15 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
+
+// Global exception safety
+process.on("uncaughtException", (err) => {
+    console.error("[Zalo Service] Uncaught Exception:", err);
+});
+process.on("unhandledRejection", (reason) => {
+    console.error("[Zalo Service] Unhandled Rejection:", reason);
+});
+
 const ZaloClient = require("./zalo-client");
 const ImageDownloader = require("./image-downloader");
 
@@ -384,17 +393,11 @@ app.get("/api/health", (req, res) => {
 // ==================== Start Server ====================
 
 async function start() {
-    // Try auto-login with saved credentials
-    try {
-        await zaloClient.tryAutoLogin();
-    } catch (err) {
-        console.log("[Server] Auto-login skipped:", err.message);
-    }
-
-    app.listen(PORT, () => {
-        console.log(`\n[Zalo Service] Running on http://localhost:${PORT}`);
+    app.listen(PORT, "0.0.0.0", () => {
+        console.log(`\n[Zalo Service] Running on http://127.0.0.1:${PORT}`);
         console.log(`[Zalo Service] Status: ${zaloClient.isLoggedIn ? "Logged in" : "Not logged in"}`);
         console.log(`[Zalo Service] API endpoints:`);
+        console.log(`  GET  /api/health`);
         console.log(`  GET  /api/status`);
         console.log(`  POST /api/login/qr`);
         console.log(`  GET  /api/login/qr/image`);
@@ -405,6 +408,17 @@ async function start() {
         console.log(`  GET  /api/download/progress`);
         console.log(`  GET  /api/download/progress/poll\n`);
     });
+
+    // Try auto-login with saved credentials in background without blocking server listen
+    zaloClient.tryAutoLogin()
+        .then((success) => {
+            if (success) {
+                console.log("[Server] Auto-login completed successfully");
+            }
+        })
+        .catch((err) => {
+            console.log("[Server] Auto-login skipped/failed:", err.message);
+        });
 }
 
 start();

@@ -2540,10 +2540,10 @@ def results_delete_file():
 
 # ==================== ZALO SERVICE PROXY ====================
 
-ZALO_SERVICE_URL = "http://localhost:3001"
+ZALO_SERVICE_URL = "http://127.0.0.1:3001"
 
-def _proxy_zalo(path, method='GET', data=None):
-    """Proxy request to Node.js Zalo service"""
+def _proxy_zalo(path, method='GET', data=None, retry=True):
+    """Proxy request to Node.js Zalo service với cơ chế tự phục hồi"""
     import urllib.request
     import urllib.error
     url = f"{ZALO_SERVICE_URL}{path}"
@@ -2568,6 +2568,14 @@ def _proxy_zalo(path, method='GET', data=None):
         except Exception:
             return {'success': False, 'error': body}, e.code
     except urllib.error.URLError as e:
+        # Nếu service chưa khởi động hoặc bị crash, tự phục hồi và thử lại 1 lần
+        if retry:
+            try:
+                from src.zalo_service_manager import ensure_zalo_service
+                if ensure_zalo_service(base_dir=BASE_DIR):
+                    return _proxy_zalo(path, method=method, data=data, retry=False)
+            except Exception as ex:
+                logging.error(f"[App] Lỗi khi thử tự khởi động Zalo Service: {ex}")
         return {'success': False, 'error': f'Zalo Service không hoạt động: {str(e)}'}, 503
     except Exception as e:
         return {'success': False, 'error': str(e)}, 500
@@ -2673,6 +2681,20 @@ def zalo_health():
     """Kiểm tra Zalo service có đang chạy không"""
     result, status = _proxy_zalo('/api/health')
     return jsonify(result), status
+
+
+@app.route('/api/zalo/restart', methods=['POST'])
+def zalo_restart():
+    """Khởi động lại Zalo Service theo yêu cầu"""
+    try:
+        from src.zalo_service_manager import restart_zalo_service
+        success = restart_zalo_service(base_dir=BASE_DIR)
+        if success:
+            return jsonify({'success': True, 'message': 'Zalo Service đã được khởi động lại thành công'})
+        else:
+            return jsonify({'success': False, 'error': 'Không thể khởi động lại Zalo Service. Vui lòng kiểm tra Node.js.'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/open/folder', methods=['POST'])
