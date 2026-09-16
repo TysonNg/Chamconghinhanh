@@ -31,7 +31,7 @@ async function run() {
         args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
-            "--window-size=1200,800"
+            "--window-size=1200,800" 
         ]
     });
 

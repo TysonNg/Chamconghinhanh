@@ -240,7 +240,7 @@ app.get("/api/groups", async (req, res) => {
 app.post("/api/groups/:groupId/download", async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { groupName, projectName, dateFrom, dateTo, count = 200, folderFormat = "DD", headless = true } = req.body;
+        const { groupName, projectName, dateFrom, dateTo, count = 200, folderFormat = "YYYY-MM-DD", headless = true } = req.body;
 
         if (!groupName) {
             return res.status(400).json({
@@ -249,6 +249,9 @@ app.post("/api/groups/:groupId/download", async (req, res) => {
             });
         }
 
+        if (!["date", "YYYY-MM-DD"].includes(folderFormat)) {
+            return res.status(400).json({success: false, error: "Chỉ hỗ trợ YYYY-MM-DD"});
+        }
         const targetProject = projectName || groupName;
         console.log(`[Server] Browser download request: group=${groupName} (${groupId}) -> project=${targetProject}, from=${dateFrom}, to=${dateTo}, format=${folderFormat}, headless=${headless}`);
 

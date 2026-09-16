@@ -20,12 +20,14 @@ from typing import List, Dict, Optional, Tuple
 # Thêm thư mục gốc vào path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, Response
+from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, Response, url_for
 from werkzeug.utils import secure_filename
 
 # Cấu hình - Phát hiện đúng thư mục khi chạy từ EXE
 def get_base_dir():
     """Lấy thư mục gốc (chứa data: input_images, database, ...) - hỗ trợ cả khi chạy từ source và từ EXE"""
+    if os.environ.get("ATTENDANCE_DATA_DIR"):
+        return os.path.abspath(os.environ["ATTENDANCE_DATA_DIR"])
     if getattr(sys, 'frozen', False):
         # Chạy từ EXE (PyInstaller) - data nằm cạnh file exe
         return os.path.dirname(sys.executable)
@@ -47,6 +49,33 @@ RESOURCE_DIR = get_resource_dir()
 INPUT_IMAGES_DIR = os.path.join(BASE_DIR, "input_images")
 DATABASE_DIR = os.path.join(BASE_DIR, "database")
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
+
+
+def _build_report_options(data, fallback_project_name):
+    """Chuẩn hóa thông tin báo cáo tổng hợp nhận từ giao diện/API."""
+    project_name = str(data.get('report_project_name') or fallback_project_name or '').strip()
+    if not project_name:
+        raise ValueError('Thiếu tên dự án cho báo cáo tổng hợp')
+
+    from_date = str(data.get('from_date') or '').strip()
+    to_date = str(data.get('to_date') or '').strip()
+    if bool(from_date) != bool(to_date):
+        raise ValueError('Vui lòng chọn đầy đủ Từ ngày và Đến ngày')
+
+    if from_date and to_date:
+        try:
+            start = datetime.strptime(from_date, '%Y-%m-%d').date()
+            end = datetime.strptime(to_date, '%Y-%m-%d').date()
+        except ValueError as exc:
+            raise ValueError('Ngày báo cáo phải có định dạng YYYY-MM-DD') from exc
+        if start > end:
+            raise ValueError('Từ ngày không được sau Đến ngày')
+
+    options = {'project_name': project_name}
+    if from_date:
+        options['from_date'] = from_date
+        options['to_date'] = to_date
+    return options
 
 def _normalize_folder_name(name: str) -> str:
     import unicodedata
@@ -126,6 +155,21 @@ def get_photo_supplement():
     return _photo_supplement
 
 DEFAULT_PROJECT_NAME = "Chung cư Tân Thuận Đông"
+_identity_registry = None
+_identity_registry_lock = threading.Lock()
+
+def get_identity_registry():
+    global _identity_registry
+    from pathlib import Path
+    from src.identity_registry import IdentityRegistry
+    with _identity_registry_lock:
+        wanted = Path(BASE_DIR) / "data" / "identity.sqlite3"
+        if (_identity_registry is None or _identity_registry.db_path != wanted
+                or _identity_registry.portrait_root != Path(PORTRAIT_DIR).resolve()):
+            _identity_registry = IdentityRegistry(wanted, PORTRAIT_DIR)
+        return _identity_registry
+
+
 
 def ensure_initial_project_migration():
     """Tự động gom các nhân viên ban đầu vào dự án mặc định nếu chưa gom"""
@@ -159,22 +203,19 @@ def ensure_initial_project_migration():
                 except Exception as e:
                     logging.error(f"[MIGRATION] Lỗi di chuyển {item}: {e}")
 
-ensure_initial_project_migration()
+# Legacy migration is explicit; never move source photos on startup.
 
-def ensure_project_structure(project_name: str, create_day_folders: bool = True) -> Tuple[str, str]:
+def ensure_project_structure(project_name: str, create_day_folders: bool = False) -> Tuple[str, str]:
     """Đảm bảo đầy đủ cấu trúc thư mục cho dự án:
     1. Ảnh BV/<project_name> (Thư mục chân dung nhân viên)
     2. input_images/<project_name> (Thư mục ảnh camera theo ngày)
-    3. input_images/<project_name>/01..31 (31 thư mục ngày trong tháng)
+    Thư mục ngày YYYY-MM-DD chỉ được tạo khi có ngày đầy đủ.
     """
     safe_name = re.sub(r'[<>:"/\\|?*]', '_', project_name.strip()) if project_name else DEFAULT_PROJECT_NAME
     p_dir = os.path.join(PORTRAIT_DIR, safe_name)
     i_dir = os.path.join(INPUT_IMAGES_DIR, safe_name)
     os.makedirs(p_dir, exist_ok=True)
     os.makedirs(i_dir, exist_ok=True)
-    if create_day_folders:
-        for d in range(1, 32):
-            os.makedirs(os.path.join(i_dir, f"{d:02d}"), exist_ok=True)
     return p_dir, i_dir
 
 def get_all_projects() -> List[str]:
@@ -207,6 +248,8 @@ app = Flask(__name__,
             static_folder=os.path.join(RESOURCE_DIR, 'static'))
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max upload
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.jinja_env.auto_reload = True
 
 from src.supplement_batches import register_batches
 register_batches(app, SUPPLEMENT_DIR)
@@ -830,491 +873,11 @@ def serve_image(filename):
 
 # ==================== API: DỰ ÁN & QUẢN LÝ ẢNH ====================
 
-@app.route('/api/projects', methods=['GET'])
-def list_projects():
-    """Lấy danh sách dự án kèm thống kê số lượng nhân viên và ảnh camera"""
-    projects_list = []
-    names = get_all_projects()
-    for name in names:
-        p_dir = os.path.join(PORTRAIT_DIR, name)
-        i_dir = os.path.join(INPUT_IMAGES_DIR, name)
-        emp_count = 0
-        if os.path.exists(p_dir):
-            for item in os.listdir(p_dir):
-                sub_p = os.path.join(p_dir, item)
-                if os.path.isdir(sub_p):
-                    emp_count += 1
-                elif os.path.splitext(item)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
-                    emp_count += 1
-        cam_days = 0
-        cam_imgs = 0
-        if os.path.exists(i_dir):
-            for item in os.listdir(i_dir):
-                sub_p = os.path.join(i_dir, item)
-                if os.path.isdir(sub_p):
-                    imgs = [f for f in os.listdir(sub_p) if os.path.splitext(f)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS]
-                    if imgs:
-                        cam_days += 1
-                        cam_imgs += len(imgs)
-        projects_list.append({
-            'name': name,
-            'employee_count': emp_count,
-            'camera_days_count': cam_days,
-            'camera_total_images': cam_imgs
-        })
-    return jsonify({
-        'success': True,
-        'projects': projects_list,
-        'default_project': DEFAULT_PROJECT_NAME
-    })
-
-@app.route('/api/projects/create', methods=['POST'])
-def create_project():
-    """Tạo dự án mới đầy đủ cấu trúc thư mục"""
-    data = request.json or {}
-    name = data.get('name', '').strip()
-    if not name:
-        return jsonify({'error': 'Tên dự án không được để trống'}), 400
-    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
-    p_dir, i_dir = ensure_project_structure(safe_name)
-    matcher = get_face_matcher()
-    if matcher:
-        matcher.reload_portraits()
-    return jsonify({'success': True, 'project': safe_name})
-
-@app.route('/api/projects/rename', methods=['POST'])
-def rename_project():
-    """Đổi tên dự án"""
-    data = request.json or {}
-    old_name = data.get('old_name', '').strip()
-    new_name = data.get('new_name', '').strip()
-    if not old_name or not new_name:
-        return jsonify({'error': 'Tên dự án không hợp lệ'}), 400
-    safe_old = re.sub(r'[<>:"/\\|?*]', '_', old_name)
-    safe_new = re.sub(r'[<>:"/\\|?*]', '_', new_name)
-    
-    old_p = os.path.join(PORTRAIT_DIR, safe_old)
-    new_p = os.path.join(PORTRAIT_DIR, safe_new)
-    if os.path.exists(old_p):
-        os.rename(old_p, new_p)
-        
-    old_i = os.path.join(INPUT_IMAGES_DIR, safe_old)
-    new_i = os.path.join(INPUT_IMAGES_DIR, safe_new)
-    if os.path.exists(old_i):
-        os.rename(old_i, new_i)
-        
-    matcher = get_face_matcher()
-    if matcher:
-        matcher.reload_portraits()
-    return jsonify({'success': True, 'name': safe_new})
-
-@app.route('/api/projects/delete', methods=['POST'])
-def delete_project():
-    """Xóa dự án"""
-    data = request.json or {}
-    name = data.get('name', '').strip()
-    if not name:
-        return jsonify({'error': 'Tên dự án không hợp lệ'}), 400
-    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
-    p_dir = os.path.join(PORTRAIT_DIR, safe_name)
-    i_dir = os.path.join(INPUT_IMAGES_DIR, safe_name)
-    
-    force = data.get('force', False)
-    has_content = False
-    if os.path.exists(p_dir) and os.listdir(p_dir):
-        has_content = True
-    if os.path.exists(i_dir) and os.listdir(i_dir):
-        has_content = True
-    if has_content and not force:
-        return jsonify({'error': 'Dự án này đang có dữ liệu nhân viên/ảnh camera. Vui lòng chuyển nhân viên hoặc xóa ảnh trước khi xóa dự án'}), 400
-        
-    if os.path.exists(p_dir):
-        shutil.rmtree(p_dir, ignore_errors=True)
-    if os.path.exists(i_dir):
-        shutil.rmtree(i_dir, ignore_errors=True)
-        
-    matcher = get_face_matcher()
-    if matcher:
-        matcher.reload_portraits()
-    return jsonify({'success': True})
-
-# ---------- API: ẢNH CAMERA THEO NGÀY ----------
-
-@app.route('/api/photos/daily', methods=['GET'])
-def get_daily_photo_stats():
-    """Lấy danh sách 31 ngày kèm số ảnh camera của dự án (hỗ trợ cả dạng '01' và 'YYYY-MM-01')"""
-    project = request.args.get('project', DEFAULT_PROJECT_NAME).strip()
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
-    proj_dir = os.path.join(INPUT_IMAGES_DIR, safe_proj)
-    days_data = []
-
-    subdirs = []
-    if os.path.exists(proj_dir):
-        subdirs = [d for d in os.listdir(proj_dir) if os.path.isdir(os.path.join(proj_dir, d))]
-
-    for d in range(1, 32):
-        d_str = f"{d:02d}"
-        matching_dirs = [os.path.join(proj_dir, sd) for sd in subdirs if sd == d_str or sd.endswith(f"-{d_str}") or sd.startswith(f"{d_str}-")]
-        if not matching_dirs:
-            if os.path.exists(os.path.join(INPUT_IMAGES_DIR, d_str)):
-                matching_dirs.append(os.path.join(INPUT_IMAGES_DIR, d_str))
-
-        counted_files = set()
-        for md in matching_dirs:
-            if os.path.exists(md):
-                for f in os.listdir(md):
-                    if os.path.splitext(f)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
-                        counted_files.add(f)
-
-        days_data.append({
-            'day': d_str,
-            'image_count': len(counted_files),
-            'has_images': len(counted_files) > 0
-        })
-    return jsonify({'success': True, 'project': project, 'days': days_data})
-
-@app.route('/api/photos/daily/<day>', methods=['GET'])
-def get_daily_photos(day):
-    """Lấy danh sách ảnh camera của 1 ngày trong dự án (hỗ trợ cả dạng '01' và 'YYYY-MM-01')"""
-    project = request.args.get('project', DEFAULT_PROJECT_NAME).strip()
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
-    day_str = str(day).zfill(2)
-    proj_dir = os.path.join(INPUT_IMAGES_DIR, safe_proj)
-
-    matching_dirs = []
-    if os.path.exists(proj_dir):
-        for sd in os.listdir(proj_dir):
-            if os.path.isdir(os.path.join(proj_dir, sd)):
-                if sd == day_str or sd.endswith(f"-{day_str}") or sd.startswith(f"{day_str}-"):
-                    matching_dirs.append(os.path.join(proj_dir, sd))
-
-    if not matching_dirs and os.path.exists(os.path.join(INPUT_IMAGES_DIR, day_str)):
-        matching_dirs.append(os.path.join(INPUT_IMAGES_DIR, day_str))
-
-    photos = []
-    seen_filenames = set()
-    for md in matching_dirs:
-        for f in sorted(os.listdir(md)):
-            ext = os.path.splitext(f)[1].lower()
-            if ext in SUPPORTED_IMAGE_EXTENSIONS and f not in seen_filenames:
-                seen_filenames.add(f)
-                f_path = os.path.join(md, f)
-                size_kb = round(os.path.getsize(f_path) / 1024, 1)
-                photos.append({
-                    'filename': f,
-                    'size_kb': size_kb,
-                    'url': f"/api/photos/view/daily?project={safe_proj}&day={day_str}&filename={f}"
-                })
-    return jsonify({'success': True, 'project': project, 'day': day_str, 'photos': photos, 'total': len(photos)})
-
-@app.route('/api/photos/daily/upload', methods=['POST'])
-def upload_daily_photos():
-    """Tải lên nhiều ảnh camera vào 1 ngày của dự án"""
-    project = request.form.get('project', DEFAULT_PROJECT_NAME).strip()
-    day = request.form.get('day', '01').strip()
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
-    day_str = str(day).zfill(2)
-    
-    target_dir = os.path.join(INPUT_IMAGES_DIR, safe_proj, day_str)
-    os.makedirs(target_dir, exist_ok=True)
-    
-    files = request.files.getlist('files') or request.files.getlist('photos')
-    if not files and 'file' in request.files:
-        files = [request.files['file']]
-            
-    if not files:
-        return jsonify({'error': 'Không có file ảnh nào được gửi lên'}), 400
-        
-    saved_count = 0
-    for f in files:
-        if not f.filename:
-            continue
-        ext = os.path.splitext(f.filename)[1].lower()
-        if ext in SUPPORTED_IMAGE_EXTENSIONS:
-            safe_filename = re.sub(r'[<>:"/\\|?*]', '_', f.filename)
-            save_path = os.path.join(target_dir, safe_filename)
-            f.save(save_path)
-            saved_count += 1
-            
-    return jsonify({'success': True, 'saved_count': saved_count, 'day': day_str, 'project': project})
-
-@app.route('/api/photos/daily/delete', methods=['POST'])
-def delete_daily_photo():
-    """Xóa 1 ảnh hoặc xóa toàn bộ ảnh của ngày (hỗ trợ cả dạng '01' và 'YYYY-MM-01')"""
-    data = request.json or {}
-    project = data.get('project', DEFAULT_PROJECT_NAME).strip()
-    day = str(data.get('day', '01')).zfill(2)
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
-    filename = data.get('filename')
-    delete_all = data.get('delete_all', False)
-    
-    # Tìm tất cả thư mục khớp với ngày (giống get_daily_photos)
-    proj_dir = os.path.join(INPUT_IMAGES_DIR, safe_proj)
-    matching_dirs = []
-    if os.path.exists(proj_dir):
-        for sd in os.listdir(proj_dir):
-            if os.path.isdir(os.path.join(proj_dir, sd)):
-                if sd == day or sd.endswith(f"-{day}") or sd.startswith(f"{day}-"):
-                    matching_dirs.append(os.path.join(proj_dir, sd))
-    
-    if not matching_dirs and os.path.exists(os.path.join(INPUT_IMAGES_DIR, day)):
-        matching_dirs.append(os.path.join(INPUT_IMAGES_DIR, day))
-        
-    if not matching_dirs:
-        return jsonify({'success': True})
-        
-    if delete_all:
-        deleted_count = 0
-        for d_path in matching_dirs:
-            for f in os.listdir(d_path):
-                if os.path.splitext(f)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
-                    try:
-                        os.remove(os.path.join(d_path, f))
-                        deleted_count += 1
-                    except Exception:
-                        pass
-        return jsonify({'success': True, 'message': f'Đã xóa toàn bộ {deleted_count} ảnh ngày {day}'})
-    elif filename:
-        for d_path in matching_dirs:
-            file_path = os.path.join(d_path, filename)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                return jsonify({'success': True, 'message': f'Đã xóa ảnh {filename}'})
-        return jsonify({'success': True, 'message': f'Ảnh {filename} không tồn tại'})
-    return jsonify({'error': 'Yêu cầu không hợp lệ'}), 400
-
-# ---------- API: ẢNH CHÂN DUNG NHÂN VIÊN & THUYÊN CHUYỂN ----------
-
-@app.route('/api/portraits', methods=['GET'])
-def get_employees_portraits():
-    """Lấy danh sách nhân viên và ảnh chân dung theo dự án"""
-    project = request.args.get('project', DEFAULT_PROJECT_NAME).strip()
-    search = request.args.get('search', '').strip().lower()
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
-    proj_dir = os.path.join(PORTRAIT_DIR, safe_proj)
-    
-    employees = []
-    if os.path.exists(proj_dir):
-        for item in os.listdir(proj_dir):
-            item_path = os.path.join(proj_dir, item)
-            if os.path.isdir(item_path):
-                emp_name = item
-                if search and search not in emp_name.lower():
-                    continue
-                imgs = [
-                    f for f in sorted(os.listdir(item_path))
-                    if os.path.splitext(f)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS
-                ]
-                avatar_url = ""
-                if imgs:
-                    avatar_url = f"/api/photos/view/portrait?project={safe_proj}&person={emp_name}&filename={imgs[0]}"
-                employees.append({
-                    'name': emp_name,
-                    'project': project,
-                    'image_count': len(imgs),
-                    'images': imgs,
-                    'avatar_url': avatar_url
-                })
-            elif os.path.splitext(item)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
-                emp_name = os.path.splitext(item)[0]
-                if search and search not in emp_name.lower():
-                    continue
-                avatar_url = f"/api/photos/view/portrait?project={safe_proj}&person=&filename={item}"
-                employees.append({
-                    'name': emp_name,
-                    'project': project,
-                    'image_count': 1,
-                    'images': [item],
-                    'avatar_url': avatar_url
-                })
-    employees.sort(key=lambda x: x['name'])
-    return jsonify({'success': True, 'project': project, 'employees': employees, 'total': len(employees)})
-
-@app.route('/api/portraits/employee/create', methods=['POST'])
-def create_employee():
-    """Thêm nhân viên mới vào dự án"""
-    data = request.json or {}
-    project = data.get('project', DEFAULT_PROJECT_NAME).strip()
-    name = data.get('name', '').strip()
-    if not name:
-        return jsonify({'error': 'Tên nhân viên không được để trống'}), 400
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
-    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
-    emp_dir = os.path.join(PORTRAIT_DIR, safe_proj, safe_name)
-    os.makedirs(emp_dir, exist_ok=True)
-    matcher = get_face_matcher()
-    if matcher:
-        matcher.reload_portraits()
-    return jsonify({'success': True, 'name': safe_name, 'project': safe_proj})
-
-@app.route('/api/portraits/employee/upload', methods=['POST'])
-def upload_employee_photos():
-    """Tải lên ảnh chân dung cho nhân viên"""
-    project = request.form.get('project', DEFAULT_PROJECT_NAME).strip()
-    name = request.form.get('name', '').strip()
-    if not name:
-        return jsonify({'error': 'Tên nhân viên không hợp lệ'}), 400
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
-    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
-    emp_dir = os.path.join(PORTRAIT_DIR, safe_proj, safe_name)
-    os.makedirs(emp_dir, exist_ok=True)
-    
-    files = request.files.getlist('files') or request.files.getlist('photos')
-    if not files and 'file' in request.files:
-        files = [request.files['file']]
-    if not files:
-        return jsonify({'error': 'Không có file ảnh nào được gửi lên'}), 400
-        
-    saved = []
-    for f in files:
-        if not f.filename:
-            continue
-        ext = os.path.splitext(f.filename)[1].lower()
-        if ext in SUPPORTED_IMAGE_EXTENSIONS:
-            safe_fname = re.sub(r'[<>:"/\\|?*]', '_', f.filename)
-            save_path = os.path.join(emp_dir, safe_fname)
-            f.save(save_path)
-            saved.append(safe_fname)
-            
-    matcher = get_face_matcher()
-    if matcher:
-        matcher.reload_portraits()
-    return jsonify({'success': True, 'saved_count': len(saved), 'files': saved})
-
-@app.route('/api/portraits/employee/delete-photo', methods=['POST'])
-def delete_employee_photo():
-    """Xóa 1 ảnh chân dung của nhân viên"""
-    data = request.json or {}
-    project = data.get('project', DEFAULT_PROJECT_NAME).strip()
-    name = data.get('name', '').strip()
-    filename = data.get('filename', '').strip()
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
-    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
-    
-    p_path = os.path.join(PORTRAIT_DIR, safe_proj, safe_name, filename)
-    if os.path.exists(p_path):
-        os.remove(p_path)
-    matcher = get_face_matcher()
-    if matcher:
-        matcher.reload_portraits()
-    return jsonify({'success': True})
-
-@app.route('/api/portraits/employee/delete', methods=['POST'])
-def delete_employee():
-    """Xóa nhân viên và toàn bộ ảnh chân dung"""
-    data = request.json or {}
-    project = data.get('project', DEFAULT_PROJECT_NAME).strip()
-    name = data.get('name', '').strip()
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project)
-    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
-    
-    emp_dir = os.path.join(PORTRAIT_DIR, safe_proj, safe_name)
-    if os.path.exists(emp_dir):
-        shutil.rmtree(emp_dir, ignore_errors=True)
-    matcher = get_face_matcher()
-    if matcher:
-        matcher.reload_portraits()
-    return jsonify({'success': True})
-
-@app.route('/api/portraits/employee/transfer', methods=['POST'])
-def transfer_employee():
-    """Thuyên chuyển nhân viên từ dự án này sang dự án khác"""
-    data = request.json or {}
-    source_proj = data.get('source_project', '').strip()
-    target_proj = data.get('target_project', '').strip()
-    name = data.get('name', '').strip()
-    
-    if not source_proj or not target_proj or not name:
-        return jsonify({'error': 'Thông tin thuyên chuyển không đầy đủ'}), 400
-        
-    if source_proj == target_proj:
-        return jsonify({'error': 'Dự án đích phải khác dự án nguồn'}), 400
-        
-    safe_source = re.sub(r'[<>:"/\\|?*]', '_', source_proj)
-    safe_target = re.sub(r'[<>:"/\\|?*]', '_', target_proj)
-    safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
-    
-    src_dir = os.path.join(PORTRAIT_DIR, safe_source, safe_name)
-    dst_proj_dir = os.path.join(PORTRAIT_DIR, safe_target)
-    dst_dir = os.path.join(dst_proj_dir, safe_name)
-    
-    if not os.path.exists(src_dir):
-        return jsonify({'error': f'Không tìm thấy nhân viên {name} trong dự án {source_proj}'}), 404
-        
-    os.makedirs(dst_proj_dir, exist_ok=True)
-    
-    if not os.path.exists(dst_dir):
-        shutil.move(src_dir, dst_dir)
-    else:
-        for f in os.listdir(src_dir):
-            s_file = os.path.join(src_dir, f)
-            d_file = os.path.join(dst_dir, f)
-            if not os.path.exists(d_file):
-                shutil.move(s_file, d_file)
-        shutil.rmtree(src_dir, ignore_errors=True)
-        
-    matcher = get_face_matcher()
-    if matcher:
-        matcher.reload_portraits()
-        
-    return jsonify({
-        'success': True,
-        'message': f'Đã thuyên chuyển nhân viên {name} từ {source_proj} sang {target_proj}'
-    })
-
-# ---------- API: PHỤC VỤ XEM ẢNH AN TOÀN UTF-8 ----------
-
-@app.route('/api/photos/view/portrait')
-def view_portrait_photo():
-    """Xem ảnh chân dung an toàn với tên tiếng Việt"""
-    project = request.args.get('project', '').strip()
-    person = request.args.get('person', '').strip()
-    filename = request.args.get('filename', '').strip()
-    if not filename:
-        return "File not found", 404
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project) if project else ''
-    safe_person = re.sub(r'[<>:"/\\|?*]', '_', person) if person else ''
-    
-    if safe_person:
-        file_path = os.path.join(PORTRAIT_DIR, safe_proj, safe_person, filename)
-    elif safe_proj:
-        file_path = os.path.join(PORTRAIT_DIR, safe_proj, filename)
-    else:
-        file_path = os.path.join(PORTRAIT_DIR, filename)
-        
-    if not os.path.exists(file_path):
-        file_path = os.path.join(PORTRAIT_DIR, safe_person, filename)
-        
-    if os.path.exists(file_path):
-        return send_file(os.path.abspath(file_path))
-    return "Not found", 404
-
-@app.route('/api/photos/view/daily')
-def view_daily_photo():
-    """Xem ảnh camera theo ngày an toàn với tên tiếng Việt"""
-    project = request.args.get('project', '').strip()
-    day = str(request.args.get('day', '')).zfill(2)
-    filename = request.args.get('filename', '').strip()
-    if not filename:
-        return "File not found", 404
-    safe_proj = re.sub(r'[<>:"/\\|?*]', '_', project) if project else ''
-    
-    file_path = os.path.join(INPUT_IMAGES_DIR, safe_proj, day, filename)
-    if not os.path.exists(file_path):
-        proj_dir = os.path.join(INPUT_IMAGES_DIR, safe_proj)
-        if os.path.exists(proj_dir):
-            for sd in os.listdir(proj_dir):
-                if sd == day or sd.endswith(f"-{day}") or sd.startswith(f"{day}-"):
-                    candidate = os.path.join(proj_dir, sd, filename)
-                    if os.path.exists(candidate):
-                        file_path = candidate
-                        break
-    if not os.path.exists(file_path):
-        file_path = os.path.join(INPUT_IMAGES_DIR, day, filename)
-        
-    if os.path.exists(file_path):
-        return send_file(os.path.abspath(file_path))
-    return "Not found", 404
+from src.identity_routes import register_identity_routes
+from src.daily_photo_routes import register_daily_photo_routes
+register_identity_routes(app, get_identity_registry, lambda: INPUT_IMAGES_DIR)
+register_daily_photo_routes(app, lambda: INPUT_IMAGES_DIR,
+                           project_resolver=lambda ref: get_identity_registry().get_project(ref))
 
 # ==================== API: FACE MATCHER ====================
 
@@ -1329,7 +892,7 @@ def get_face_matcher():
         if _face_matcher is None:
             send_log("⏳ Dang khoi tao Face Matcher (DeepFace)...", "info")
             portrait_dir = resolve_portrait_dir(BASE_DIR)
-            _face_matcher = FaceMatcher(portrait_dir, log_callback=send_log)
+            _face_matcher = FaceMatcher(portrait_dir, log_callback=send_log, identity_registry=get_identity_registry())
             send_log(
                 f"✅ Face Matcher san sang. PortraitDir={portrait_dir} "
                 f"(n={len(_face_matcher.portrait_cache)}, imgs={_count_images_in_dir(portrait_dir)})",
@@ -1343,7 +906,7 @@ def get_face_matcher():
                     f"🔁 Cache rong, thu lai PortraitDir={alt_dir} (imgs={_count_images_in_dir(alt_dir)})",
                     "warning"
                 )
-                _face_matcher = FaceMatcher(alt_dir, log_callback=send_log)
+                _face_matcher = FaceMatcher(alt_dir, log_callback=send_log, identity_registry=get_identity_registry())
                 send_log(
                     f"✅ Face Matcher san sang. PortraitDir={alt_dir} "
                     f"(n={len(_face_matcher.portrait_cache)})",
@@ -1384,6 +947,7 @@ class PDFFaceTask:
         self.total = 0
         self.current = ''
         self.files = []
+        self.aggregate_report = None
         self.errors = []
         self.start_time = None
         self.end_time = None
@@ -1396,6 +960,7 @@ class PDFFaceTask:
             'total': self.total,
             'current': self.current,
             'files': self.files,
+            'aggregate_report': self.aggregate_report,
             'errors': self.errors,
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'end_time': self.end_time.isoformat() if self.end_time else None,
@@ -1590,13 +1155,22 @@ def pdf_face_analyze():
         output_dir = os.path.join(PDF_FACE_OUTPUT_DIR, folder)
         os.makedirs(output_dir, exist_ok=True)
 
+        try:
+            identity_registry = get_identity_registry()
+            selected_project = identity_registry.get_project(data.get('project_id') or data.get('project') or DEFAULT_PROJECT_NAME)
+            if not selected_project['active']:
+                raise ValueError('Dự án đã được lưu trữ')
+            project_name = selected_project['storage_dir']
+            project_id = selected_project['project_id']
+            report_options = _build_report_options(data, selected_project['display_name'])
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
+        p_dir = str(identity_registry.project_portrait_dir(project_id))
+        i_dir = os.path.join(INPUT_IMAGES_DIR, project_name)
+
         task_id = f"pdf_face_{int(time.time() * 1000)}"
         task = PDFFaceTask(task_id)
         pdf_face_tasks[task_id] = task
-
-        project_name = data.get('project') or DEFAULT_PROJECT_NAME
-        p_dir = os.path.join(PORTRAIT_DIR, project_name) if os.path.exists(os.path.join(PORTRAIT_DIR, project_name)) else PORTRAIT_DIR
-        i_dir = os.path.join(INPUT_IMAGES_DIR, project_name) if os.path.exists(os.path.join(INPUT_IMAGES_DIR, project_name)) else INPUT_IMAGES_DIR
 
         def _run():
             task.status = 'running'
@@ -1616,7 +1190,9 @@ def pdf_face_analyze():
                     matcher,
                     accuracy_mode=True,
                     match_distance_threshold=threshold,
-                    log_detail=True
+                    log_detail=True,
+                    project_id=project_id,
+                    identity_registry=identity_registry
                 )
 
                 def _log(msg, t='default'):
@@ -1632,7 +1208,26 @@ def pdf_face_analyze():
                             'folder': folder,
                         })
 
-                files = analyzer.analyze_folder(input_dir, output_dir, log_callback=_log, progress_callback=_progress)
+                files = analyzer.analyze_folder(
+                    input_dir,
+                    output_dir,
+                    log_callback=_log,
+                    progress_callback=_progress,
+                    report_options=report_options,
+                )
+                aggregate_path = next(
+                    (path for path in files if os.path.basename(path).startswith('GIAI_TRINH_')),
+                    None,
+                )
+                if aggregate_path:
+                    task.aggregate_report = {
+                        'name': os.path.basename(aggregate_path),
+                        'folder': folder,
+                    }
+                    task.files.append({
+                        **task.aggregate_report,
+                        'is_aggregate': True,
+                    })
                 task.total = len(files)
                 task.progress = len(files)
                 task.status = 'completed'
@@ -1763,6 +1358,7 @@ class ExcelFaceTask:
         self.total = 0
         self.current = ''
         self.files = []
+        self.aggregate_report = None
         self.errors = []
         self.start_time = None
         self.end_time = None
@@ -1775,6 +1371,7 @@ class ExcelFaceTask:
             'total': self.total,
             'current': self.current,
             'files': self.files,
+            'aggregate_report': self.aggregate_report,
             'errors': self.errors,
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'end_time': self.end_time.isoformat() if self.end_time else None,
@@ -1961,13 +1558,22 @@ def excel_face_analyze():
         output_dir = os.path.join(EXCEL_FACE_OUTPUT_DIR, folder)
         os.makedirs(output_dir, exist_ok=True)
 
+        try:
+            identity_registry = get_identity_registry()
+            selected_project = identity_registry.get_project(data.get('project_id') or data.get('project') or DEFAULT_PROJECT_NAME)
+            if not selected_project['active']:
+                raise ValueError('Dự án đã được lưu trữ')
+            project_name = selected_project['storage_dir']
+            project_id = selected_project['project_id']
+            report_options = _build_report_options(data, selected_project['display_name'])
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
+        p_dir = str(identity_registry.project_portrait_dir(project_id))
+        i_dir = os.path.join(INPUT_IMAGES_DIR, project_name)
+
         task_id = f"excel_face_{int(time.time() * 1000)}"
         task = ExcelFaceTask(task_id)
         excel_face_tasks[task_id] = task
-
-        project_name = data.get('project') or DEFAULT_PROJECT_NAME
-        p_dir = os.path.join(PORTRAIT_DIR, project_name) if os.path.exists(os.path.join(PORTRAIT_DIR, project_name)) else PORTRAIT_DIR
-        i_dir = os.path.join(INPUT_IMAGES_DIR, project_name) if os.path.exists(os.path.join(INPUT_IMAGES_DIR, project_name)) else INPUT_IMAGES_DIR
 
         def _run():
             task.status = 'running'
@@ -1987,7 +1593,9 @@ def excel_face_analyze():
                     matcher,
                     accuracy_mode=True,
                     match_distance_threshold=threshold,
-                    log_detail=True
+                    log_detail=True,
+                    project_id=project_id,
+                    identity_registry=identity_registry
                 )
 
                 def _log(msg, t='default'):
@@ -2003,7 +1611,26 @@ def excel_face_analyze():
                             'folder': folder,
                         })
 
-                files = analyzer.analyze_folder(input_dir, output_dir, log_callback=_log, progress_callback=_progress)
+                files = analyzer.analyze_folder(
+                    input_dir,
+                    output_dir,
+                    log_callback=_log,
+                    progress_callback=_progress,
+                    report_options=report_options,
+                )
+                aggregate_path = next(
+                    (path for path in files if os.path.basename(path).startswith('GIAI_TRINH_')),
+                    None,
+                )
+                if aggregate_path:
+                    task.aggregate_report = {
+                        'name': os.path.basename(aggregate_path),
+                        'folder': folder,
+                    }
+                    task.files.append({
+                        **task.aggregate_report,
+                        'is_aggregate': True,
+                    })
                 task.total = len(files)
                 task.progress = len(files)
                 task.status = 'completed'
@@ -2063,6 +1690,51 @@ def excel_face_files():
                     'count': len(word_files)
                 })
     return jsonify({'success': True, 'folders': folders, 'output_dir': EXCEL_FACE_OUTPUT_DIR})
+
+
+@app.route('/api/aggregate-reports')
+def aggregate_reports():
+    """Liệt kê file giải trình tổng hợp từ cả luồng quét Excel và PDF."""
+    files = []
+    sources = (
+        ('Excel', EXCEL_FACE_OUTPUT_DIR, 'excel_face_download'),
+        ('PDF', PDF_FACE_OUTPUT_DIR, 'pdf_face_download'),
+    )
+    for source, base_dir, download_endpoint in sources:
+        if not os.path.isdir(base_dir):
+            continue
+        for folder in os.listdir(base_dir):
+            folder_path = os.path.join(base_dir, folder)
+            if not os.path.isdir(folder_path):
+                continue
+            for filename in os.listdir(folder_path):
+                if not (
+                    filename.upper().startswith('GIAI_TRINH_')
+                    and filename.lower().endswith('.docx')
+                ):
+                    continue
+                file_path = os.path.join(folder_path, filename)
+                if not os.path.isfile(file_path):
+                    continue
+                modified_timestamp = os.path.getmtime(file_path)
+                files.append({
+                    'name': filename,
+                    'source': source,
+                    'folder': folder,
+                    'size': os.path.getsize(file_path),
+                    'modified': datetime.fromtimestamp(modified_timestamp).isoformat(),
+                    'download_url': url_for(
+                        download_endpoint,
+                        folder=folder,
+                        filename=filename,
+                    ),
+                    '_modified_timestamp': modified_timestamp,
+                })
+
+    files.sort(key=lambda item: item['_modified_timestamp'], reverse=True)
+    for item in files:
+        item.pop('_modified_timestamp', None)
+    return jsonify({'success': True, 'files': files, 'count': len(files)})
 
 
 @app.route('/api/excel/face/download/<folder>/<filename>')
@@ -2471,14 +2143,24 @@ def open_system_folder():
     data = request.json or {}
     target_type = data.get('type', 'input_images')
     subpath = data.get('subpath', '').strip()
-    
+
     if target_type == 'input_images':
-        folder = os.path.join(INPUT_IMAGES_DIR, subpath) if subpath else INPUT_IMAGES_DIR
+        root_folder = INPUT_IMAGES_DIR
     elif target_type == 'results':
-        folder = os.path.join(RESULTS_DIR, subpath) if subpath else RESULTS_DIR
+        root_folder = RESULTS_DIR
+    elif target_type == 'excel_output':
+        root_folder = EXCEL_OUTPUT_DIR
     else:
-        folder = BASE_DIR
-        
+        return jsonify({'success': False, 'error': 'Loại thư mục không hợp lệ'}), 400
+
+    root_folder = os.path.abspath(root_folder)
+    folder = os.path.abspath(os.path.join(root_folder, subpath)) if subpath else root_folder
+    try:
+        if os.path.commonpath([root_folder, folder]) != root_folder:
+            return jsonify({'success': False, 'error': 'Đường dẫn không hợp lệ'}), 400
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Đường dẫn không hợp lệ'}), 400
+
     os.makedirs(folder, exist_ok=True)
     try:
         if sys.platform == 'win32':

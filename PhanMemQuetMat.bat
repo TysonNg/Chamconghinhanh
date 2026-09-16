@@ -10,27 +10,43 @@ echo ╚════════════════════════
 echo.
 
 REM Kiểm tra Python
-python --version > nul 2>&1
-if errorlevel 1 (
-    py --version > nul 2>&1
-    if errorlevel 1 (
-        echo [LỖI] Không tìm thấy Python! Vui lòng cài đặt Python trước.
-        echo Tải tại: https://www.python.org/downloads/
-        pause
-        exit /b 1
-    ) else (
-        set PYTHON_CMD=py
-    )
+py -3.12 --version > nul 2>&1
+if not errorlevel 1 (
+    set PYTHON_CMD=py -3.12
 ) else (
-    set PYTHON_CMD=python
+    python --version > nul 2>&1
+    if errorlevel 1 (
+        py --version > nul 2>&1
+        if errorlevel 1 (
+            echo [LỖI] Không tìm thấy Python! Vui lòng cài đặt Python trước.
+            echo Tải tại: https://www.python.org/downloads/
+            pause
+            exit /b 1
+        ) else (
+            set PYTHON_CMD=py
+        )
+    ) else (
+        set PYTHON_CMD=python
+    )
 )
 
 REM Cài đặt dependencies nếu chưa có
 echo Đang kiểm tra dependencies...
-%PYTHON_CMD% -c "import flask" > nul 2>&1
+%PYTHON_CMD% -c "import flask, piexif" > nul 2>&1
 if errorlevel 1 (
     echo Đang cài đặt dependencies...
-    %PYTHON_CMD% -m pip install -r requirements.txt -q
+    %PYTHON_CMD% -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo [LỖI] Không thể cài đặt dependencies. Vui lòng kiểm tra kết nối mạng và chạy lại.
+        pause
+        exit /b 1
+    )
+    %PYTHON_CMD% -c "import flask, piexif" > nul 2>&1
+    if errorlevel 1 (
+        echo [LỖI] Dependencies vẫn chưa đầy đủ sau khi cài đặt.
+        pause
+        exit /b 1
+    )
 )
 
 echo Đang khởi động server...

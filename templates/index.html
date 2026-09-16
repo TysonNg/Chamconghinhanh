@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Phần Mềm Chấm Công & Quét Mặt</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260315_5">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260916_5">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
@@ -475,8 +475,8 @@
                 <div class="subtab-content" id="subtab-result-summary">
                     <div class="card">
                         <div class="card-header">
-                            <h2>Danh Sách Báo Cáo & File Kết Quả (results/)</h2>
-                            <button class="btn btn-secondary btn-sm" onclick="loadResultFiles(this)">
+                            <h2>File Word Giải Trình Tổng Hợp</h2>
+                            <button class="btn btn-secondary btn-sm" onclick="loadAggregateReports(this)">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="23 4 23 10 17 10"></polyline>
                                     <polyline points="1 20 1 14 7 14"></polyline>
@@ -492,13 +492,15 @@
                                         <tr>
                                             <th style="width: 60px;">STT</th>
                                             <th>Tên File</th>
+                                            <th style="width: 90px;">Nguồn</th>
+                                            <th style="width: 170px;">Đợt Quét</th>
                                             <th style="width: 140px;">Kích Thước</th>
                                             <th style="width: 140px; text-align: center;">Thao Tác</th>
                                         </tr>
                                     </thead>
-                                    <tbody id="results-table-body">
+                                    <tbody id="aggregate-reports-table-body">
                                         <tr>
-                                            <td colspan="4" class="empty-message">Chưa có file kết quả nào trong thư mục results</td>
+                                            <td colspan="6" class="empty-message">Chưa có file giải trình tổng hợp. Hãy chạy quét mặt từ Excel hoặc PDF.</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -513,18 +515,25 @@
                         </div>
                         <div class="card-body">
                             <div style="display: flex; gap: 24px; flex-wrap: wrap;">
-                            <div class="form-group" style="flex: 1; min-width: 240px;">
-                                <label for="project-name">Tên Dự Án:</label>
-                                <input type="text" id="project-name" class="form-input" value="Chung cư Tân Thuận Đông">
+                                <div class="form-group" style="flex: 1.4; min-width: 260px;">
+                                    <label for="project-name">Tên Dự Án:</label>
+                                    <input type="text" id="project-name" class="form-input" value="Chung cư Tân Thuận Đông">
+                                </div>
+                                <div class="form-group" style="flex: 1; min-width: 190px;">
+                                    <label for="report-from-date">Từ Ngày:</label>
+                                    <input type="date" id="report-from-date" class="form-input">
+                                </div>
+                                <div class="form-group" style="flex: 1; min-width: 190px;">
+                                    <label for="report-to-date">Đến Ngày:</label>
+                                    <input type="date" id="report-to-date" class="form-input">
+                                </div>
                             </div>
-                            <div class="form-group" style="flex: 1; min-width: 240px;">
-                                <label for="export-month">Tháng Báo Cáo:</label>
-                                <input type="text" id="export-month" class="form-input" value="01/2026">
-                            </div>
+                            <p class="form-help" style="margin: 4px 0 0;">
+                                Các thông tin này được dùng khi quét mặt từ Excel hoặc PDF để tạo file giải trình tổng hợp A4.
+                            </p>
                         </div>
                     </div>
                 </div>
-            </div>
             </div>
 
 
@@ -605,7 +614,9 @@
                 <div class="subtab-content active" id="subtab-photo-daily">
                     <div class="card">
                         <div class="card-header">
-                            <h2>Chọn Ngày Trong Tháng (01 - 31)</h2>
+                            <h2>Ảnh camera theo ngày</h2>
+                            <label>Tháng/năm <input type="month" id="photo-period" class="form-input" onchange="loadDailyPhotosStats()"></label>
+                            <button class="btn btn-secondary btn-sm" onclick="mapLegacyPhotoDay()">Gán ngày thư mục cũ</button>
                             <div class="card-header-actions">
                                 <button class="btn btn-secondary btn-sm" onclick="loadDailyPhotosStats(this)">
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -688,6 +699,11 @@
                                         <line x1="23" y1="11" x2="17" y2="11"></line>
                                     </svg>
                                     <span>Thêm Nhân Viên</span>
+                                </button>
+                                <button id="generate-internal-codes" class="btn btn-secondary btn-sm"
+                                    onclick="generateInternalEmployeeCodes(this)"
+                                    title="Tạo mã nội bộ cho mọi nhân viên đang hoạt động chưa có mã, trên tất cả dự án">
+                                    Tạo mã nội bộ hàng loạt
                                 </button>
                                 <button class="btn btn-secondary btn-sm" onclick="loadPortraits(this)">
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -926,7 +942,6 @@
                                         <label for="zalo-folder-format" style="font-size: 12px; font-weight: 500;">Định dạng thư mục ngày:</label>
                                         <select id="zalo-folder-format" class="form-input">
                                             <option value="date" selected>YYYY-MM-DD (VD: 2026-09-13) - Chuẩn rõ ràng</option>
-                                            <option value="day">DD (VD: 13) - Khớp số ngày trong tháng</option>
                                         </select>
                                     </div>
                                     <div class="form-group mb-2">
@@ -1314,15 +1329,117 @@
         <div class="lightbox-container" onclick="event.stopPropagation()">
             <img id="lightbox-img" src="" alt="Zoom Photo">
             <div class="lightbox-caption" id="lightbox-caption"></div>
+            <!-- Lightbox Actions Toolbar -->
+            <div class="lightbox-toolbar" id="lightbox-toolbar" style="display: none;">
+                <button type="button" class="btn btn-primary btn-sm" id="lightbox-btn-regen" title="Thử gen lại ảnh này bằng AI">
+                    <span>🔄 Sửa lại bằng AI</span>
+                </button>
+                <button type="button" class="btn btn-success btn-sm" id="lightbox-btn-check" title="Kiểm tra xem ảnh có bị phát hiện là AI không">
+                    <span>🛡️ Kiểm tra dấu vết AI</span>
+                </button>
+                <a href="#" class="btn btn-secondary btn-sm" id="lightbox-btn-download" target="_blank" title="Tải file ảnh về máy">
+                    <span>⬇️ Tải ảnh</span>
+                </a>
+            </div>
             <button class="lightbox-close-btn" onclick="closeModal('modal-lightbox')">&times;</button>
+        </div>
+    </div>
+
+    <!-- Modal xác nhận OCR toàn bộ watermark trước khi AI tạo ảnh -->
+    <div class="modal-backdrop" id="modal-watermark-confirm" style="display: none;" onclick="closeModal('modal-watermark-confirm')">
+        <div class="modal-dialog modal-lg" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3>🔎 Xác nhận nội dung watermark gốc</h3>
+                <button class="modal-close-btn" onclick="closeModal('modal-watermark-confirm')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="watermark-confirm-help">
+                    Gemini và OpenAI chưa đọc đồng nhất. Vui lòng kiểm tra từng dấu tiếng Việt;
+                    AI chỉ tạo ảnh khi phần hậu kiểm khớp chính xác các dòng dưới đây.
+                </p>
+                <img id="watermark-confirm-crop" class="watermark-confirm-crop" src="" alt="Crop watermark ảnh gốc">
+                <div id="watermark-provider-results" class="watermark-provider-results"></div>
+                <div id="watermark-confirm-lines" class="watermark-confirm-lines"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-watermark-confirm')">Hủy</button>
+                <button type="button" class="btn btn-primary" id="watermark-confirm-submit">
+                    Xác nhận và tạo lại watermark
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Kiểm Tra Dấu Vết AI (AI Forensic Inspector) -->
+    <div class="modal-backdrop" id="modal-ai-inspector" style="display: none;" onclick="closeModal('modal-ai-inspector')">
+        <div class="ai-inspector-dialog" onclick="event.stopPropagation()">
+            <!-- Header -->
+            <div class="ai-inspector-header">
+                <div class="ai-inspector-header-left">
+                    <div class="ai-inspector-icon-bubble">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="ai-inspector-title">Báo Cáo Kiểm Tra Dấu Vết AI</h3>
+                        <div class="ai-inspector-filename" id="ai-inspector-filename" title="">Đang quét dữ liệu...</div>
+                    </div>
+                </div>
+                <button type="button" class="ai-inspector-close-btn" onclick="closeModal('modal-ai-inspector')" aria-label="Đóng">&times;</button>
+            </div>
+
+            <!-- Body -->
+            <div class="ai-inspector-body">
+                <!-- Verdict Banner -->
+                <div id="ai-inspector-banner" class="ai-inspector-verdict-card pass">
+                    <div class="ai-verdict-info">
+                        <div class="ai-verdict-status-line">
+                            <span id="ai-inspector-icon" class="ai-verdict-icon">🛡️</span>
+                            <span id="ai-inspector-status-text" class="ai-verdict-status-title">ẢNH SẠCH - KHÔNG PHÁT HIỆN DẤU VẾT AI</span>
+                        </div>
+                        <div id="ai-inspector-verdict-desc" class="ai-verdict-desc">
+                            Ảnh đã được gỡ bỏ metadata C2PA, phá vỡ watermark ẩn SynthID và giữ nguyên thông số camera gốc.
+                        </div>
+                    </div>
+                    <div class="ai-verdict-score-box">
+                        <span class="ai-score-label">XÁC SUẤT AI</span>
+                        <span id="ai-inspector-score" class="ai-score-value">0%</span>
+                        <span class="ai-score-sub pass" id="ai-inspector-score-sub">AN TOÀN</span>
+                    </div>
+                </div>
+
+                <!-- Checklist section -->
+                <div class="ai-inspector-checklist-container">
+                    <div class="ai-checklist-title">
+                        <span>🛡️ Chi tiết các bài kiểm tra bảo mật (4 tầng):</span>
+                    </div>
+                    <div id="ai-inspector-checks-list" class="ai-checklist-items">
+                        <!-- Dynamic check items -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="ai-inspector-footer">
+                <div class="ai-inspector-security-tag">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        <path d="m9 12 2 2 4-4"/>
+                    </svg>
+                    <span>Bảo vệ bởi <strong>remove-ai-watermarks</strong> & <strong>Analog Humanizer</strong></span>
+                </div>
+                <button type="button" class="btn-ai-inspector-close" onclick="closeModal('modal-ai-inspector')">Đóng</button>
+            </div>
         </div>
     </div>
 
     <!-- Toast Notification -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/js/app.js?v=20260315_9"></script>
-    <script src="/static/js/supplement-batches.js?v=1"></script>
+    <script src="/static/js/attendance-date.js"></script>
+    <script src="/static/js/app.js?v=20260916_3"></script>
+    <script src="/static/js/supplement-batches.js?v=20260916_5"></script>
 </body>
 
 </html>

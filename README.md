@@ -151,3 +151,10 @@ TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 MIT License
 "# Chamconghinhanh"  git init git add README.md git commit -m "first commit" git branch -M main git remote add origin https://github.com/TysonNg/Chamconghinhanh.git git push -u origin main
+
+
+## Đối chiếu ngày và danh tính (16/09/2026)
+
+Ảnh mới dùng thư mục dự án/YYYY-MM-DD. Chân dung cần mã chấm công đã xác nhận trong đúng dự án và ngày hiệu lực. Không tự đối chiếu theo tên gần giống; ảnh chưa rõ ngày chỉ là ứng viên cần kiểm tra. Cache khuôn mặt đã tách rõ quyền giữ khóa để tránh tự khóa khi nạp/ghi.
+
+Dữ liệu cũ được giữ nguyên. Xem [hướng dẫn xác nhận và chuyển đổi](docs/attendance-data-migration.md) trước khi áp dụng mapping. Công cụ python -m tools.preview_attendance_migration mặc định chỉ xem trước.

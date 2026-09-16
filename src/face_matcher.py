@@ -4,6 +4,8 @@ Module nhận diện khuôn mặt - so sánh ảnh camera với ảnh chân dung
 """
 
 import os
+from dataclasses import dataclass
+from datetime import date
 import re
 import shutil
 import tempfile
@@ -48,41 +50,57 @@ def _get_cache_file():
         _CACHE_FILE = os.path.join(cache_dir, "face_embeddings.pkl")
     return _CACHE_FILE
 
-def load_disk_cache():
+def _load_disk_cache_locked():
+    """Read once. Caller holds _CACHE_LOCK."""
     global _DISK_CACHE
-    with _CACHE_LOCK:
-        if _DISK_CACHE is not None:
-            return _DISK_CACHE
-        cache_file = _get_cache_file()
-        if os.path.exists(cache_file):
-            try:
-                with open(cache_file, 'rb') as f:
-                    _DISK_CACHE = pickle.load(f)
-                    print(f"[CACHE] Đã nạp {len(_DISK_CACHE)} vector khuôn mặt từ ổ đĩa.")
-            except Exception as e:
-                print(f"[CACHE] Khởi tạo cache mới: {e}")
-                _DISK_CACHE = {}
-        else:
-            _DISK_CACHE = {}
-        return _DISK_CACHE
-
-def save_disk_cache(force=False):
-    global _DISK_CACHE, _CACHE_DIRTY_COUNT
-    with _CACHE_LOCK:
-        if _DISK_CACHE is None or (_CACHE_DIRTY_COUNT == 0 and not force):
-            return
+    if _DISK_CACHE is None:
         cache_file = _get_cache_file()
         try:
-            temp_file = cache_file + ".tmp"
-            with open(temp_file, 'wb') as f:
-                pickle.dump(_DISK_CACHE, f, protocol=pickle.HIGHEST_PROTOCOL)
-            if os.path.exists(cache_file):
-                os.remove(cache_file)
-            os.rename(temp_file, cache_file)
-            _CACHE_DIRTY_COUNT = 0
-            print(f"[CACHE] Đã lưu {len(_DISK_CACHE)} vector khuôn mặt vào ổ đĩa.")
-        except Exception as e:
-            print(f"[CACHE] Lỗi lưu cache: {e}")
+            with open(cache_file, 'rb') as f:
+                loaded = pickle.load(f)
+            if not isinstance(loaded, dict):
+                raise ValueError("Cache must contain a dictionary")
+            _DISK_CACHE = loaded
+        except FileNotFoundError:
+            _DISK_CACHE = {}
+        except Exception as exc:
+            print(f"[CACHE] Cannot read cache; rebuilding: {exc}")
+            _DISK_CACHE = {}
+    return _DISK_CACHE
+
+
+def load_disk_cache():
+    with _CACHE_LOCK:
+        return _load_disk_cache_locked()
+
+
+def _save_disk_cache_locked(force=False):
+    """Atomic file replacement. Caller holds _CACHE_LOCK."""
+    global _CACHE_DIRTY_COUNT
+    if _DISK_CACHE is None or (_CACHE_DIRTY_COUNT == 0 and not force):
+        return
+    cache_file = _get_cache_file()
+    temp_file = cache_file + ".tmp"
+    try:
+        with open(temp_file, "wb") as f:
+            pickle.dump(_DISK_CACHE, f, protocol=pickle.HIGHEST_PROTOCOL)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_file, cache_file)
+        _CACHE_DIRTY_COUNT = 0
+    except Exception as exc:
+        print(f"[CACHE] Cannot save cache; changes remain pending: {exc}")
+    finally:
+        try:
+            os.remove(temp_file)
+        except OSError:
+            pass
+
+
+def save_disk_cache(force=False):
+    with _CACHE_LOCK:
+        _save_disk_cache_locked(force=force)
+
 
 def get_temp_dir():
     """Lấy hoặc tạo thư mục temp (thread-safe)"""
@@ -187,6 +205,16 @@ def calculate_name_similarity(name1: str, name2: str) -> float:
     return common_prefix / max(len(n1), len(n2))
 
 
+@dataclass(frozen=True)
+class MatchResult:
+    status: str
+    image_path: Optional[str]
+    distance: Optional[float]
+    project_id: str
+    employee_id: Optional[str]
+    reason: str = ""
+
+
 class FaceMatcher:
     """So sánh khuôn mặt giữa ảnh camera và ảnh chân dung"""
     
@@ -197,7 +225,8 @@ class FaceMatcher:
         detector_backend: str = "retinaface",
         distance_metric: str = "cosine",
         enforce_detection: bool = True,
-        log_callback=None
+        log_callback=None,
+        identity_registry=None
     ):
         """
         Args:
@@ -208,6 +237,7 @@ class FaceMatcher:
             enforce_detection: Bắt buộc detect mặt để tăng độ chính xác
             log_callback: Hàm callback để gửi log (optional)
         """
+        self.identity_registry = identity_registry
         self.portrait_dir = portrait_dir
         self.model_name = model_name
         self.detector_backend = detector_backend
@@ -286,56 +316,55 @@ class FaceMatcher:
         return portraits[0] if portraits else None
     
     def find_portraits(self, person_name: str, project_name: Optional[str] = None) -> List[str]:
-        """
-        Tìm TẤT CẢ ảnh chân dung cho một người
-        Hỗ trợ matching tên tiếng Việt có/không dấu, ưu tiên tìm trong Dự Án nếu có
-        """
-        cache = self.portrait_cache
-        if project_name and project_name in self.project_portrait_cache:
-            cache = self.project_portrait_cache[project_name]
+        """Exact project-local lookup for display only, never an identity decision."""
+        if not project_name:
+            return []
+        return list(self.project_portrait_cache.get(project_name, {}).get(person_name, []))
 
-        # 1. Exact match
-        if person_name in cache:
-            return cache[person_name]
-        
-        # 2. Normalize và tìm exact match sau khi chuẩn hóa
-        person_normalized = normalize_vietnamese(person_name)
-        
-        for cached_name, images in cache.items():
-            cached_normalized = normalize_vietnamese(cached_name)
-            
-            # Exact match sau khi normalize
-            if person_normalized == cached_normalized:
-                return images
-        
-        # 3. Fuzzy match với similarity score
-        best_images = None
-        best_score = 0.0
-        min_threshold = 0.7  # Yêu cầu ít nhất 70% tương đồng
-        
-        for cached_name, images in cache.items():
-            score = calculate_name_similarity(person_name, cached_name)
-            
-            if score > best_score and score >= min_threshold:
-                best_score = score
-                best_images = images
-        
-        if best_images:
-            return best_images
-        
-        # 4. Fallback: substring match
-        for cached_name, images in cache.items():
-            cached_normalized = normalize_vietnamese(cached_name)
-            
-            if person_normalized in cached_normalized or cached_normalized in person_normalized:
-                return images
-        
-        # 5. Fallback tìm toàn cục nếu chưa tìm thấy trong project cụ thể
-        if project_name and cache is not self.portrait_cache:
-            return self.find_portraits(person_name, project_name=None)
+    def match_employee_in_images(
+        self, *, project_id: str, employee_id: str, attendance_date: date,
+        camera_images: List[str], distance_threshold: Optional[float] = None,
+        fast_mode: bool = True, log_detail: bool = False
+    ) -> MatchResult:
+        registry = self.identity_registry
+        if not registry or not registry.is_member(project_id, employee_id, attendance_date):
+            return MatchResult("identity_unresolved", None, None, project_id, employee_id,
+                               "Chưa xác nhận nhân viên trong đúng dự án/ngày hiệu lực")
+        portraits = registry.portrait_paths(project_id, employee_id, attendance_date)
+        if not portraits:
+            return MatchResult("no_portrait", None, None, project_id, employee_id,
+                               "Chưa có chân dung đã xác nhận")
+        embeddings = [self._get_embedding(str(path)) for path in portraits]
+        embeddings = [value for value in embeddings if value is not None]
+        if not embeddings:
+            return MatchResult("error", None, None, project_id, employee_id,
+                               "Không đọc được khuôn mặt từ chân dung")
+        threshold = self._get_default_threshold() if distance_threshold is None else distance_threshold
+        if not np.isfinite(threshold) or threshold <= 0:
+            raise ValueError("Ngưỡng so sánh không hợp lệ")
+        best_path, best_distance, compared = None, float("inf"), 0
+        for path in camera_images:
+            vector = self._get_embedding(str(path))
+            if vector is None:
+                continue
+            distances = [self._cosine_distance(vector, ref) if self.distance_metric == "cosine"
+                         else float(np.linalg.norm(vector-ref)) for ref in embeddings]
+            distance = min(distances)
+            if not np.isfinite(distance):
+                continue
+            compared += 1
+            if distance < best_distance:
+                best_path, best_distance = str(path), distance
+            if fast_mode and best_distance <= threshold * 0.7:
+                break
+        if not compared:
+            return MatchResult("error", None, None, project_id, employee_id,
+                               "Không đọc được khuôn mặt từ ảnh camera")
+        if best_distance <= threshold:
+            return MatchResult("matched", best_path, best_distance, project_id, employee_id)
+        return MatchResult("no_match", None, best_distance, project_id, employee_id,
+                           "Không có khuôn mặt đạt ngưỡng so sánh")
 
-        return []
-    
     def _cosine_distance(self, a: np.ndarray, b: np.ndarray) -> float:
         denom = (np.linalg.norm(a) * np.linalg.norm(b)) + 1e-12
         return float(1.0 - np.dot(a, b) / denom)
@@ -358,7 +387,7 @@ class FaceMatcher:
             global _DISK_CACHE, _CACHE_DIRTY_COUNT
             with _CACHE_LOCK:
                 if _DISK_CACHE is None:
-                    load_disk_cache()
+                    _load_disk_cache_locked()
                 if cache_key in _DISK_CACHE:
                     return _DISK_CACHE[cache_key]
 
@@ -381,11 +410,13 @@ class FaceMatcher:
 
             # 3. Ghi vào cache chung
             with _CACHE_LOCK:
+                if cache_key in _DISK_CACHE:
+                    return _DISK_CACHE[cache_key]
                 if _DISK_CACHE is not None:
                     _DISK_CACHE[cache_key] = embedding
                     _CACHE_DIRTY_COUNT += 1
                     if _CACHE_DIRTY_COUNT >= 20:
-                        save_disk_cache()
+                        _save_disk_cache_locked()
 
             return embedding
         except Exception:
@@ -406,184 +437,14 @@ class FaceMatcher:
                 return 0.45
         return 0.40
 
-    def match_face_in_images(
-        self,
-        person_name: str,
-        camera_images: List[str],
-        distance_threshold: Optional[float] = None,
-        fast_mode: bool = True,
-        log_detail: bool = False,
-        project_name: Optional[str] = None
-    ) -> Optional[str]:
-        """
-        Tìm ảnh camera có khuôn mặt match với người được chỉ định
-
-        Args:
-            person_name: Tên người cần tìm
-            camera_images: Danh sách đường dẫn ảnh camera
-            distance_threshold: Ngưỡng khoảng cách (thấp hơn = giống hơn).
-                                Nếu None sẽ dùng ngưỡng mặc định theo model.
-            fast_mode: Tối ưu tốc độ
-            log_detail: In log chi tiết
-            project_name: Tên dự án (tùy chọn) để lọc ảnh chân dung
-
-        Returns:
-            Đường dẫn ảnh camera match tốt nhất, hoặc None nếu không tìm thấy
-        """
-        if distance_threshold is None:
-            distance_threshold = self._get_default_threshold()
-
-        # Tìm tất cả ảnh chân dung
-        portrait_paths = self.find_portraits(person_name, project_name=project_name)
-        if not portrait_paths:
-            self._log(f"  [ERROR] Không tìm thấy ảnh chân dung cho: {person_name}", "error")
-            self._log(
-                f"     Cache có {len(self.portrait_cache)} người: {list(self.portrait_cache.keys())[:5]}...",
-                "warning"
-            )
-            return None
-
-        self._log(f"  -> Tìm thấy {len(portrait_paths)} ảnh chân dung", "info")
-        for p in portrait_paths:
-            exists = os.path.exists(p)
-            self._log(f"     - {os.path.basename(p)} (exists={exists})", "default")
-
-        # Tạo embedding cho ảnh chân dung
-        portrait_embeddings = []
-        for p in portrait_paths:
-            emb = self._get_embedding(p)
-            if emb is not None:
-                portrait_embeddings.append((p, emb))
-
-        if not portrait_embeddings:
-            self._log("  [ERROR] Không tạo được embedding cho ảnh chân dung", "error")
-            return None
-
-        best_match = None
-        best_distance = float('inf')
-        errors_count = 0
-        compared_count = 0
-        total_camera = len(camera_images)
-        early_stop_threshold = distance_threshold * 0.7 if fast_mode else None
-
-        for i, camera_img in enumerate(camera_images):
-            if not os.path.exists(camera_img):
-                continue
-
-            if i % 5 == 0 or i == total_camera - 1:
-                self._log(f"    [SCAN] So sánh ảnh {i+1}/{total_camera}...", "default")
-
-            try:
-                cam_emb = self._get_embedding(camera_img)
-                if cam_emb is None:
-                    continue
-
-                distances = []
-                for _, p_emb in portrait_embeddings:
-                    if self.distance_metric == "cosine":
-                        d = self._cosine_distance(cam_emb, p_emb)
-                    else:
-                        d = float(np.linalg.norm(cam_emb - p_emb))
-                    distances.append(d)
-
-                if not distances:
-                    continue
-
-                distance = min(distances)
-                if log_detail:
-                    self._log(
-                        f"    [DIST] {os.path.basename(camera_img)} => {distance:.3f}",
-                        "default"
-                    )
-                compared_count += 1
-
-                if distance < best_distance:
-                    best_distance = distance
-                    best_match = camera_img
-                    self._log(
-                        f"    [CAND] Ứng viên: {os.path.basename(camera_img)} (distance={distance:.3f})",
-                        "info"
-                    )
-
-                if early_stop_threshold is not None and best_distance <= early_stop_threshold:
-                    self._log(
-                        f"    [EARLY] Match tốt tìm thấy sớm! (distance={best_distance:.3f})",
-                        "success"
-                    )
-                    break
-            except Exception as e:
-                errors_count += 1
-                if errors_count <= 3:
-                    self._log(f"    [WARN] Error #{errors_count}: {str(e)}", "warning")
-
-        self._log(
-            f"  [STATS] So sánh: {compared_count}/{total_camera} ảnh, lỗi: {errors_count}",
-            "info"
-        )
-
-        if best_match and best_distance <= distance_threshold:
-            self._log(
-                f"  [OK] Best Match: {os.path.basename(best_match)} (distance={best_distance:.3f})",
-                "success"
-            )
-            return best_match
-        elif best_match:
-            self._log(
-                f"  -> Best distance={best_distance:.3f} > threshold={distance_threshold}",
-                "warning"
-            )
-        else:
-            self._log("  -> Không tìm thấy ảnh nào match được", "error")
-
+    def match_face_in_images(self, person_name, camera_images, **kwargs):
+        """Legacy name-only calls cannot establish an employee identity."""
+        self._log("Cần mã nhân viên và dự án đã xác nhận; không tự ghép theo tên.", "warning")
         return None
 
-    def match_all_faces(self, person_name: str, camera_images: List[str], 
-                        max_matches: int = 1) -> List[Tuple[str, float]]:
-        """
-        Tìm tất cả ảnh camera match với người được chỉ định
-
-        Returns:
-            List of (image_path, confidence) tuples
-        """
-        portrait_paths = self.find_portraits(person_name)
-        if not portrait_paths:
-            return []
-
-        portrait_embeddings = []
-        for p in portrait_paths:
-            emb = self._get_embedding(p)
-            if emb is not None:
-                portrait_embeddings.append(emb)
-
-        if not portrait_embeddings:
-            return []
-
-        matches = []
-        for camera_img in camera_images:
-            cam_emb = self._get_embedding(camera_img)
-            if cam_emb is None:
-                continue
-
-            distances = []
-            for p_emb in portrait_embeddings:
-                if self.distance_metric == "cosine":
-                    d = self._cosine_distance(cam_emb, p_emb)
-                else:
-                    d = float(np.linalg.norm(cam_emb - p_emb))
-                distances.append(d)
-
-            if not distances:
-                continue
-
-            distance = min(distances)
-            confidence = max(0, 100 * (1 - distance))
-            matches.append((camera_img, confidence))
-
-            if len(matches) >= max_matches:
-                break
-
-        matches.sort(key=lambda x: x[1], reverse=True)
-        return matches
+    def match_all_faces(self, person_name, camera_images, max_matches=1):
+        self._log("Cần mã nhân viên và dự án đã xác nhận; không tự ghép theo tên.", "warning")
+        return []
 
 
 def simple_face_match(portrait_path: str, camera_images: List[str]) -> Optional[str]:

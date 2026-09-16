@@ -5,11 +5,14 @@ Trích xuất thông tin từng người và xuất ra file Word riêng
 """
 
 import os
+from src.attendance_records import merge_attendance_people, report_identity_suffix
+from src.attendance_matching import match_attendance_record
 import re
 import unicodedata
 import xlrd
 from datetime import datetime, date
 from docx import Document
+from docx.image.exceptions import UnrecognizedImageError
 from docx.shared import Inches, Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
@@ -58,6 +61,44 @@ def is_same_or_close_time(t1_str: str, t2_str: str, max_diff_minutes: int = 5) -
     diff = abs(total_min1 - total_min2)
     min_diff = min(diff, 1440 - diff)
     return min_diff <= max_diff_minutes
+
+
+def get_work_duration_minutes(t1_str: str, t2_str: str) -> Optional[int]:
+    """
+    Tính số phút làm việc giữa giờ vào (t1) và giờ ra (t2).
+    Lấy mốc đầu của t1 và mốc cuối của t2.
+    Hỗ trợ ca qua đêm nếu giờ ra < giờ vào.
+    Trả về None nếu không parse được thời gian.
+    """
+    if not t1_str or not t2_str:
+        return None
+    s1 = str(t1_str).strip()
+    s2 = str(t2_str).strip()
+    if not s1 or not s2:
+        return None
+    time_pattern = re.compile(r'(\d{1,2}):(\d{2})')
+    m1 = time_pattern.search(s1)
+    matches2 = list(time_pattern.finditer(s2))
+    if not m1 or not matches2:
+        return None
+    m2 = matches2[-1]
+    h1, min1 = int(m1.group(1)), int(m1.group(2))
+    h2, min2 = int(m2.group(1)), int(m2.group(2))
+    t1_min = h1 * 60 + min1
+    t2_min = h2 * 60 + min2
+    diff = (t2_min - t1_min) % 1440
+    return diff
+
+
+def is_under_work_duration(t1_str: str, t2_str: str, max_hours: float = 3.0) -> bool:
+    """
+    Kiểm tra xem thời gian làm việc giữa giờ vào và giờ ra có từ max_hours trở xuống (<= max_hours) hay không.
+    (Lấy mốc đầu của t1 và mốc cuối của t2).
+    """
+    diff_minutes = get_work_duration_minutes(t1_str, t2_str)
+    if diff_minutes is None:
+        return False
+    return 0 <= diff_minutes <= int(max_hours * 60)
 
 
 class ExcelChamCongExtractor:
@@ -205,16 +246,20 @@ class ExcelChamCongExtractor:
                         is_absent = False  # có mặt nhưng thiếu 1 cột
 
             same_in_out = False
+            under_3h = False
             if gio_vao and gio_ra:
                 same_in_out = is_same_or_close_time(gio_vao, gio_ra, max_diff_minutes=5)
+                if not same_in_out:
+                    under_3h = is_under_work_duration(gio_vao, gio_ra, max_hours=3.0)
 
             results[day_num] = {
                 'gio_vao': gio_vao,
                 'gio_ra': gio_ra,
                 'is_absent': is_absent,
                 'same_in_out': same_in_out,
-                'missing_checkout': bool(gio_vao and not gio_ra) and not same_in_out,
-                'missing_checkin': bool(not gio_vao and gio_ra) and not same_in_out,
+                'under_3h': under_3h,
+                'missing_checkout': bool(gio_vao and not gio_ra) and not same_in_out and not under_3h,
+                'missing_checkin': bool(not gio_vao and gio_ra) and not same_in_out and not under_3h,
             }
         return results
 
@@ -241,9 +286,7 @@ class ExcelChamCongExtractor:
             self._month = start_dt.month
             self._year = start_dt.year
         else:
-            now = datetime.now()
-            self._month = now.month
-            self._year = now.year
+            raise ValueError("Bảng chấm công thiếu kỳ ngày-tháng-năm; cần xác nhận dữ liệu nguồn")
 
         nrows = self.sheet.nrows
         r = 0
@@ -293,7 +336,7 @@ class ExcelChamCongExtractor:
         persons_dict = {}
         
         # Check title row for month/year or use fallback
-        self._year, self._month = datetime.now().year, datetime.now().month
+        self._year, self._month = None, None
         header_map = self._header_map or {}
         id_col = header_map.get('id', 1)
         name_col = header_map.get('name', 2)
@@ -314,7 +357,7 @@ class ExcelChamCongExtractor:
 
         for r in range(start_row, self.sheet.nrows):
             emp_id = str(self.sheet.cell_value(r, id_col)).strip()
-            if not emp_id or self._normalize_text(emp_id) in ('ma nhan vien', 'ma the', 'ma nv', 'id'):
+            if self._normalize_text(emp_id) in ('ma nhan vien', 'ma the', 'ma nv', 'id'):
                 continue
 
             name = str(self.sheet.cell_value(r, name_col)).strip()
@@ -362,8 +405,9 @@ class ExcelChamCongExtractor:
                 except Exception:
                     pass
 
-            if emp_id not in persons_dict:
-                persons_dict[emp_id] = {
+            source_key = emp_id or f'pending-row:{r}'
+            if source_key not in persons_dict:
+                persons_dict[source_key] = {
                     'id': emp_id,
                     'name': name,
                     'month': self._month,
@@ -374,7 +418,7 @@ class ExcelChamCongExtractor:
             day_num = rec_date.day
             day_key = rec_date.strftime('%Y%m%d')
             
-            p_records = persons_dict[emp_id]['records_dict']
+            p_records = persons_dict[source_key]['records_dict']
             if day_key not in p_records:
                 p_records[day_key] = {
                     'day': day_num,
@@ -400,10 +444,13 @@ class ExcelChamCongExtractor:
                 missing_checkin = bool(len(ras) > len(vaos))
                 
                 same_in_out = False
+                under_3h = False
                 if len(vaos) > 0 and len(ras) > 0:
                     same_in_out = is_same_or_close_time(vaos[0], ras[-1], max_diff_minutes=5)
+                    if not same_in_out:
+                        under_3h = is_under_work_duration(vaos[0], ras[-1], max_hours=3.0)
                 
-                if same_in_out:
+                if same_in_out or under_3h:
                     missing_checkout = False
                     missing_checkin = False
 
@@ -415,6 +462,7 @@ class ExcelChamCongExtractor:
                     'gio_ra': '\n'.join(ras),
                     'is_absent': is_absent,
                     'same_in_out': same_in_out,
+                    'under_3h': under_3h,
                     'missing_checkin': missing_checkin,
                     'missing_checkout': missing_checkout
                 })
@@ -439,34 +487,9 @@ class ExcelChamCongExtractor:
         return count
 
     def _dedupe_persons_by_name(self):
-        """
-        Nếu trùng tên, chọn bản ghi có số ngày đi làm nhiều hơn.
-        Nếu bằng nhau, chọn bản ghi có nhiều record hơn.
-        """
-        if not self._persons_data:
-            return
+        # Kept as a compatibility name; identity/code and period are the keys.
+        self._persons_data = merge_attendance_people(self._persons_data)
 
-        picked = {}
-        for person in self._persons_data:
-            key = self._normalize_name(person.get('name', ''))
-            if not key:
-                continue
-
-            if key not in picked:
-                picked[key] = person
-                continue
-
-            current = picked[key]
-            work_days = self._count_work_days(person)
-            current_work_days = self._count_work_days(current)
-
-            if work_days > current_work_days:
-                picked[key] = person
-            elif work_days == current_work_days:
-                if len(person.get('records', [])) > len(current.get('records', [])):
-                    picked[key] = person
-
-        self._persons_data = list(picked.values())
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -475,11 +498,14 @@ class ExcelChamCongExtractor:
         return self._persons_data
 
     def get_absent_records(self, person: Dict) -> List[Dict]:
-        """Lấy danh sách ngày vắng hoặc thiếu giờ vào/ra hoặc trùng giờ"""
+        """Lấy danh sách ngày vắng hoặc thiếu giờ vào/ra hoặc trùng giờ hoặc làm <3 tiếng"""
         absent = []
         for rec in person['records']:
             if rec.get('same_in_out'):
                 issue = f"Trùng giờ vào/ra ({rec['gio_vao']} - {rec['gio_ra']})"
+                absent.append({**rec, 'issue': issue})
+            elif rec.get('under_3h'):
+                issue = f"Làm <3 tiếng ({rec['gio_vao']} - {rec['gio_ra']})"
                 absent.append({**rec, 'issue': issue})
             elif rec['is_absent'] or rec['missing_checkout'] or rec['missing_checkin']:
                 issue = 'Vắng mặt'
@@ -505,8 +531,12 @@ class ExcelToWordExporter:
         face_matcher=None,
         accuracy_mode: bool = False,
         match_distance_threshold: Optional[float] = None,
-        log_detail: bool = False
+        log_detail: bool = False,
+        project_id: str = "",
+        identity_registry=None
     ):
+        self.project_id = project_id
+        self.identity_registry = identity_registry
         self.portrait_dir = portrait_dir
         self.output_dir = output_dir
         self.input_images_dir = input_images_dir
@@ -519,32 +549,16 @@ class ExcelToWordExporter:
         self._scan_portraits()
 
     def _find_day_folder(self, day_str: str, date_raw: str = "") -> Optional[str]:
-        """Tìm thư mục ngày tương ứng (hỗ trợ định dạng: '01', '2026-09-01', '01-09-2026')"""
-        if not self.input_images_dir or not os.path.exists(self.input_images_dir):
+        from pathlib import Path
+        from src.attendance_dates import parse_attendance_date, resolve_day_folder
+        if not self.input_images_dir:
             return None
-        direct = os.path.join(self.input_images_dir, day_str)
-        if os.path.exists(direct):
-            return direct
         try:
-            for d in os.listdir(self.input_images_dir):
-                if os.path.isdir(os.path.join(self.input_images_dir, d)):
-                    if d == day_str or d.endswith(f"-{day_str}") or d.startswith(f"{day_str}-"):
-                        return os.path.join(self.input_images_dir, d)
-        except Exception:
-            pass
-        parent_input = os.path.dirname(self.input_images_dir)
-        if os.path.exists(parent_input):
-            direct_parent = os.path.join(parent_input, day_str)
-            if os.path.exists(direct_parent):
-                return direct_parent
-            try:
-                for d in os.listdir(parent_input):
-                    p_d = os.path.join(parent_input, d)
-                    if os.path.isdir(p_d) and (d == day_str or d.endswith(f"-{day_str}") or d.startswith(f"{day_str}-")):
-                        return p_d
-            except Exception:
-                pass
-        return None
+            requested = parse_attendance_date(date_raw or day_str)
+        except ValueError:
+            return None
+        result = resolve_day_folder(Path(self.input_images_dir), requested)
+        return str(result.path) if result.status == "found" else None
 
     def _scan_portraits(self):
         if not os.path.exists(self.portrait_dir):
@@ -582,21 +596,8 @@ class ExcelToWordExporter:
         return re.sub(r'\s+', ' ', name.lower().strip())
 
     def _find_portrait(self, name: str) -> Optional[str]:
-        key = self._normalize(name)
-        if key in self._portrait_cache:
-            return self._portrait_cache[key][0]
-        for cached_key, paths in self._portrait_cache.items():
-            if key in cached_key or cached_key in key:
-                return paths[0]
-        # Word-by-word match
-        words = set(key.split())
-        best, best_score = None, 0
-        for cached_key, paths in self._portrait_cache.items():
-            score = len(words & set(cached_key.split()))
-            if score > best_score:
-                best_score = score
-                best = paths[0]
-        return best if best_score >= 2 else None
+        # Display names cannot resolve a portrait identity.
+        return None
 
     def export_person(self, person: Dict, log_callback=None) -> str:
         """Xuất file Word cho một người, trả về đường dẫn file"""
@@ -631,6 +632,20 @@ class ExcelToWordExporter:
         info_run.bold = True
         info_run.font.size = Pt(11)
 
+        if self.identity_registry and self.project_id and records:
+            from src.attendance_dates import parse_attendance_date
+            try:
+                first_day = parse_attendance_date(records[0].get("date"))
+                identity = self.identity_registry.resolve_employee(
+                    self.project_id, str(person.get("id") or ""), first_day)
+                portraits = self.identity_registry.portrait_paths(
+                    self.project_id, identity.employee_id, first_day) if identity.status == "resolved" else []
+                if portraits:
+                    doc.add_picture(str(portraits[0]), width=Cm(2.2))
+            except (ValueError, OSError, UnrecognizedImageError):
+                # A missing/unreadable reference must never trigger name fallback.
+                pass
+
         doc.add_paragraph()
 
         # === Bảng chấm công ===
@@ -657,8 +672,14 @@ class ExcelToWordExporter:
             row = table.add_row()
             cells = row.cells
 
-            # Highlight absent / missing / same_in_out rows
-            is_issue = rec['is_absent'] or rec['missing_checkout'] or rec['missing_checkin'] or rec.get('same_in_out', False)
+            # Highlight absent / missing / same_in_out / under_3h rows
+            is_issue = (
+                rec.get('is_absent')
+                or rec.get('missing_checkout')
+                or rec.get('missing_checkin')
+                or rec.get('same_in_out', False)
+                or rec.get('under_3h', False)
+            )
             if is_issue:
                 absent_days.append(rec)
 
@@ -673,11 +694,13 @@ class ExcelToWordExporter:
             note = ''
             if rec.get('same_in_out'):
                 note = 'Trùng giờ vào/ra'
-            elif rec['is_absent']:
+            elif rec.get('under_3h'):
+                note = 'Làm <3 tiếng'
+            elif rec.get('is_absent'):
                 note = 'Vắng mặt'
-            elif rec['missing_checkin']:
+            elif rec.get('missing_checkin'):
                 note = 'Thiếu giờ vào'
-            elif rec['missing_checkout']:
+            elif rec.get('missing_checkout'):
                 note = 'Thiếu giờ ra'
 
             data.append(note)
@@ -691,62 +714,28 @@ class ExcelToWordExporter:
                 if is_issue and note:
                     run.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)  # Đỏ
             
-            # Xử lý ảnh camera cho cột cuối cùng
             cells[6].width = col_widths[6]
-            if is_issue and self.input_images_dir and self.face_matcher:
-                day_str = rec['date'].split('/')[0].zfill(2)
-                day_folder = self._find_day_folder(day_str, rec.get('date', ''))
-                matched_img = None
-                
-                if os.path.exists(day_folder):
-                    # Tìm tất cả file ảnh trong thư mục ngày này
-                    camera_images = []
-                    for root, _, files in os.walk(day_folder):
-                        for f in files:
-                            if os.path.splitext(f)[1].lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
-                                camera_images.append(os.path.join(root, f))
-                    
-                    if camera_images:
-                        if log_callback:
-                            log_callback(f"     {name} (ngày {day_str}): So sánh {len(camera_images)} ảnh...", "default")
-                        try:
-                            matched_img = self.face_matcher.match_face_in_images(
-                                name,
-                                camera_images,
-                                distance_threshold=self.match_distance_threshold,
-                                fast_mode=not self.accuracy_mode,
-                                log_detail=self.log_detail
-                            )
-                        except Exception as e:
-                            if log_callback:
-                                log_callback(f"     Lỗi OpenCV/DeepFace khi so sánh {name}: {e}", "warning")
-                    else:
-                        if log_callback:
-                            log_callback(f"     {name} (ngày {day_str}): Thư mục ảnh rỗng", "warning")
-                else:
-                    if log_callback:
-                        log_callback(f"     {name} (ngày {day_str}): Không có thư mục ảnh", "warning")
-                
-                # Chèn ảnh vào ô
+            if is_issue or rec.get("record_conflict"):
+                match_attendance_record(
+                    rec, person, project_id=self.project_id, registry=self.identity_registry,
+                    matcher=self.face_matcher, input_images_dir=self.input_images_dir,
+                    threshold=self.match_distance_threshold, accuracy_mode=self.accuracy_mode)
+                matched_img = rec.get("matched_image_path")
                 p = cells[6].paragraphs[0]
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                if matched_img and os.path.exists(matched_img):
+                if matched_img:
                     try:
-                        run = p.add_run()
-                        run.add_picture(matched_img, width=Cm(3))
+                        p.add_run().add_picture(matched_img, width=Cm(3))
+                    except Exception as exc:
+                        rec["matched_image_path"] = None
+                        rec["review_reason"] = "Không chèn được ảnh vào báo cáo"
+                        p.add_run("[Lỗi ảnh]").font.size = Pt(8)
                         if log_callback:
-                            log_callback(f"     {name}: Đã chèn ảnh {os.path.basename(matched_img)}", "success")
-                    except Exception as e:
-                        p.add_run(f"[Lỗi ảnh]").font.size = Pt(8)
-                else:
-                    if os.path.exists(day_folder) and camera_images:
-                        p.add_run("Không khớp").font.size = Pt(8)
-                    elif not os.path.exists(day_folder):
-                        p.add_run("Không có dl").font.size = Pt(8)
-            else:
-                p = cells[6].paragraphs[0]
-                run = p.add_run()
-                run.font.size = Pt(9)
+                            log_callback(str(exc), "warning")
+                elif rec.get("review_reason"):
+                    p.add_run(rec["review_reason"]).font.size = Pt(8)
+                if rec.get("record_conflict"):
+                    cells[5].paragraphs[0].add_run(" — Cần kiểm tra nguồn chấm công")
 
         # === Tóm tắt vắng ===
         if absent_days:
@@ -759,7 +748,7 @@ class ExcelToWordExporter:
 
         # === Save ===
         safe_name = re.sub(r'[<>:"/\\|?*]', '_', name.strip().upper())
-        filename = f'{safe_name}_{month:02d}_{year}.docx'
+        filename = f'{safe_name}_{report_identity_suffix(person)}_{month:02d}_{year}.docx'
         output_path = os.path.join(self.output_dir, filename)
         doc.save(output_path)
 
