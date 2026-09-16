@@ -8,6 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const http = require("http");
+const {normalizeSendDate} = require("./photo-metadata");
 
 const BASE_DIR = path.resolve(__dirname, "..");
 const INPUT_IMAGES_DIR = path.join(BASE_DIR, "input_images");
@@ -95,16 +96,8 @@ class ImageDownloader {
      * Format date using local timezone
      */
     _formatDate(timestamp) {
-        const d = new Date(timestamp);
-        const year = d.getFullYear();
-        const month = String(d.getMonth() + 1).padStart(2, "0");
-        const day = String(d.getDate()).padStart(2, "0");
-        return {
-            ymd: `${year}-${month}-${day}`,
-            day: day,
-            year,
-            month
-        };
+        const ymd = normalizeSendDate({timestamp});
+        return {ymd, day: ymd.slice(-2), month: ymd.slice(5, 7), year: ymd.slice(0, 4)};
     }
 
     /**
@@ -113,16 +106,17 @@ class ImageDownloader {
      * @param {string} groupName - group name for folder
      * @param {string|null} dateFrom - YYYY-MM-DD format, null for no filter
      * @param {string|null} dateTo - YYYY-MM-DD format, null for no filter
-     * @param {string} folderFormat - 'date' (YYYY-MM-DD) or 'day' (DD)
+     * @param {string} folderFormat - 'date' or 'YYYY-MM-DD' (full calendar date)
      */
     async downloadImages(images, groupName, dateFrom = null, dateTo = null, folderFormat = "date") {
+        if (!["date", "YYYY-MM-DD"].includes(folderFormat)) throw new Error("Chỉ hỗ trợ YYYY-MM-DD");
         // Sanitize group name for folder
         const safeGroupName = this._sanitizeFolderName(groupName);
 
         // Filter by date range
-        let filteredImages = images;
+        let filteredImages = images.filter(img => !!this._formatDate(img.timestamp).ymd);
         if (dateFrom || dateTo) {
-            filteredImages = images.filter((img) => {
+            filteredImages = filteredImages.filter((img) => {
                 const imgDateStr = this._formatDate(img.timestamp).ymd;
                 if (dateFrom && imgDateStr < dateFrom) return false;
                 if (dateTo && imgDateStr > dateTo) return false;
@@ -155,7 +149,7 @@ class ImageDownloader {
 
             // Determine date folder
             const dateInfo = this._formatDate(img.timestamp);
-            const dateFolder = folderFormat === "day" ? dateInfo.day : dateInfo.ymd;
+            const dateFolder = dateInfo.ymd;
 
             // Create directory structure
             const targetDir = path.join(INPUT_IMAGES_DIR, safeGroupName, dateFolder);
@@ -181,6 +175,8 @@ class ImageDownloader {
                 }
 
                 await this._downloadFile(url, filePath);
+                fs.writeFileSync(filePath + ".json", JSON.stringify({date_source: "message",
+                    send_date: dateFolder, message_id: img.msgId || "", derived: false}), "utf8");
                 this._markAsDownloaded(img.msgId, img.timestamp, filePath);
                 this.progress.downloaded++;
                 console.log(`[ImageDownloader] Downloaded: ${filename}`);

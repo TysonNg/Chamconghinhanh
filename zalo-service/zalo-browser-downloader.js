@@ -113,13 +113,6 @@ class ZaloBrowserDownloader {
         if (!fs.existsSync(inputProjDir)) {
             fs.mkdirSync(inputProjDir, { recursive: true });
         }
-        for (let d = 1; d <= 31; d++) {
-            const dayDir = path.join(inputProjDir, String(d).padStart(2, '0'));
-            if (!fs.existsSync(dayDir)) {
-                fs.mkdirSync(dayDir, { recursive: true });
-            }
-        }
-
         // 2. Thư mục chân dung nhân viên trong Ảnh BV/<projectName>
         const portraitDir = this.resolvePortraitDir();
         const portraitProjDir = path.join(portraitDir, safeName);
@@ -343,7 +336,7 @@ class ZaloBrowserDownloader {
             projectName,
             fromDate,
             toDate,
-            folderFormat = "DD",
+            folderFormat = "YYYY-MM-DD",
             headless = true,
             maxImages = 200
         } = options;
@@ -578,7 +571,8 @@ class ZaloBrowserDownloader {
         return readImage(this.page, {url});
     }
 
-    async _downloadPhotos(photos, projectName, folderFormat = "DD", fromDate, toDate) {
+    async _downloadPhotos(photos, projectName, folderFormat = "YYYY-MM-DD", fromDate, toDate) {
+        if (!["date", "YYYY-MM-DD"].includes(folderFormat)) throw new Error("Chỉ hỗ trợ YYYY-MM-DD");
         const safeProject = (projectName || "Chung").replace(/[<>:"/\\|?*]/g, "_").trim();
         if (!safeProject || safeProject === "." || safeProject === "..") throw new Error("Tên dự án không hợp lệ");
         for (const initial of photos) {
@@ -613,7 +607,7 @@ class ZaloBrowserDownloader {
                     lowQuality = true;
                     image = await this._fetchImage(photo.url);
                 }
-                const day = folderFormat === "day" || folderFormat === "DD" ? date.slice(-2) : date;
+                const day = date;
                 const directory = path.join(this.inputImagesDir, safeProject, day);
                 fs.mkdirSync(directory, {recursive: true});
                 this.progress.targetFolder = directory;
@@ -640,6 +634,10 @@ class ZaloBrowserDownloader {
                         if (error.code !== "EEXIST") throw error;
                     }
                 }
+                fs.writeFileSync(filePath + ".json", JSON.stringify({
+                    date_source: "message", send_date: date, message_id: photo.messageId || photo.id || "",
+                    derived: false
+                }), "utf8");
                 this.progress.currentFile = filename;
                 this.progress.downloaded++;
                 if (lowQuality) {

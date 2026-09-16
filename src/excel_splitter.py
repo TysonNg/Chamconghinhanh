@@ -4,6 +4,7 @@ Module tách Excel chấm công dạng "CHI TIẾT CHẤM CÔNG"
 Mỗi nhân viên -> 1 file Excel riêng, giữ nguyên header và cột.
 """
 import os
+import hashlib
 import re
 import unicodedata
 from datetime import date, datetime, time
@@ -157,33 +158,19 @@ class ExcelAttendanceSplitter:
         rows = self._iter_data_rows()
         groups: Dict[Tuple[str, str], List[List]] = {}
 
-        for row in rows:
+        for row_index, row in enumerate(rows):
             if not self._row_has_data(row):
                 continue
             name = self._get_cell(row, 'name')
             if not name:
                 continue
             emp_id = self._get_cell(row, 'id')
-            key = (_normalize_text(name), str(emp_id).strip())
+            # Unknown codes remain separate source rows; never infer identity from names.
+            key = (str(emp_id).strip() if emp_id else f"pending:{row_index}", str(emp_id).strip())
             groups.setdefault(key, []).append(row)
 
-        # Resolve duplicate names: pick group with more check-in/out rows
-        selected: Dict[str, Tuple[str, List[List]]] = {}
-        for (norm_name, emp_id), data_rows in groups.items():
-            present_rows = 0
-            for r in data_rows:
-                gio_vao = self._get_cell(r, 'gio_vao')
-                gio_ra = self._get_cell(r, 'gio_ra')
-                if gio_vao or gio_ra:
-                    present_rows += 1
-            score = (present_rows, len(data_rows))
-
-            if norm_name not in selected:
-                selected[norm_name] = (emp_id, data_rows, score)
-            else:
-                _, _, prev_score = selected[norm_name]
-                if score > prev_score:
-                    selected[norm_name] = (emp_id, data_rows, score)
+        selected = {key: (emp_id, data_rows, None)
+                    for (key, emp_id), data_rows in groups.items()}
 
         header_rows = []
         if self.title_row_idx is not None and self.title_row_idx < self.header_row_idx:
@@ -197,10 +184,8 @@ class ExcelAttendanceSplitter:
         for norm_name, (emp_id, data_rows, score) in selected.items():
             display_name = data_rows[0][self.col_map.get('name', 0)]
             safe_name = re.sub(r'[<>:"/\\\\|?*]', '_', str(display_name).strip())
-            if emp_id:
-                filename = f"{safe_name}_{emp_id}.xlsx"
-            else:
-                filename = f"{safe_name}.xlsx"
+            identity_suffix = hashlib.sha256((emp_id or norm_name).encode("utf-8")).hexdigest()[:16]
+            filename = f"{safe_name}_{identity_suffix}.xlsx"
             out_path = os.path.join(output_dir, filename)
 
             wb = Workbook()
@@ -218,7 +203,7 @@ class ExcelAttendanceSplitter:
                 'name': str(display_name),
                 'id': str(emp_id),
                 'rows': len(data_rows),
-                'present_rows': score[0],
+                'present_rows': sum(bool(self._get_cell(row, 'gio_vao') or self._get_cell(row, 'gio_ra')) for row in data_rows),
             })
 
         return output_files, summaries

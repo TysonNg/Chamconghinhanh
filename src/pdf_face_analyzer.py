@@ -5,6 +5,7 @@ Chuẩn hóa dữ liệu PDF về cùng format person/records như luồng Excel
 """
 
 import os
+from src.attendance_records import merge_attendance_people
 import re
 import unicodedata
 from datetime import date, datetime
@@ -15,7 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from docx import Document
 
-from src.excel_extractor import ExcelToWordExporter, is_same_or_close_time
+from src.aggregate_report_exporter import export_aggregate_report
+from src.excel_extractor import ExcelToWordExporter, is_same_or_close_time, is_under_work_duration
 
 
 def _normalize_text(text: str) -> str:
@@ -234,8 +236,11 @@ class PDFPersonFileParser:
             gio_vao = in_values[0] if in_values else ""
             gio_ra = out_values[-1] if out_values else ""
             same_in_out = False
+            under_3h = False
             if gio_vao and gio_ra:
                 same_in_out = is_same_or_close_time(gio_vao, gio_ra, max_diff_minutes=5)
+                if not same_in_out:
+                    under_3h = is_under_work_duration(gio_vao, gio_ra, max_hours=3.0)
             is_absent = not in_values and not out_values
 
             month = rec_date.month
@@ -249,8 +254,9 @@ class PDFPersonFileParser:
                 "gio_ra": gio_ra,
                 "is_absent": is_absent,
                 "same_in_out": same_in_out,
-                "missing_checkout": missing_checkout and not is_absent and not same_in_out,
-                "missing_checkin": missing_checkin and not is_absent and not same_in_out,
+                "under_3h": under_3h,
+                "missing_checkout": missing_checkout and not is_absent and not same_in_out and not under_3h,
+                "missing_checkin": missing_checkin and not is_absent and not same_in_out and not under_3h,
                 "department": department,
             })
 
@@ -274,8 +280,12 @@ class PDFFaceAnalyzer:
         matcher,
         accuracy_mode: bool = True,
         match_distance_threshold: Optional[float] = None,
-        log_detail: bool = False
+        log_detail: bool = False,
+        project_id: str = "",
+        identity_registry=None
     ):
+        self.project_id = project_id
+        self.identity_registry = identity_registry
         self.portrait_dir = portrait_dir
         self.input_images_dir = input_images_dir
         self.matcher = matcher
@@ -287,24 +297,16 @@ class PDFFaceAnalyzer:
         return _normalize_text(text)
 
     def _resolve_person_name(self, raw_name: str) -> str:
-        if not self.matcher or not getattr(self.matcher, "portrait_cache", None):
-            return raw_name
-
-        try:
-            portraits = self.matcher.find_portraits(raw_name)
-        except Exception:
-            return raw_name
-
-        if not portraits:
-            return raw_name
-
-        portrait_set = set(portraits)
-        for cached_name, images in self.matcher.portrait_cache.items():
-            if any(path in portrait_set for path in images):
-                return cached_name
         return raw_name
 
-    def analyze_folder(self, input_dir: str, output_dir: str, log_callback=None) -> List[str]:
+    def analyze_folder(
+        self,
+        input_dir: str,
+        output_dir: str,
+        log_callback=None,
+        progress_callback=None,
+        report_options=None,
+    ) -> List[str]:
         os.makedirs(output_dir, exist_ok=True)
 
         persons = []
@@ -315,20 +317,13 @@ class PDFFaceAnalyzer:
             parser = PDFPersonFileParser(path)
             person = parser.parse_person()
             if person:
-                person["name"] = self._resolve_person_name(person["name"])
+                person["source_id"] = os.path.abspath(path)
                 persons.append(person)
             elif log_callback:
                 log_callback(f"⚠️ Không đọc được dữ liệu từ {f}", "warning")
 
-        picked: Dict[str, Tuple[Tuple[int, int], Dict]] = {}
-        for person in persons:
-            key = person["id"] or self._normalize_key(person["name"])
-            present = sum(1 for r in person["records"] if r["gio_vao"] or r["gio_ra"])
-            score = (present, len(person["records"]))
-            if key not in picked or score > picked[key][0]:
-                picked[key] = (score, person)
-
-        final_persons = [v[1] for v in picked.values()]
+        final_persons = merge_attendance_people(
+            persons, project_id=self.project_id, registry=self.identity_registry)
         total_persons = len(final_persons)
         if log_callback:
             log_callback(f"📌 Tổng số người sẽ xử lý từ PDF: {total_persons}", "info")
@@ -343,7 +338,9 @@ class PDFFaceAnalyzer:
             face_matcher=self.matcher,
             accuracy_mode=self.accuracy_mode,
             match_distance_threshold=self.match_distance_threshold,
-            log_detail=self.log_detail
+            log_detail=self.log_detail,
+            project_id=self.project_id,
+            identity_registry=self.identity_registry
         )
 
         # Tự động tính số luồng tối ưu (50% - 75% CPU)
@@ -361,7 +358,7 @@ class PDFFaceAnalyzer:
             name = person["name"]
             issue_days = sum(
                 1 for r in person["records"]
-                if r.get("is_absent") or r.get("missing_checkout") or r.get("missing_checkin") or r.get("same_in_out")
+                if r.get("is_absent") or r.get("missing_checkout") or r.get("missing_checkin") or r.get("same_in_out") or r.get("under_3h")
             )
             try:
                 out_path = exporter.export_person(person, log_callback=None)
@@ -394,5 +391,18 @@ class PDFFaceAnalyzer:
         # Lưu cache vector khuôn mặt xuống ổ đĩa
         if self.matcher and hasattr(self.matcher, "save_cache"):
             self.matcher.save_cache()
+
+        if report_options is not None:
+            report_path = export_aggregate_report(
+                final_persons,
+                output_dir=output_dir,
+                **report_options,
+            )
+            results.append(report_path)
+            if log_callback:
+                log_callback(
+                    f"📄 Đã tạo giải trình tổng hợp: {os.path.basename(report_path)}",
+                    "success",
+                )
 
         return results

@@ -48,4 +48,22 @@ ngay_rong/
 *.xlsx
 *.doc
 *.docx
+!templates/word/giai_trinh_tong_hop.docx
 *.pdf
+
+# Local identity registry and review snapshots
+data/identity.sqlite3*
+
+# Test/render caches
+.cache/
+.pytest_cache/
+
+# Local supplement runtime data and temporary inspection images
+supplement_data/*.db
+supplement_data/*.sqlite3
+supplement_data/ai_config.json
+supplement_data/supplement_staging/
+supplement_data/supplement_staging_raw/
+supplement_temp/
+supplement_temp_diff.jpg
+test_exif.jpg

@@ -6,6 +6,7 @@ match ảnh trong input_images/<ngày>/ và xuất Word.
 """
 
 import os
+from src.attendance_records import merge_attendance_people
 import re
 import unicodedata
 from datetime import datetime, date
@@ -17,7 +18,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import xlrd
 from openpyxl import load_workbook
 
-from src.excel_extractor import ExcelToWordExporter, is_same_or_close_time
+from src.aggregate_report_exporter import export_aggregate_report
+from src.excel_extractor import ExcelToWordExporter, is_same_or_close_time, is_under_work_duration
 
 
 def _normalize_text(text: str) -> str:
@@ -202,11 +204,14 @@ class ExcelPersonFileParser:
             gio_vao = self._get_cell(row, 'gio_vao')
             gio_ra = self._get_cell(row, 'gio_ra')
             same_in_out = False
+            under_3h = False
             if gio_vao and gio_ra:
                 same_in_out = is_same_or_close_time(gio_vao, gio_ra, max_diff_minutes=5)
+                if not same_in_out:
+                    under_3h = is_under_work_duration(gio_vao, gio_ra, max_hours=3.0)
             is_absent = not gio_vao and not gio_ra
-            missing_checkout = bool(gio_vao and not gio_ra) and not same_in_out
-            missing_checkin = bool(not gio_vao and gio_ra) and not same_in_out
+            missing_checkout = bool(gio_vao and not gio_ra) and not same_in_out and not under_3h
+            missing_checkin = bool(not gio_vao and gio_ra) and not same_in_out and not under_3h
 
             month = rec_date.month
             year = rec_date.year
@@ -219,6 +224,7 @@ class ExcelPersonFileParser:
                 'gio_ra': gio_ra,
                 'is_absent': is_absent,
                 'same_in_out': same_in_out,
+                'under_3h': under_3h,
                 'missing_checkout': missing_checkout,
                 'missing_checkin': missing_checkin,
             })
@@ -243,8 +249,12 @@ class ExcelFaceAnalyzer:
         matcher,
         accuracy_mode: bool = True,
         match_distance_threshold: Optional[float] = None,
-        log_detail: bool = False
+        log_detail: bool = False,
+        project_id: str = "",
+        identity_registry=None
     ):
+        self.project_id = project_id
+        self.identity_registry = identity_registry
         self.portrait_dir = portrait_dir
         self.input_images_dir = input_images_dir
         self.matcher = matcher
@@ -257,7 +267,8 @@ class ExcelFaceAnalyzer:
         input_dir: str,
         output_dir: str,
         log_callback=None,
-        progress_callback=None
+        progress_callback=None,
+        report_options=None,
     ) -> List[str]:
         os.makedirs(output_dir, exist_ok=True)
 
@@ -270,20 +281,13 @@ class ExcelFaceAnalyzer:
             parser = ExcelPersonFileParser(path)
             person = parser.parse_person()
             if person:
+                person["source_id"] = os.path.abspath(path)
                 persons.append(person)
             elif log_callback:
                 log_callback(f"⚠️ Không đọc được dữ liệu từ {f}", "warning")
 
-        # Deduplicate by name: keep the file with more present rows
-        picked = {}
-        for person in persons:
-            key = _normalize_text(person['name'])
-            present = sum(1 for r in person['records'] if r['gio_vao'] or r['gio_ra'])
-            score = (present, len(person['records']))
-            if key not in picked or score > picked[key][0]:
-                picked[key] = (score, person)
-
-        final_persons = [v[1] for v in picked.values()]
+        final_persons = merge_attendance_people(
+            persons, project_id=self.project_id, registry=self.identity_registry)
         total_persons = len(final_persons)
         if log_callback:
             log_callback(f"📌 Tổng số người sẽ xử lý: {total_persons}", "info")
@@ -298,7 +302,9 @@ class ExcelFaceAnalyzer:
             face_matcher=self.matcher,
             accuracy_mode=self.accuracy_mode,
             match_distance_threshold=self.match_distance_threshold,
-            log_detail=self.log_detail
+            log_detail=self.log_detail,
+            project_id=self.project_id,
+            identity_registry=self.identity_registry
         )
 
         # Tính toán số luồng làm việc tối ưu (50% - 75% CPU)
@@ -316,7 +322,7 @@ class ExcelFaceAnalyzer:
             name = person['name']
             issue_days = sum(
                 1 for r in person['records']
-                if r.get('is_absent') or r.get('missing_checkout') or r.get('missing_checkin') or r.get('same_in_out')
+                if r.get('is_absent') or r.get('missing_checkout') or r.get('missing_checkin') or r.get('same_in_out') or r.get('under_3h')
             )
             try:
                 out_path = exporter.export_person(person, log_callback=None)
@@ -349,5 +355,18 @@ class ExcelFaceAnalyzer:
         # Lưu bộ nhớ đệm cache xuống ổ đĩa
         if self.matcher and hasattr(self.matcher, 'save_cache'):
             self.matcher.save_cache()
+
+        if report_options is not None:
+            report_path = export_aggregate_report(
+                final_persons,
+                output_dir=output_dir,
+                **report_options,
+            )
+            results.append(report_path)
+            if log_callback:
+                log_callback(
+                    f"📄 Đã tạo giải trình tổng hợp: {os.path.basename(report_path)}",
+                    "success",
+                )
 
         return results

@@ -152,10 +152,10 @@ class ExcelListWordExporter:
     def _column_width(self, header_text: str) -> Cm:
         norm = _normalize(header_text)
         fixed_widths = {
-            'stt': 1.0,
+            'stt': 1.3,
             'ma nhan vien': 2.3,
-            'ten nhan vien': 4.8,
-            'phong ban': 2.4,
+            'ten nhan vien': 4.4,
+            'phong ban': 2.2,
             'ngay': 2.0,
             'thu': 1.3,
             'gio vao': 1.6,
@@ -166,7 +166,7 @@ class ExcelListWordExporter:
             'tong gio': 1.8,
             'tang ca': 1.7,
             'tong toan bo': 2.2,
-            'ca': 1.2,
+            'ca': 1.6,
         }
         if norm in fixed_widths:
             return Cm(fixed_widths[norm])
@@ -204,10 +204,15 @@ class ExcelListWordExporter:
         cell_properties.append(shading)
 
     def _set_fixed_layout(self, table):
-        table_properties = table._tbl.tblPr
-        layout = OxmlElement('w:tblLayout')
-        layout.set(qn('w:type'), 'fixed')
-        table_properties.append(layout)
+        table.autofit = False
+
+    def _set_column_widths(self, table, widths):
+        for grid_column, width in zip(table._tbl.tblGrid.gridCol_lst, widths):
+            grid_column.set(qn('w:w'), str(width.twips))
+
+        for row in table.rows:
+            for cell, width in zip(row.cells, widths):
+                cell.width = width
 
     def _repeat_header(self, row):
         row_properties = row._tr.get_or_add_trPr()
@@ -238,7 +243,8 @@ class ExcelListWordExporter:
         document = Document()
         section = document.sections[0]
         section.orientation = WD_ORIENT.LANDSCAPE
-        section.page_width, section.page_height = section.page_height, section.page_width
+        section.page_width = Cm(29.7)
+        section.page_height = Cm(21.0)
         section.top_margin = Cm(1.0)
         section.bottom_margin = Cm(1.0)
         section.left_margin = Cm(1.0)
@@ -246,22 +252,22 @@ class ExcelListWordExporter:
 
         title_paragraph = document.add_paragraph()
         title_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title_paragraph.paragraph_format.space_after = Pt(4)
         title_run = title_paragraph.add_run(title)
         self._set_run_font(title_run, 18, bold=True)
-
-        document.add_paragraph()
 
         table = document.add_table(rows=1, cols=len(header))
         table.style = 'Table Grid'
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         self._set_fixed_layout(table)
+        column_widths = [self._column_width(text) for text in header]
 
         header_row = table.rows[0]
         self._repeat_header(header_row)
 
         for index, text in enumerate(header):
             cell = header_row.cells[index]
-            cell.width = self._column_width(text)
+            cell.width = column_widths[index]
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
             self._shade_cell(cell, 'D9D9D9')
             paragraph = cell.paragraphs[0]
@@ -273,12 +279,14 @@ class ExcelListWordExporter:
             row = table.add_row()
             for index, value in enumerate(row_data):
                 cell = row.cells[index]
-                cell.width = self._column_width(header[index])
+                cell.width = column_widths[index]
                 cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                 paragraph = cell.paragraphs[0]
                 paragraph.alignment = self._cell_alignment(header[index])
                 run = paragraph.add_run(value)
                 self._set_run_font(run, 9.5)
+
+        self._set_column_widths(table, column_widths)
 
         base_name = os.path.splitext(os.path.basename(excel_path))[0]
         output_path = os.path.join(self.output_dir, f"{base_name}.docx")

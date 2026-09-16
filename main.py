@@ -11,6 +11,7 @@ import webbrowser
 import threading
 import logging
 import traceback
+import subprocess
 
 # Ensure console supports utf-8 encoding on Windows
 if hasattr(sys.stdout, 'reconfigure'):
@@ -25,6 +26,29 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 sys.path.insert(0, BASE_DIR)
+
+
+def ensure_supported_python():
+    """Restart the source app with Python 3.12 when invoked through Python 3.14+."""
+    if getattr(sys, 'frozen', False) or sys.version_info < (3, 14):
+        return
+
+    local_app_data = os.environ.get('LOCALAPPDATA', '')
+    python312 = os.path.join(
+        local_app_data, 'Programs', 'Python', 'Python312', 'python.exe'
+    )
+    if not os.path.isfile(python312):
+        raise RuntimeError(
+            'Python 3.14 không tương thích với NumPy/TensorFlow của phần mềm. '
+            'Vui lòng cài Python 3.12 rồi chạy lại.'
+        )
+
+    print('Python 3.14 không tương thích; đang chuyển sang Python 3.12...')
+    result = subprocess.run(
+        [python312, os.path.abspath(__file__), *sys.argv[1:]],
+        check=False,
+    )
+    raise SystemExit(result.returncode)
 
 # Setup file logging ngay từ đầu (quan trọng khi chạy EXE không có console)
 LOG_FILE = os.path.join(BASE_DIR, 'startup.log')
@@ -74,10 +98,6 @@ def main():
 ╚══════════════════════════════════════════════════════════════╝
         """)
         
-        # Mở browser trong thread riêng
-        browser_thread = threading.Thread(target=open_browser, daemon=True)
-        browser_thread.start()
-        
         # Import và chạy Flask app
         log_info("Đang import Flask app...")
         from src.app import app, scan_database, FLASK_PORT, FLASK_HOST
@@ -86,6 +106,10 @@ def main():
         log_info("Đang quét database...")
         scan_database()
         log_info("Quét database xong!")
+
+        # Chỉ mở browser sau khi ứng dụng Flask đã khởi tạo thành công.
+        browser_thread = threading.Thread(target=open_browser, daemon=True)
+        browser_thread.start()
         
         # Kiểm tra thư mục quan trọng
         important_dirs = {
@@ -149,6 +173,7 @@ def main():
         input("Nhấn Enter để đóng...")
 
 if __name__ == '__main__':
+    ensure_supported_python()
     import multiprocessing
     multiprocessing.freeze_support()
     main()

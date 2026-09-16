@@ -23,23 +23,23 @@ function fixture(t) {
 
 test('an undated photo is not silently saved under the selected start date', async t => {
     const {downloader, root} = fixture(t);
-    await downloader._downloadPhotos([{id: 'missing', url: 'preview', date: ''}], 'Project', 'DD', '2026-09-12', '2026-09-12');
-    assert.equal(fs.existsSync(path.join(root, 'input_images', 'Project', '12')), false);
+    await downloader._downloadPhotos([{id: 'missing', url: 'preview', date: ''}], 'Project', 'YYYY-MM-DD', '2026-09-12', '2026-09-12');
+    assert.equal(fs.existsSync(path.join(root, 'input_images', 'Project', '2026-09-12')), false);
     assert.equal(downloader.progress.unknownDate, 1);
     assert.equal(downloader.progress.downloaded, 0);
 });
 
 test('a send date outside the selected range never gets written', async t => {
     const {downloader, root} = fixture(t);
-    await downloader._downloadPhotos([{id: 'next-day', url: 'preview', date: '2026-09-13', dateSource: 'message'}], 'Project', 'DD', '2026-09-12', '2026-09-12');
-    assert.equal(fs.existsSync(path.join(root, 'input_images', 'Project', '13')), false);
+    await downloader._downloadPhotos([{id: 'next-day', url: 'preview', date: '2026-09-13', dateSource: 'message'}], 'Project', 'YYYY-MM-DD', '2026-09-12', '2026-09-12');
+    assert.equal(fs.existsSync(path.join(root, 'input_images', 'Project', '2026-09-13')), false);
     assert.equal(downloader.progress.downloaded, 0);
 });
 
 test('full image bytes take precedence over a preview', async t => {
     const {downloader, root} = fixture(t);
-    await downloader._downloadPhotos([{id: 'full', url: 'preview', downloadUrl: 'full-image', date: '2026-09-12', dateSource: 'message'}], 'Project', 'DD', '2026-09-12', '2026-09-12');
-    const dir = path.join(root, 'input_images', 'Project', '12');
+    await downloader._downloadPhotos([{id: 'full', url: 'preview', downloadUrl: 'full-image', date: '2026-09-12', dateSource: 'message'}], 'Project', 'YYYY-MM-DD', '2026-09-12', '2026-09-12');
+    const dir = path.join(root, 'input_images', 'Project', '2026-09-12');
     const file = fs.readdirSync(dir).find(name => name.endsWith('.jpg'));
     assert.equal(fs.readFileSync(path.join(dir, file), 'utf8'), 'full-image');
     assert.equal(downloader.progress.lowQuality, 0);
@@ -51,7 +51,7 @@ test('unavailable full image falls back to preview with a warning', async t => {
         if (url === 'full-image') throw new Error('expired');
         return {buffer: Buffer.from('preview'), width: 120, height: 80, extension: 'jpg'};
     };
-    await downloader._downloadPhotos([{id: 'fallback', url: 'preview', downloadUrl: 'full-image', date: '2026-09-12', dateSource: 'message'}], 'Project', 'DD');
+    await downloader._downloadPhotos([{id: 'fallback', url: 'preview', downloadUrl: 'full-image', date: '2026-09-12', dateSource: 'message'}], 'Project', 'YYYY-MM-DD');
     assert.equal(downloader.progress.downloaded, 1);
     assert.equal(downloader.progress.lowQuality, 1);
     assert.match(downloader.progress.log.join('\n'), /120.*80/);
@@ -60,20 +60,20 @@ test('unavailable full image falls back to preview with a warning', async t => {
 test('failure of both sources does not leave a saved image', async t => {
     const {downloader, root} = fixture(t);
     downloader._downloadImageBuffer = downloader._fetchImage = async () => { throw new Error('unavailable'); };
-    await downloader._downloadPhotos([{id: 'failed', url: 'preview', downloadUrl: 'full-image', date: '2026-09-12', dateSource: 'message'}], 'Project', 'DD');
-    const dir = path.join(root, 'input_images', 'Project', '12');
+    await downloader._downloadPhotos([{id: 'failed', url: 'preview', downloadUrl: 'full-image', date: '2026-09-12', dateSource: 'message'}], 'Project', 'YYYY-MM-DD');
+    const dir = path.join(root, 'input_images', 'Project', '2026-09-12');
     assert.deepEqual(fs.existsSync(dir) ? fs.readdirSync(dir) : [], []);
     assert.equal(downloader.progress.failed, 1);
 });
 
 test('existing files and gaps in their numbering are preserved', async t => {
     const {downloader, root} = fixture(t);
-    const dir = path.join(root, 'input_images', 'Project', '12');
+    const dir = path.join(root, 'input_images', 'Project', '2026-09-12');
     fs.mkdirSync(dir, {recursive: true});
-    fs.writeFileSync(path.join(dir, 'zalo_12_003.jpg'), 'old');
-    await downloader._downloadPhotos([{id: 'new', url: 'preview', date: '2026-09-12', dateSource: 'header'}], 'Project', 'DD');
-    assert.equal(fs.readFileSync(path.join(dir, 'zalo_12_003.jpg'), 'utf8'), 'old');
-    assert.equal(fs.readFileSync(path.join(dir, 'zalo_12_004.jpg'), 'utf8'), 'preview');
+    fs.writeFileSync(path.join(dir, 'zalo_2026-09-12_003.jpg'), 'old');
+    await downloader._downloadPhotos([{id: 'new', url: 'preview', date: '2026-09-12', dateSource: 'header'}], 'Project', 'YYYY-MM-DD');
+    assert.equal(fs.readFileSync(path.join(dir, 'zalo_2026-09-12_003.jpg'), 'utf8'), 'old');
+    assert.equal(fs.readFileSync(path.join(dir, 'zalo_2026-09-12_004.jpg'), 'utf8'), 'preview');
 });
 
 test('date recovered from viewer is filtered before writing and YYYY-MM-DD is supported', async t => {
