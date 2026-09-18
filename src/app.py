@@ -254,37 +254,10 @@ app.jinja_env.auto_reload = True
 from src.supplement_batches import register_batches
 register_batches(app, SUPPLEMENT_DIR)
 
-# ==================== TASK MANAGER ====================
-
-class ProcessingTask:
-    def __init__(self, task_id):
-        self.task_id = task_id
-        self.status = 'pending'
-        self.progress = 0
-        self.total = 0
-        self.current_file = ''
-        self.results = []
-        self.errors = []
-        self.start_time = None
-        self.end_time = None
-        self.output_file = None
-    
-    def to_dict(self):
-        return {
-            'task_id': self.task_id,
-            'status': self.status,
-            'progress': self.progress,
-            'total': self.total,
-            'current_file': self.current_file,
-            'results_count': len(self.results),
-            'errors_count': len(self.errors),
-            'start_time': self.start_time.isoformat() if self.start_time else None,
-            'end_time': self.end_time.isoformat() if self.end_time else None,
-            'output_file': self.output_file
-        }
+from src.task_manager import TaskManager
+task_manager = TaskManager(BASE_DIR)
 
 # Global state
-tasks = {}
 database = {}
 
 # ==================== LOG STREAMING ====================
@@ -361,129 +334,7 @@ def get_image_files(folder_path):
                 image_files.append(os.path.join(root, file))
     return image_files
 
-def process_image(image_path):
-    """Xử lý một ảnh (demo version - trả về dữ liệu mẫu)"""
-    result = {
-        'image_path': image_path,
-        'filename': os.path.basename(image_path),
-        'datetime': None,
-        'location': None,
-        'faces': [],
-        'matched_person': None,
-        'branch': None,
-        'person_name': None,
-        'confidence': None,
-        'error': None
-    }
-    
-    # Simulate processing time
-    time.sleep(0.5)
-    
-    # Demo data
-    result['datetime'] = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-    result['location'] = 'Demo Location'
-    result['faces'] = [{'location': (0, 100, 100, 0)}]
-    
-    # Tìm trong database
-    if database:
-        for person_id, data in database.items():
-            result['matched_person'] = person_id
-            result['branch'] = data.get('branch', 'Unknown')
-            result['person_name'] = data.get('name', 'Unknown')
-            result['confidence'] = 85.5
-            break
-    
-    return result
 
-def run_processing(task_id, files):
-    """Xử lý trong background thread"""
-    task = tasks[task_id]
-    task.status = 'running'
-    task.start_time = datetime.now()
-    task.total = len(files)
-    
-    try:
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {executor.submit(process_image, f): f for f in files}
-            
-            for future in as_completed(futures):
-                file_path = futures[future]
-                task.current_file = os.path.basename(file_path)
-                
-                try:
-                    result = future.result(timeout=60)
-                    task.results.append(result)
-                except Exception as e:
-                    task.errors.append({'file': file_path, 'error': str(e)})
-                
-                task.progress += 1
-        
-        # Export to Excel
-        task.output_file = export_results(task)
-        task.status = 'completed'
-        
-    except Exception as e:
-        task.status = 'failed'
-        task.errors.append(str(e))
-    
-    task.end_time = datetime.now()
-
-def export_results(task):
-    """Xuất kết quả ra file Excel hoặc CSV"""
-    try:
-        import pandas as pd
-        
-        rows = []
-        for i, result in enumerate(task.results, 1):
-            rows.append({
-                'STT': i,
-                'Tên File': result['filename'],
-                'Ngày Giờ': result['datetime'] or '',
-                'Địa Điểm': result['location'] or '',
-                'Chi Nhánh': result['branch'] or '',
-                'Tên Người': result['person_name'] or 'Không xác định',
-                'Độ Tin Cậy (%)': result['confidence'] or 0,
-                'Số Khuôn Mặt': len(result['faces']),
-                'Lỗi': result['error'] or ''
-            })
-        
-        df = pd.DataFrame(rows)
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_filename = f'result_{timestamp}.xlsx'
-        output_path = os.path.join(RESULTS_DIR, output_filename)
-        
-        df.to_excel(output_path, index=False, engine='openpyxl')
-        return output_path
-        
-    except ImportError:
-        # Fallback to CSV if pandas not available
-        import csv
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_filename = f'result_{timestamp}.csv'
-        output_path = os.path.join(RESULTS_DIR, output_filename)
-        
-        with open(output_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['STT', 'Tên File', 'Ngày Giờ', 'Địa Điểm', 'Chi Nhánh', 'Tên Người', 'Độ Tin Cậy (%)', 'Số Khuôn Mặt', 'Lỗi'])
-            
-            for i, result in enumerate(task.results, 1):
-                writer.writerow([
-                    i,
-                    result['filename'],
-                    result['datetime'] or '',
-                    result['location'] or '',
-                    result['branch'] or '',
-                    result['person_name'] or 'Không xác định',
-                    result['confidence'] or 0,
-                    len(result['faces']),
-                    result['error'] or ''
-                ])
-        
-        return output_path
-    except Exception as e:
-        print(f"Lỗi xuất file: {e}")
-        return None
 
 def scan_database():
     """Quét database ảnh chân dung"""
@@ -553,158 +404,7 @@ def log_stream():
     return Response(generate(), mimetype='text/event-stream', 
                     headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive'})
 
-# ==================== API: SCAN ====================
 
-@app.route('/api/scan/start', methods=['POST'])
-def start_scan():
-    data = request.json or {}
-    date_folder = data.get('date', None)  # Có thể chỉ định ngày cụ thể
-    folder_path = data.get('folder_path', INPUT_IMAGES_DIR)
-    
-    # Nếu có chỉ định ngày, quét trong thư mục ngày đó
-    if date_folder:
-        folder_path = os.path.join(INPUT_IMAGES_DIR, date_folder)
-    
-    if not os.path.exists(folder_path):
-        return jsonify({'error': f'Thư mục không tồn tại: {folder_path}'}), 400
-    
-    files = get_image_files(folder_path)
-    if not files:
-        return jsonify({'error': 'Không tìm thấy file ảnh nào'}), 400
-    
-    task_id = f"task_{int(time.time() * 1000)}"
-    task = ProcessingTask(task_id)
-    tasks[task_id] = task
-    
-    thread = threading.Thread(target=run_processing, args=(task_id, files))
-    thread.daemon = True
-    thread.start()
-    
-    return jsonify({
-        'success': True,
-        'task_id': task_id,
-        'message': f'Đã bắt đầu quét {len(files)} ảnh',
-        'folder': folder_path,
-        'total_files': len(files)
-    })
-
-@app.route('/api/scan/dates')
-def list_date_folders():
-    """Liệt kê các thư mục ngày có sẵn trong input_images"""
-    date_folders = []
-    if os.path.exists(INPUT_IMAGES_DIR):
-        for item in os.listdir(INPUT_IMAGES_DIR):
-            item_path = os.path.join(INPUT_IMAGES_DIR, item)
-            if os.path.isdir(item_path):
-                # Đếm số ảnh trong thư mục
-                image_count = len(get_image_files(item_path))
-                if image_count > 0:
-                    date_folders.append({
-                        'name': item,
-                        'path': item_path,
-                        'image_count': image_count
-                    })
-    
-    # Sắp xếp theo tên (ngày)
-    date_folders.sort(key=lambda x: x['name'])
-    
-    return jsonify({
-        'success': True,
-        'folders': date_folders,
-        'total': len(date_folders)
-    })
-
-@app.route('/api/scan/all-dates', methods=['POST'])
-def scan_all_dates():
-    """Quét tất cả các thư mục ngày có ảnh trong input_images"""
-    date_folders = []
-    total_images = 0
-    
-    if not os.path.exists(INPUT_IMAGES_DIR):
-        return jsonify({'error': 'Thư mục input_images không tồn tại'}), 400
-    
-    # Tìm tất cả thư mục con có ảnh
-    for item in os.listdir(INPUT_IMAGES_DIR):
-        item_path = os.path.join(INPUT_IMAGES_DIR, item)
-        if os.path.isdir(item_path):
-            images = get_image_files(item_path)
-            if images:
-                date_folders.append({
-                    'name': item,
-                    'path': item_path,
-                    'images': images
-                })
-                total_images += len(images)
-    
-    if not date_folders:
-        return jsonify({'error': 'Không tìm thấy thư mục ngày nào có ảnh'}), 400
-    
-    # Sắp xếp theo tên ngày
-    date_folders.sort(key=lambda x: x['name'])
-    
-    # Tạo task và bắt đầu quét từng thư mục
-    task_id = f"task_{int(time.time() * 1000)}"
-    task = ProcessingTask(task_id)
-    task.total = total_images
-    tasks[task_id] = task
-    
-    def process_all_dates():
-        task.status = 'running'
-        task.start_time = datetime.now()
-        
-        for folder_info in date_folders:
-            folder_name = folder_info['name']
-            images = folder_info['images']
-            
-            for image_path in images:
-                task.current_file = f"[{folder_name}] {os.path.basename(image_path)}"
-                
-                try:
-                    result = process_image(image_path)
-                    result['date_folder'] = folder_name  # Thêm thông tin thư mục ngày
-                    task.results.append(result)
-                except Exception as e:
-                    task.errors.append({'file': image_path, 'error': str(e)})
-                
-                task.progress += 1
-        
-        # Export kết quả
-        task.output_file = export_results(task)
-        task.status = 'completed'
-        task.end_time = datetime.now()
-    
-    thread = threading.Thread(target=process_all_dates, daemon=True)
-    thread.start()
-    
-    return jsonify({
-        'success': True,
-        'task_id': task_id,
-        'message': f'Đang quét {len(date_folders)} thư mục, tổng {total_images} ảnh',
-        'folders': [{'name': f['name'], 'count': len(f['images'])} for f in date_folders],
-        'total_images': total_images
-    })
-
-@app.route('/api/scan/status/<task_id>')
-def get_scan_status(task_id):
-    task = tasks.get(task_id)
-    if task:
-        return jsonify(task.to_dict())
-    return jsonify({'error': 'Task không tồn tại'}), 404
-
-@app.route('/api/scan/results/<task_id>')
-def get_scan_results(task_id):
-    task = tasks.get(task_id)
-    if task:
-        return jsonify({
-            **task.to_dict(),
-            'results': task.results,
-            'errors': task.errors
-        })
-    return jsonify({'error': 'Task không tồn tại'}), 404
-
-@app.route('/api/scan/tasks')
-def get_all_tasks():
-    return jsonify({'tasks': [t.to_dict() for t in tasks.values()]})
 
 # ==================== API: DATABASE ====================
 
@@ -800,57 +500,7 @@ def list_input_files():
         'count': len(files)
     })
 
-@app.route('/api/files/results')
-def list_result_files():
-    files = []
-    if os.path.exists(RESULTS_DIR):
-        for file in os.listdir(RESULTS_DIR):
-            if file.endswith('.xlsx') or file.endswith('.csv'):
-                file_path = os.path.join(RESULTS_DIR, file)
-                files.append({
-                    'name': file,
-                    'size': os.path.getsize(file_path),
-                    'path': file_path
-                })
-    
-    files.sort(key=lambda x: x['name'], reverse=True)
-    
-    return jsonify({
-        'folder': RESULTS_DIR,
-        'files': files,
-        'count': len(files)
-    })
 
-@app.route('/api/files/download/<filename>')
-def download_file(filename):
-    file_path = os.path.join(RESULTS_DIR, secure_filename(filename))
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    return jsonify({'error': 'File không tồn tại'}), 404
-
-@app.route('/api/files/upload', methods=['POST'])
-def upload_files():
-    if 'files' not in request.files:
-        return jsonify({'error': 'Không có file được upload'}), 400
-    
-    files = request.files.getlist('files')
-    uploaded = []
-    
-    for file in files:
-        if file.filename:
-            filename = secure_filename(file.filename)
-            ext = os.path.splitext(filename)[1].lower()
-            
-            if ext in SUPPORTED_IMAGE_EXTENSIONS:
-                file_path = os.path.join(INPUT_IMAGES_DIR, filename)
-                file.save(file_path)
-                uploaded.append(filename)
-    
-    return jsonify({
-        'success': True,
-        'uploaded': uploaded,
-        'count': len(uploaded)
-    })
 
 # ==================== API: CONFIG ====================
 
@@ -1169,14 +819,22 @@ def pdf_face_analyze():
         i_dir = os.path.join(INPUT_IMAGES_DIR, project_name)
 
         task_id = f"pdf_face_{int(time.time() * 1000)}"
-        task = PDFFaceTask(task_id)
-        pdf_face_tasks[task_id] = task
 
-        def _run():
-            task.status = 'running'
-            task.start_time = datetime.now()
+        payload = {
+            'folder': folder,
+            'project_name': project_name,
+            'project_id': project_id,
+            'threshold': threshold,
+            'report_options': report_options,
+            'input_dir': input_dir,
+            'output_dir': output_dir,
+            'p_dir': p_dir,
+            'i_dir': i_dir,
+        }
+
+        def _run(task_rec, cancel_check):
             try:
-                send_log(f" Bắt đầu phân tích khuôn mặt cho thư mục PDF: {folder} (Dự án: {project_name})", "info")
+                send_log(f"🚀 Bắt đầu phân tích khuôn mặt cho thư mục PDF: {folder} (Dự án: {project_name})", "info")
                 matcher = get_face_matcher()
                 if matcher:
                     send_log("✅ Face Matcher đã sẵn sàng", "success")
@@ -1199,14 +857,7 @@ def pdf_face_analyze():
                     send_log(msg, t)
 
                 def _progress(completed, total, name, file_path):
-                    task.total = total
-                    task.progress = completed
-                    task.current = name
-                    if file_path:
-                        task.files.append({
-                            'name': os.path.basename(file_path),
-                            'folder': folder,
-                        })
+                    task_manager.update_progress(task_rec.task_id, completed, total, name, file_path)
 
                 files = analyzer.analyze_folder(
                     input_dir,
@@ -1214,39 +865,47 @@ def pdf_face_analyze():
                     log_callback=_log,
                     progress_callback=_progress,
                     report_options=report_options,
+                    cancel_check=cancel_check,
                 )
                 aggregate_path = next(
                     (path for path in files if os.path.basename(path).startswith('GIAI_TRINH_')),
                     None,
                 )
                 if aggregate_path:
-                    task.aggregate_report = {
+                    task_rec.aggregate_report = os.path.basename(aggregate_path)
+                    task_rec.files.append({
                         'name': os.path.basename(aggregate_path),
                         'folder': folder,
-                    }
-                    task.files.append({
-                        **task.aggregate_report,
                         'is_aggregate': True,
                     })
-                task.total = len(files)
-                task.progress = len(files)
-                task.status = 'completed'
-                send_log(f"🎉 Hoàn tất! Đã xuất {len(files)} file Word từ PDF", "success")
+                task_rec.total = len(files)
+                task_rec.progress = len(files)
+                if cancel_check():
+                    send_log(f"⚠️ Đã dừng quét thư mục PDF: {folder}", "warning")
+                else:
+                    send_log(f"🎉 Hoàn tất! Đã xuất {len(files)} file Word từ PDF", "success")
             except Exception as e:
                 import traceback
-                task.status = 'failed'
-                task.errors.append(str(e))
+                task_rec.status = 'failed'
+                task_rec.errors.append(str(e))
                 send_log(f"❌ Lỗi phân tích PDF: {e}", "error")
                 traceback.print_exc()
-            task.end_time = datetime.now()
 
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
+        task = task_manager.submit_task(
+            task_type='pdf_face',
+            target_folder=folder,
+            project_name=project_name,
+            execute_fn=_run,
+            payload=payload,
+            task_id=task_id,
+        )
+        pdf_face_tasks[task_id] = task
 
         return jsonify({
             'success': True,
             'task_id': task_id,
-            'message': f'Đã bắt đầu phân tích {folder}',
+            'status': task.status,
+            'message': f'Đã bắt đầu phân tích {folder}' if task.status == 'running' else f'Đã xếp hàng chờ phân tích {folder}',
         })
     except Exception as e:
         import traceback
@@ -1256,7 +915,7 @@ def pdf_face_analyze():
 @app.route('/api/pdf/face/status/<task_id>')
 def pdf_face_status(task_id):
     """Kiểm tra tiến độ phân tích khuôn mặt từ PDF"""
-    task = pdf_face_tasks.get(task_id)
+    task = task_manager.get_task(task_id) or pdf_face_tasks.get(task_id)
     if not task:
         return jsonify({'error': 'Task không tồn tại'}), 404
     return jsonify(task.to_dict())
@@ -1572,14 +1231,22 @@ def excel_face_analyze():
         i_dir = os.path.join(INPUT_IMAGES_DIR, project_name)
 
         task_id = f"excel_face_{int(time.time() * 1000)}"
-        task = ExcelFaceTask(task_id)
-        excel_face_tasks[task_id] = task
 
-        def _run():
-            task.status = 'running'
-            task.start_time = datetime.now()
+        payload = {
+            'folder': folder,
+            'project_name': project_name,
+            'project_id': project_id,
+            'threshold': threshold,
+            'report_options': report_options,
+            'input_dir': input_dir,
+            'output_dir': output_dir,
+            'p_dir': p_dir,
+            'i_dir': i_dir,
+        }
+
+        def _run(task_rec, cancel_check):
             try:
-                send_log(f" Bắt đầu phân tích khuôn mặt cho thư mục: {folder} (Dự án: {project_name})", "info")
+                send_log(f"🚀 Bắt đầu phân tích khuôn mặt cho thư mục: {folder} (Dự án: {project_name})", "info")
                 matcher = get_face_matcher()
                 if matcher:
                     send_log("✅ Face Matcher đã sẵn sàng", "success")
@@ -1602,14 +1269,7 @@ def excel_face_analyze():
                     send_log(msg, t)
 
                 def _progress(completed, total, name, file_path):
-                    task.total = total
-                    task.progress = completed
-                    task.current = name
-                    if file_path:
-                        task.files.append({
-                            'name': os.path.basename(file_path),
-                            'folder': folder,
-                        })
+                    task_manager.update_progress(task_rec.task_id, completed, total, name, file_path)
 
                 files = analyzer.analyze_folder(
                     input_dir,
@@ -1617,39 +1277,47 @@ def excel_face_analyze():
                     log_callback=_log,
                     progress_callback=_progress,
                     report_options=report_options,
+                    cancel_check=cancel_check,
                 )
                 aggregate_path = next(
                     (path for path in files if os.path.basename(path).startswith('GIAI_TRINH_')),
                     None,
                 )
                 if aggregate_path:
-                    task.aggregate_report = {
+                    task_rec.aggregate_report = os.path.basename(aggregate_path)
+                    task_rec.files.append({
                         'name': os.path.basename(aggregate_path),
                         'folder': folder,
-                    }
-                    task.files.append({
-                        **task.aggregate_report,
                         'is_aggregate': True,
                     })
-                task.total = len(files)
-                task.progress = len(files)
-                task.status = 'completed'
-                send_log(f"🎉 Hoàn tất! Đã xuất {len(files)} file Word", "success")
+                task_rec.total = len(files)
+                task_rec.progress = len(files)
+                if cancel_check():
+                    send_log(f"⚠️ Đã dừng quét thư mục: {folder}", "warning")
+                else:
+                    send_log(f"🎉 Hoàn tất! Đã xuất {len(files)} file Word", "success")
             except Exception as e:
                 import traceback
-                task.status = 'failed'
-                task.errors.append(str(e))
+                task_rec.status = 'failed'
+                task_rec.errors.append(str(e))
                 send_log(f"❌ Lỗi phân tích Excel: {e}", "error")
                 traceback.print_exc()
-            task.end_time = datetime.now()
 
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
+        task = task_manager.submit_task(
+            task_type='excel_face',
+            target_folder=folder,
+            project_name=project_name,
+            execute_fn=_run,
+            payload=payload,
+            task_id=task_id,
+        )
+        excel_face_tasks[task_id] = task
 
         return jsonify({
             'success': True,
             'task_id': task_id,
-            'message': f'Đã bắt đầu phân tích {folder}',
+            'status': task.status,
+            'message': f'Đã bắt đầu phân tích {folder}' if task.status == 'running' else f'Đã xếp hàng chờ phân tích {folder}',
         })
     except Exception as e:
         import traceback
@@ -1659,10 +1327,197 @@ def excel_face_analyze():
 @app.route('/api/excel/face/status/<task_id>')
 def excel_face_status(task_id):
     """Kiểm tra tiến độ phân tích khuôn mặt từ Excel"""
-    task = excel_face_tasks.get(task_id)
+    task = task_manager.get_task(task_id) or excel_face_tasks.get(task_id)
     if not task:
         return jsonify({'error': 'Task không tồn tại'}), 404
     return jsonify(task.to_dict())
+
+
+@app.route('/api/task/cancel/<task_id>', methods=['POST'])
+def cancel_task(task_id):
+    """Dừng/hủy tác vụ đang chạy hoặc đang chờ"""
+    success = task_manager.cancel_task(task_id)
+    task = task_manager.get_task(task_id)
+    if not task:
+        return jsonify({'success': False, 'error': 'Task không tồn tại'}), 404
+    send_log(f"🛑 Đã gửi lệnh hủy tác vụ {task_id} ({task.target_folder})", "warning")
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'status': task.status,
+        'message': f'Đã gửi yêu cầu dừng tác vụ {task_id}'
+    })
+
+
+@app.route('/api/task/retry/<task_id>', methods=['POST'])
+def retry_task(task_id):
+    """Quét lại tác vụ bị gián đoạn, lỗi hoặc đã hủy"""
+    old_task = task_manager.get_task(task_id)
+    if not old_task:
+        return jsonify({'success': False, 'error': 'Task không tồn tại'}), 404
+
+    payload = old_task.payload or {}
+    if not payload:
+        return jsonify({'success': False, 'error': 'Không tìm thấy tham số gốc của tác vụ'}), 400
+
+    folder = payload.get('folder', '')
+    project_name = payload.get('project_name', '')
+    project_id = payload.get('project_id', '')
+    threshold = payload.get('threshold')
+    report_options = payload.get('report_options')
+    input_dir = payload.get('input_dir', '')
+    output_dir = payload.get('output_dir', '')
+    p_dir = payload.get('p_dir', '')
+    i_dir = payload.get('i_dir', '')
+    identity_reg = get_identity_registry()
+
+    if old_task.task_type == 'excel_face':
+        new_tid = f"excel_face_{int(time.time() * 1000)}"
+
+        def _retry_excel_run(task_rec, cancel_check):
+            try:
+                send_log(f"🚀 [Quét lại] Phân tích khuôn mặt thư mục: {folder} (Dự án: {project_name})", "info")
+                matcher = get_face_matcher()
+                from src.excel_face_analyzer import ExcelFaceAnalyzer
+                analyzer = ExcelFaceAnalyzer(
+                    p_dir, i_dir, matcher, accuracy_mode=True,
+                    match_distance_threshold=threshold, log_detail=True,
+                    project_id=project_id, identity_registry=identity_reg
+                )
+                def _log(msg, t='default'):
+                    send_log(msg, t)
+                def _progress(completed, total, name, file_path):
+                    task_manager.update_progress(task_rec.task_id, completed, total, name, file_path)
+
+                files = analyzer.analyze_folder(
+                    input_dir, output_dir, log_callback=_log,
+                    progress_callback=_progress, report_options=report_options,
+                    cancel_check=cancel_check,
+                )
+                aggregate_path = next(
+                    (path for path in files if os.path.basename(path).startswith('GIAI_TRINH_')),
+                    None,
+                )
+                if aggregate_path:
+                    task_rec.aggregate_report = os.path.basename(aggregate_path)
+                    task_rec.files.append({
+                        'name': os.path.basename(aggregate_path),
+                        'folder': folder,
+                        'is_aggregate': True,
+                    })
+                task_rec.total = len(files)
+                task_rec.progress = len(files)
+                if cancel_check():
+                    send_log(f"⚠️ Đã dừng quét lại thư mục: {folder}", "warning")
+                else:
+                    send_log(f"🎉 Hoàn tất quét lại! Đã xuất {len(files)} file Word", "success")
+            except Exception as e:
+                import traceback
+                task_rec.status = 'failed'
+                task_rec.errors.append(str(e))
+                send_log(f"❌ Lỗi quét lại Excel: {e}", "error")
+                traceback.print_exc()
+
+        new_task = task_manager.submit_task(
+            task_type='excel_face',
+            target_folder=folder,
+            project_name=project_name,
+            execute_fn=_retry_excel_run,
+            payload=payload,
+            task_id=new_tid,
+        )
+        excel_face_tasks[new_tid] = new_task
+        return jsonify({
+            'success': True,
+            'task_id': new_tid,
+            'status': new_task.status,
+            'message': f'Đã xếp hàng quét lại cho {folder}'
+        })
+
+    elif old_task.task_type == 'pdf_face':
+        new_tid = f"pdf_face_{int(time.time() * 1000)}"
+
+        def _retry_pdf_run(task_rec, cancel_check):
+            try:
+                send_log(f"🚀 [Quét lại] Phân tích khuôn mặt PDF: {folder} (Dự án: {project_name})", "info")
+                matcher = get_face_matcher()
+                from src.pdf_face_analyzer import PDFFaceAnalyzer
+                analyzer = PDFFaceAnalyzer(
+                    p_dir, i_dir, matcher, accuracy_mode=True,
+                    match_distance_threshold=threshold, log_detail=True,
+                    project_id=project_id, identity_registry=identity_reg
+                )
+                def _log(msg, t='default'):
+                    send_log(msg, t)
+                def _progress(completed, total, name, file_path):
+                    task_manager.update_progress(task_rec.task_id, completed, total, name, file_path)
+
+                files = analyzer.analyze_folder(
+                    input_dir, output_dir, log_callback=_log,
+                    progress_callback=_progress, report_options=report_options,
+                    cancel_check=cancel_check,
+                )
+                aggregate_path = next(
+                    (path for path in files if os.path.basename(path).startswith('GIAI_TRINH_')),
+                    None,
+                )
+                if aggregate_path:
+                    task_rec.aggregate_report = os.path.basename(aggregate_path)
+                    task_rec.files.append({
+                        'name': os.path.basename(aggregate_path),
+                        'folder': folder,
+                        'is_aggregate': True,
+                    })
+                task_rec.total = len(files)
+                task_rec.progress = len(files)
+                if cancel_check():
+                    send_log(f"⚠️ Đã dừng quét lại PDF: {folder}", "warning")
+                else:
+                    send_log(f"🎉 Hoàn tất quét lại! Đã xuất {len(files)} file Word", "success")
+            except Exception as e:
+                import traceback
+                task_rec.status = 'failed'
+                task_rec.errors.append(str(e))
+                send_log(f"❌ Lỗi quét lại PDF: {e}", "error")
+                traceback.print_exc()
+
+        new_task = task_manager.submit_task(
+            task_type='pdf_face',
+            target_folder=folder,
+            project_name=project_name,
+            execute_fn=_retry_pdf_run,
+            payload=payload,
+            task_id=new_tid,
+        )
+        pdf_face_tasks[new_tid] = new_task
+        return jsonify({
+            'success': True,
+            'task_id': new_tid,
+            'status': new_task.status,
+            'message': f'Đã xếp hàng quét lại cho {folder}'
+        })
+
+    return jsonify({'success': False, 'error': f'Không hỗ trợ retry cho {old_task.task_type}'}), 400
+
+
+@app.route('/api/tasks/recent')
+def get_recent_tasks():
+    """Lấy danh sách các tác vụ gần nhất từ TaskManager"""
+    limit = request.args.get('limit', default=20, type=int)
+    task_type = request.args.get('type', default=None, type=str)
+    tasks = task_manager.get_recent_tasks(limit=limit, task_type=task_type)
+    return jsonify({'success': True, 'tasks': tasks})
+
+
+@app.route('/api/cache/face/clear', methods=['POST'])
+def api_clear_face_cache():
+    """Xóa toàn bộ bộ nhớ đệm vector khuôn mặt"""
+    from src.face_matcher import clear_face_cache
+    success = clear_face_cache()
+    if success:
+        send_log("🧹 Đã làm mới toàn bộ bộ nhớ đệm vector khuôn mặt", "success")
+        return jsonify({'success': True, 'message': 'Đã xóa toàn bộ cache khuôn mặt'})
+    return jsonify({'success': False, 'error': 'Lỗi khi xóa cache'}), 500
 
 
 @app.route('/api/excel/face/files')
@@ -1961,22 +1816,7 @@ def pdf_face_delete_file():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/results/delete', methods=['POST'])
-def results_delete_file():
-    """Xóa file trong thư mục results"""
-    try:
-        data = request.get_json(silent=True) or {}
-        filename = data.get('filename', '')
-        if not filename:
-            return jsonify({'success': False, 'error': 'Tên file không hợp lệ'}), 400
-        safe_file = os.path.basename(filename)
-        file_path = os.path.join(RESULTS_DIR, safe_file)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            return jsonify({'success': True, 'message': f'Đã xóa {safe_file}'})
-        return jsonify({'success': False, 'error': 'File không tồn tại'}), 404
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 # ==================== ZALO SERVICE PROXY ====================
 

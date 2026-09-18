@@ -269,6 +269,7 @@ class ExcelFaceAnalyzer:
         log_callback=None,
         progress_callback=None,
         report_options=None,
+        cancel_check=None,
     ) -> List[str]:
         os.makedirs(output_dir, exist_ok=True)
 
@@ -319,6 +320,8 @@ class ExcelFaceAnalyzer:
 
         def _process_one_person(person):
             nonlocal completed_count
+            if cancel_check and cancel_check():
+                return None
             name = person['name']
             issue_days = sum(
                 1 for r in person['records']
@@ -346,15 +349,30 @@ class ExcelFaceAnalyzer:
 
         # Chạy song song qua ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_person = {executor.submit(_process_one_person, p): p for p in final_persons}
+            future_to_person = {}
+            for p in final_persons:
+                if cancel_check and cancel_check():
+                    break
+                future_to_person[executor.submit(_process_one_person, p)] = p
+
             for future in as_completed(future_to_person):
                 p_path = future.result()
                 if p_path:
                     results.append(p_path)
+                if cancel_check and cancel_check():
+                    for f in future_to_person:
+                        f.cancel()
+                    break
 
         # Lưu bộ nhớ đệm cache xuống ổ đĩa
         if self.matcher and hasattr(self.matcher, 'save_cache'):
             self.matcher.save_cache()
+
+        # Nếu có yêu cầu hủy, dừng lại và bảo toàn các file đã tạo, không xuất báo cáo tổng hợp dở dang
+        if cancel_check and cancel_check():
+            if log_callback:
+                log_callback(f"⚠️ Đã dừng quét theo yêu cầu! Đã giữ lại {len(results)} file Word cá nhân hoàn tất.", "warning")
+            return results
 
         if report_options is not None:
             report_path = export_aggregate_report(

@@ -49,7 +49,7 @@ a = Analysis(
         # src modules
         'src', 'src.app', 'src.config', 'src.face_detector',
         'src.face_matcher', 'src.pdf_extractor',
-        'src.text_extractor', 'src.async_processor',
+        'src.text_extractor',
         'src.database_manager', 'src.excel_extractor',
         'src.aggregate_report_exporter',
         'src.excel_splitter', 'src.excel_face_analyzer', 'src.excel_list_word_exporter',

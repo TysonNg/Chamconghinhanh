@@ -430,7 +430,12 @@
     section.style.display = 'block';
     if (countSpan) countSpan.textContent = selectedPhotos.length;
     if (sameDateInput && !sameDateInput.value) {
-      sameDateInput.value = selectedPhotos[0].target_date || getTodayISO();
+      const defaultDay = selectedPhotos[0].target_date || getTodayISO();
+      if (typeof setDatePickerValue === 'function') {
+        setDatePickerValue(sameDateInput, defaultDay);
+      } else {
+        sameDateInput.value = defaultDay;
+      }
     }
 
     grid.replaceChildren();
@@ -475,13 +480,28 @@
       // Date input row
       const dateRow = el('div', null, 'supp-photo-input-row');
       const dateLbl = el('span', 'Ngày', 'supp-photo-input-label');
-      const dateInp = el('input', null, 'form-control supp-photo-input-control');
-      dateInp.type = 'date';
+      const dateInp = el('input', null, 'form-control supp-photo-input-control vn-date-picker');
+      dateInp.type = 'text';
       dateInp.required = true;
+      dateInp.placeholder = 'dd/mm/yyyy';
       dateInp.setAttribute('aria-label', 'Ngày đề nghị bổ sung công');
       dateInp.value = item.target_date;
       dateInp.onchange = () => { item.target_date = dateInp.value; };
       dateRow.append(dateLbl, dateInp);
+      if (typeof flatpickr !== 'undefined') {
+        flatpickr(dateInp, {
+          locale: 'vn',
+          dateFormat: 'Y-m-d',
+          altInput: true,
+          altInputClass: 'form-control supp-photo-input-control vn-date-picker-alt',
+          altFormat: 'd/m/Y',
+          defaultDate: item.target_date || undefined,
+          allowInput: true,
+          onChange: (selectedDates, dateStr) => {
+            item.target_date = dateStr;
+          }
+        });
+      }
 
       // Time input row
       const timeRow = el('div', null, 'supp-photo-input-row');

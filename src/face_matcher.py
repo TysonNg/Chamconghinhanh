@@ -16,6 +16,8 @@ import numpy as np
 import sys
 import pickle
 import threading
+import sqlite3
+from datetime import datetime, date
 
 # Cấu hình an toàn console Windows tránh UnicodeEncodeError
 if hasattr(sys.stdout, 'reconfigure'):
@@ -37,6 +39,7 @@ _temp_dir_lock = threading.Lock()
 _CACHE_LOCK = threading.Lock()
 _DISK_CACHE = None
 _CACHE_FILE = None
+_CACHE_DB_FILE = None
 _CACHE_DIRTY_COUNT = 0
 
 def _get_cache_file():
@@ -50,22 +53,109 @@ def _get_cache_file():
         _CACHE_FILE = os.path.join(cache_dir, "face_embeddings.pkl")
     return _CACHE_FILE
 
+def _get_cache_db_file():
+    global _CACHE_DB_FILE, _CACHE_FILE
+    if _CACHE_DB_FILE is not None:
+        return _CACHE_DB_FILE
+    if _CACHE_FILE is not None:
+        return os.path.splitext(_CACHE_FILE)[0] + ".sqlite3"
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+    cache_dir = os.path.join(base_dir, ".cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(cache_dir, "face_embeddings.sqlite3")
+
+def _get_sqlite_conn():
+    db_file = _get_cache_db_file()
+    conn = sqlite3.connect(db_file, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS face_embeddings (
+            image_path TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            mtime REAL NOT NULL,
+            model_name TEXT NOT NULL,
+            detector_backend TEXT NOT NULL,
+            embedding BLOB NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (image_path, file_size, mtime, model_name, detector_backend)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_face_lookup ON face_embeddings(image_path, file_size, mtime)")
+    return conn
+
+def _migrate_pkl_cache_if_needed():
+    cache_file = _get_cache_file()
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                loaded = pickle.load(f)
+            if isinstance(loaded, dict) and loaded:
+                now_str = datetime.now().isoformat()
+                with _get_sqlite_conn() as conn:
+                    rows = []
+                    for key, emb in loaded.items():
+                        if isinstance(key, tuple) and len(key) == 5:
+                            img_p, sz, mt, mdl, dtc = key
+                            blob = np.array(emb, dtype=np.float32).tobytes()
+                            rows.append((str(img_p), int(sz), float(mt), str(mdl), str(dtc), blob, now_str))
+                    if rows:
+                        conn.executemany("""
+                            INSERT OR REPLACE INTO face_embeddings 
+                            (image_path, file_size, mtime, model_name, detector_backend, embedding, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, rows)
+                        conn.commit()
+                print(f"[CACHE] Đã migrate thành công {len(rows)} vector từ {cache_file} sang SQLite")
+            # Đổi tên sang .pkl.bak
+            bak_file = cache_file + ".bak"
+            try:
+                if os.path.exists(bak_file):
+                    os.remove(bak_file)
+                os.rename(cache_file, bak_file)
+            except Exception:
+                pass
+        except Exception as exc:
+            print(f"[CACHE] Lỗi migrate pickle cache: {exc}")
+
 def _load_disk_cache_locked():
     """Read once. Caller holds _CACHE_LOCK."""
     global _DISK_CACHE
     if _DISK_CACHE is None:
+        _DISK_CACHE = {}
+        # 1. Kiểm tra pickle test file (nếu _CACHE_FILE được chỉ định riêng cho test)
         cache_file = _get_cache_file()
+        if os.path.exists(cache_file) and not cache_file.endswith('.sqlite3'):
+            try:
+                with open(cache_file, 'rb') as f:
+                    loaded = pickle.load(f)
+                if isinstance(loaded, dict):
+                    _DISK_CACHE.update(loaded)
+            except Exception as exc:
+                print(f"[CACHE] Cannot read pickle cache; rebuilding: {exc}")
+
+        # 2. Tự động migrate từ file .pkl cũ nếu có
+        _migrate_pkl_cache_if_needed()
+
+        # 3. Nạp từ SQLite
         try:
-            with open(cache_file, 'rb') as f:
-                loaded = pickle.load(f)
-            if not isinstance(loaded, dict):
-                raise ValueError("Cache must contain a dictionary")
-            _DISK_CACHE = loaded
-        except FileNotFoundError:
-            _DISK_CACHE = {}
+            with _get_sqlite_conn() as conn:
+                cursor = conn.execute(
+                    "SELECT image_path, file_size, mtime, model_name, detector_backend, embedding FROM face_embeddings"
+                )
+                count = 0
+                for row in cursor:
+                    key = (row[0], row[1], row[2], row[3], row[4])
+                    emb = np.frombuffer(row[5], dtype=np.float32)
+                    _DISK_CACHE[key] = emb
+                    count += 1
+                if count > 0:
+                    print(f"[CACHE] Đã nạp {count} embeddings từ SQLite cache")
         except Exception as exc:
-            print(f"[CACHE] Cannot read cache; rebuilding: {exc}")
-            _DISK_CACHE = {}
+            print(f"[CACHE] Cannot read SQLite cache: {exc}")
+
     return _DISK_CACHE
 
 
@@ -75,31 +165,76 @@ def load_disk_cache():
 
 
 def _save_disk_cache_locked(force=False):
-    """Atomic file replacement. Caller holds _CACHE_LOCK."""
+    """Lưu cache xuống SQLite và file dự phòng. Caller holds _CACHE_LOCK."""
     global _CACHE_DIRTY_COUNT
     if _DISK_CACHE is None or (_CACHE_DIRTY_COUNT == 0 and not force):
         return
-    cache_file = _get_cache_file()
-    temp_file = cache_file + ".tmp"
+
+    # 1. Lưu xuống SQLite
     try:
-        with open(temp_file, "wb") as f:
-            pickle.dump(_DISK_CACHE, f, protocol=pickle.HIGHEST_PROTOCOL)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_file, cache_file)
-        _CACHE_DIRTY_COUNT = 0
+        now_str = datetime.now().isoformat()
+        rows = []
+        for key, emb in _DISK_CACHE.items():
+            if isinstance(key, tuple) and len(key) == 5:
+                img_p, sz, mt, mdl, dtc = key
+                blob = np.array(emb, dtype=np.float32).tobytes()
+                rows.append((str(img_p), int(sz), float(mt), str(mdl), str(dtc), blob, now_str))
+        if rows:
+            with _get_sqlite_conn() as conn:
+                conn.executemany("""
+                    INSERT OR REPLACE INTO face_embeddings 
+                    (image_path, file_size, mtime, model_name, detector_backend, embedding, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, rows)
+                conn.commit()
     except Exception as exc:
-        print(f"[CACHE] Cannot save cache; changes remain pending: {exc}")
-    finally:
+        print(f"[CACHE] Cannot save to SQLite: {exc}")
+
+    # 2. Hỗ trợ ghi ra file pickle nếu _CACHE_FILE được chỉ định riêng (backward compatible)
+    cache_file = _get_cache_file()
+    if cache_file and not cache_file.endswith('.sqlite3'):
+        temp_file = cache_file + ".tmp"
         try:
-            os.remove(temp_file)
-        except OSError:
-            pass
+            with open(temp_file, "wb") as f:
+                pickle.dump(_DISK_CACHE, f, protocol=pickle.HIGHEST_PROTOCOL)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_file, cache_file)
+            _CACHE_DIRTY_COUNT = 0
+        except Exception as exc:
+            print(f"[CACHE] Cannot save cache; changes remain pending: {exc}")
+        finally:
+            try:
+                os.remove(temp_file)
+            except OSError:
+                pass
+    else:
+        _CACHE_DIRTY_COUNT = 0
 
 
 def save_disk_cache(force=False):
     with _CACHE_LOCK:
         _save_disk_cache_locked(force=force)
+
+
+def clear_face_cache() -> bool:
+    """Xóa toàn bộ cache khuôn mặt cả trong RAM và trên SQLite"""
+    global _DISK_CACHE, _CACHE_DIRTY_COUNT
+    with _CACHE_LOCK:
+        _DISK_CACHE = {}
+        _CACHE_DIRTY_COUNT = 0
+        try:
+            with _get_sqlite_conn() as conn:
+                conn.execute("DELETE FROM face_embeddings")
+                conn.commit()
+            cache_file = _get_cache_file()
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
+            print("[CACHE] Đã xóa toàn bộ bộ nhớ đệm khuôn mặt")
+            return True
+        except Exception as e:
+            print(f"[CACHE] Lỗi xóa cache: {e}")
+            return False
 
 
 def get_temp_dir():

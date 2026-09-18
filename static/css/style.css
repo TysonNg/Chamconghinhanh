@@ -4,14 +4,14 @@
     --primary: #0284c7;
     --primary-hover: #0369a1;
     --primary-light: #e0f2fe;
-    
+
     --success: #16a34a;
     --success-hover: #15803d;
     --success-light: #dcfce7;
-    
+
     --warning: #d97706;
     --warning-light: #fef3c7;
-    
+
     --danger: #dc2626;
     --danger-hover: #b91c1c;
     --danger-light: #fee2e2;
@@ -49,7 +49,9 @@
 }
 
 /* ==================== Reset & Base ==================== */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
@@ -321,7 +323,8 @@ body {
     background: var(--bg-surface);
 }
 
-.card-header h2, .card-header h3 {
+.card-header h2,
+.card-header h3 {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
@@ -353,7 +356,8 @@ body {
     gap: 16px;
 }
 
-.upload-zone-compact:hover, .upload-zone-compact.dragover {
+.upload-zone-compact:hover,
+.upload-zone-compact.dragover {
     background: var(--primary-light);
     border-color: var(--primary);
 }
@@ -552,6 +556,7 @@ input[type="number"]:focus {
     from {
         transform: rotate(0deg);
     }
+
     to {
         transform: rotate(360deg);
     }
@@ -740,10 +745,21 @@ input[type="number"]:focus {
     word-break: break-all;
 }
 
-.log-item.info { color: #38bdf8; }
-.log-item.success { color: #4ade80; }
-.log-item.warning { color: #fbbf24; }
-.log-item.error { color: #f87171; }
+.log-item.info {
+    color: #38bdf8;
+}
+
+.log-item.success {
+    color: #4ade80;
+}
+
+.log-item.warning {
+    color: #fbbf24;
+}
+
+.log-item.error {
+    color: #f87171;
+}
 
 /* ==================== Toast Notifications ==================== */
 .toast-container {
@@ -773,9 +789,17 @@ input[type="number"]:focus {
     gap: 12px;
 }
 
-.toast.success { border-left-color: var(--success); }
-.toast.warning { border-left-color: var(--warning); }
-.toast.error { border-left-color: var(--danger); }
+.toast.success {
+    border-left-color: var(--success);
+}
+
+.toast.warning {
+    border-left-color: var(--warning);
+}
+
+.toast.error {
+    border-left-color: var(--danger);
+}
 
 .toast-btn {
     background: #ffffff;
@@ -801,6 +825,7 @@ input[type="number"]:focus {
         transform: translateY(12px);
         opacity: 0;
     }
+
     to {
         transform: translateY(0);
         opacity: 1;
@@ -1367,7 +1392,7 @@ input[type="number"]:focus {
     max-width: 100%;
     max-height: 80vh;
     border-radius: var(--radius);
-    box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
     object-fit: contain;
 }
 
@@ -1392,8 +1417,13 @@ input[type="number"]:focus {
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
 }
 
 /* ==================== TAB: TẢI ẢNH ZALO ==================== */
@@ -1943,19 +1973,28 @@ input[type="number"]:focus {
     background: #f0fdf4;
     border-color: #bbf7d0;
 }
-.zalo-metric-box.success .metric-num { color: #16a34a; }
+
+.zalo-metric-box.success .metric-num {
+    color: #16a34a;
+}
 
 .zalo-metric-box.info {
     background: #f0f9ff;
     border-color: #bae6fd;
 }
-.zalo-metric-box.info .metric-num { color: #0284c7; }
+
+.zalo-metric-box.info .metric-num {
+    color: #0284c7;
+}
 
 .zalo-metric-box.danger {
     background: #fef2f2;
     border-color: #fecaca;
 }
-.zalo-metric-box.danger .metric-num { color: #dc2626; }
+
+.zalo-metric-box.danger .metric-num {
+    color: #dc2626;
+}
 
 /* Progress */
 .zalo-progress-wrapper {
@@ -1995,22 +2034,25 @@ input[type="number"]:focus {
 
 .zalo-progress-fill.animated {
     background-size: 30px 30px;
-    background-image: linear-gradient(
-        135deg,
-        rgba(255, 255, 255, 0.25) 25%,
-        transparent 25%,
-        transparent 50%,
-        rgba(255, 255, 255, 0.25) 50%,
-        rgba(255, 255, 255, 0.25) 75%,
-        transparent 75%,
-        transparent
-    );
+    background-image: linear-gradient(135deg,
+            rgba(255, 255, 255, 0.25) 25%,
+            transparent 25%,
+            transparent 50%,
+            rgba(255, 255, 255, 0.25) 50%,
+            rgba(255, 255, 255, 0.25) 75%,
+            transparent 75%,
+            transparent);
     animation: progressStripe 1.5s linear infinite;
 }
 
 @keyframes progressStripe {
-    0% { background-position: 0 0; }
-    100% { background-position: 30px 0; }
+    0% {
+        background-position: 0 0;
+    }
+
+    100% {
+        background-position: 30px 0;
+    }
 }
 
 .zalo-current-file-text {
@@ -2055,10 +2097,21 @@ input[type="number"]:focus {
     word-break: break-all;
 }
 
-.zalo-log-terminal .log-line.info { color: #38bdf8; }
-.zalo-log-terminal .log-line.success { color: #4ade80; }
-.zalo-log-terminal .log-line.warning { color: #fbbf24; }
-.zalo-log-terminal .log-line.error { color: #f87171; }
+.zalo-log-terminal .log-line.info {
+    color: #38bdf8;
+}
+
+.zalo-log-terminal .log-line.success {
+    color: #4ade80;
+}
+
+.zalo-log-terminal .log-line.warning {
+    color: #fbbf24;
+}
+
+.zalo-log-terminal .log-line.error {
+    color: #f87171;
+}
 
 .zalo-completion-banner {
     background: #f0fdf4;
@@ -2108,9 +2161,20 @@ input[type="number"]:focus {
 }
 
 @keyframes pulseWarning {
-    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
-    70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
-    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+    0% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7);
+    }
+
+    70% {
+        transform: scale(1);
+        box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
+    }
+
+    100% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+    }
 }
 
 /* ==================== TAB 6: BỔ SUNG ẢNH CHẤM CÔNG (SUPPLEMENT BATCHES) ==================== */
@@ -2514,6 +2578,17 @@ input[type="number"]:focus {
     border: 1px solid #bbf7d0;
     font-size: 11px;
     padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.badge-warning {
+    background: #fef3c7;
+    color: #b45309;
+    border: 1px solid #fde68a;
+    font-size: 11px;
+    padding: 2px 8px;
     border-radius: var(--radius-sm);
     font-weight: 600;
     white-space: nowrap;
@@ -2923,6 +2998,7 @@ input[type="number"]:focus {
         opacity: 0;
         transform: translateY(12px) scale(0.96);
     }
+
     to {
         opacity: 1;
         transform: translateY(0) scale(1);
@@ -3026,7 +3102,8 @@ input[type="number"]:focus {
     justify-content: center !important;
 }
 
-.supp-batch-tools-bar input[type="date"] {
+.supp-batch-tools-bar input[type="date"],
+.supp-batch-tools-bar .vn-date-picker-alt {
     width: 135px !important;
 }
 
@@ -3347,6 +3424,7 @@ input[type="number"]:focus {
     color: #1d4ed8;
     border: 1px solid #bfdbfe;
 }
+
 .supp-staging-card-actions .btn-regen-ai:hover {
     background: #dbeafe;
     color: #1e40af;
@@ -3357,6 +3435,7 @@ input[type="number"]:focus {
     color: #15803d;
     border: 1px solid #bbf7d0;
 }
+
 .supp-staging-card-actions .btn-check-ai:hover {
     background: #dcfce7;
     color: #166534;
@@ -3647,7 +3726,7 @@ input[type="number"]:focus {
     font-size: 15px;
     flex-shrink: 0;
     background: #ffffff;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     border: 1px solid #e2e8f0;
 }
 
@@ -4144,13 +4223,25 @@ input[type="number"]:focus {
 }
 
 @keyframes suppFadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
 }
 
 @keyframes suppZoomIn {
-    from { transform: scale(0.96); opacity: 0; }
-    to { transform: scale(1); opacity: 1; }
+    from {
+        transform: scale(0.96);
+        opacity: 0;
+    }
+
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
 }
 
 /* ==================== WATERMARK CONFIRMATION MODAL & STATUS TAGS ==================== */
@@ -4284,3 +4375,134 @@ input[type="number"]:focus {
     outline: none;
     box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
 }
+
+/* ==================== FLATPICKR VIETNAMESE THEME ==================== */
+.flatpickr-calendar {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    border-radius: 8px;
+    box-shadow: 0 12px 30px -4px rgba(0, 0, 0, 0.15), 0 4px 10px -2px rgba(0, 0, 0, 0.08);
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    z-index: 99999 !important;
+}
+
+.flatpickr-calendar .flatpickr-months {
+    background: #f8fafc;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.flatpickr-calendar .flatpickr-months .flatpickr-prev-month,
+.flatpickr-calendar .flatpickr-months .flatpickr-next-month {
+    fill: #475569;
+    color: #475569;
+    padding: 6px 8px;
+}
+
+.flatpickr-calendar .flatpickr-months .flatpickr-prev-month:hover svg,
+.flatpickr-calendar .flatpickr-months .flatpickr-next-month:hover svg {
+    fill: var(--primary);
+}
+
+.flatpickr-current-month {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #1e293b;
+    padding: 4px 0 0 0;
+}
+
+.flatpickr-current-month .cur-month {
+    font-weight: 600;
+}
+
+.flatpickr-current-month input.cur-year {
+    font-weight: 600;
+}
+
+span.flatpickr-weekday {
+    color: #64748b;
+    font-weight: 600;
+    font-size: 11.5px;
+}
+
+.flatpickr-day {
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 6px;
+    height: 34px;
+    line-height: 34px;
+    margin: 1px;
+    color: #1e293b;
+}
+
+.flatpickr-day:hover {
+    background: #f1f5f9;
+    border-color: #f1f5f9;
+}
+
+.flatpickr-day.today {
+    border-color: var(--primary);
+    font-weight: 700;
+}
+
+.flatpickr-day.selected, 
+.flatpickr-day.startRange, 
+.flatpickr-day.endRange {
+    background: var(--primary) !important;
+    border-color: var(--primary) !important;
+    color: #ffffff !important;
+    font-weight: 600;
+}
+
+/* MonthSelect Plugin Styling */
+.flatpickr-monthSelect-months {
+    padding: 8px 6px;
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.flatpickr-monthSelect-month {
+    width: 100% !important;
+    padding: 10px 4px !important;
+    margin: 0 !important;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 6px;
+    color: #334155;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    transition: all 0.15s ease;
+}
+
+.flatpickr-monthSelect-month:hover {
+    background: var(--primary-light) !important;
+    border-color: #bae6fd !important;
+    color: var(--primary-hover) !important;
+}
+
+.flatpickr-monthSelect-month.selected {
+    background: var(--primary) !important;
+    border-color: var(--primary) !important;
+    color: #ffffff !important;
+    font-weight: 600;
+}
+
+/* Inputs styling */
+.vn-month-picker-alt,
+.vn-date-picker-alt {
+    cursor: pointer !important;
+    background-color: #ffffff !important;
+    font-weight: 500;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2' ry='2'%3E%3C/rect%3E%3Cline x1='16' y1='2' x2='16' y2='6'%3E%3C/line%3E%3Cline x1='8' y1='2' x2='8' y2='6'%3E%3C/line%3E%3Cline x1='3' y1='10' x2='21' y2='10'%3E%3C/line%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 28px !important;
+}
+
+.vn-month-picker-alt {
+    min-width: 145px;
+    text-align: center;
+}

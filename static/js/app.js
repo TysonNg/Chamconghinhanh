@@ -53,6 +53,71 @@ async function apiPost(url, data = {}) {
     return response.json();
 }
 
+// ==================== Vietnamese Date & Month Pickers ====================
+
+function setDatePickerValue(elementOrId, val) {
+    const el = typeof elementOrId === 'string' ? document.getElementById(elementOrId) : elementOrId;
+    if (!el) return;
+    if (el._flatpickr) {
+        el._flatpickr.setDate(val || '', true);
+    } else {
+        el.value = val || '';
+    }
+}
+
+function initVietnameseDatePickers() {
+    if (typeof flatpickr === 'undefined') return;
+
+    if (flatpickr.l10ns && flatpickr.l10ns.vn) {
+        flatpickr.localize(flatpickr.l10ns.vn);
+    }
+
+    // 1. Month picker cho #photo-period (Tháng/Năm tiếng Việt)
+    const monthInput = document.getElementById('photo-period');
+    if (monthInput && !monthInput._flatpickr && typeof monthSelectPlugin !== 'undefined') {
+        const now = new Date();
+        const currentVal = monthInput.value || (now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0'));
+        flatpickr(monthInput, {
+            locale: 'vn',
+            plugins: [
+                new monthSelectPlugin({
+                    shorthand: false,
+                    dateFormat: 'Y-m',
+                    altFormat: '\\T\\h\\á\\n\\g m/Y',
+                    theme: 'light'
+                })
+            ],
+            altInput: true,
+            altInputClass: 'form-input vn-month-picker-alt',
+            defaultDate: currentVal,
+            onChange: function(selectedDates, dateStr, instance) {
+                instance.element.value = dateStr;
+                instance.element.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        });
+    }
+
+    // 2. Date pickers cho các ô ngày thông thường (dd/mm/yyyy tiếng Việt)
+    const dateInputs = document.querySelectorAll('.vn-date-picker, #report-from-date, #report-to-date, #zalo-date-from, #zalo-date-to, #supp-date, #tool-same-date-input');
+    dateInputs.forEach(el => {
+        if (!el || el._flatpickr) return;
+        const currentVal = el.value;
+        flatpickr(el, {
+            locale: 'vn',
+            dateFormat: 'Y-m-d',
+            altInput: true,
+            altInputClass: (el.className || 'form-input') + ' vn-date-picker-alt',
+            altFormat: 'd/m/Y',
+            defaultDate: currentVal || undefined,
+            allowInput: true,
+            onChange: function(selectedDates, dateStr, instance) {
+                instance.element.value = dateStr;
+                instance.element.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        });
+    });
+}
+
 function initializeAggregateReportSettings() {
     const fromInput = document.getElementById('report-from-date');
     const toInput = document.getElementById('report-to-date');
@@ -62,8 +127,8 @@ function initializeAggregateReportSettings() {
     const localToday = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
         .toISOString().slice(0, 10);
     const firstDay = `${localToday.slice(0, 8)}01`;
-    if (!fromInput.value) fromInput.value = firstDay;
-    if (!toInput.value) toInput.value = localToday;
+    if (!fromInput.value) setDatePickerValue(fromInput, firstDay);
+    if (!toInput.value) setDatePickerValue(toInput, localToday);
 }
 
 function getAggregateReportSettings(projectFallback) {
@@ -359,6 +424,7 @@ async function loadAggregateReports(btn) {
 // PDF Upload Zone
 document.addEventListener('DOMContentLoaded', () => {
     initializeAggregateReportSettings();
+    initVietnameseDatePickers();
     const uploadZone = document.getElementById('pdf-upload-zone');
     const fileInput = document.getElementById('pdf-file-input');
 
@@ -634,7 +700,22 @@ async function startPDFFaceAnalyze(folder) {
         });
         if (result.success) {
             pdfFaceTaskId = result.task_id;
-            showToast('Đã bắt đầu quét mặt từ PDF...', 'info');
+            const btnCancel = document.getElementById('btn-cancel-pdf-face');
+            if (btnCancel) {
+                btnCancel.style.display = 'inline-block';
+                btnCancel.disabled = false;
+                btnCancel.textContent = 'Dừng quét';
+            }
+            if (result.status === 'queued') {
+                showToast('Đã thêm vào hàng đợi (đang có đợt khác quét)...', 'info');
+                const badge = document.getElementById('pdf-face-queue-badge');
+                if (badge) badge.style.display = 'inline-block';
+                document.getElementById('pdf-face-progress-title').textContent = 'Đang chờ lượt...';
+            } else {
+                showToast('Đã bắt đầu quét mặt từ PDF...', 'info');
+                const badge = document.getElementById('pdf-face-queue-badge');
+                if (badge) badge.style.display = 'none';
+            }
             checkPDFFaceProgress();
         } else {
             showToast(result.error || 'Lỗi quét mặt từ PDF', 'error');
@@ -649,24 +730,92 @@ async function checkPDFFaceProgress() {
     try {
         const result = await apiGet(`/api/pdf/face/status/${pdfFaceTaskId}`);
         const pct = result.total > 0 ? Math.round((result.progress / result.total) * 100) : 0;
-        document.getElementById('pdf-face-progress-title').textContent =
-            result.current ? `Đang xuất: ${result.current}` : 'Đang quét mặt từ PDF...';
-        document.getElementById('pdf-face-progress-percent').textContent = `${pct}%`;
-        document.getElementById('pdf-face-progress-fill').style.width = `${pct}%`;
-        document.getElementById('pdf-face-progress-detail').textContent =
-            `${result.progress}/${result.total} file`;
+        const queueBadge = document.getElementById('pdf-face-queue-badge');
+        const btnCancel = document.getElementById('btn-cancel-pdf-face');
+
+        if (result.status === 'queued') {
+            if (queueBadge) queueBadge.style.display = 'inline-block';
+            if (btnCancel) {
+                btnCancel.style.display = 'inline-block';
+                btnCancel.disabled = false;
+                btnCancel.textContent = 'Hủy chờ';
+            }
+            document.getElementById('pdf-face-progress-title').textContent = 'Đang chờ lượt (có đợt khác đang quét)...';
+            document.getElementById('pdf-face-progress-percent').textContent = '0%';
+            document.getElementById('pdf-face-progress-fill').style.width = '0%';
+            document.getElementById('pdf-face-progress-detail').textContent = 'Hàng đợi tuần tự';
+            setTimeout(checkPDFFaceProgress, 1500);
+            return;
+        }
+
+        if (queueBadge) queueBadge.style.display = 'none';
+
+        if (result.status === 'running') {
+            if (btnCancel) {
+                btnCancel.style.display = 'inline-block';
+                btnCancel.disabled = false;
+                btnCancel.textContent = 'Dừng quét';
+            }
+            document.getElementById('pdf-face-progress-title').textContent =
+                result.current ? `Đang xuất: ${result.current}` : 'Đang quét mặt từ PDF...';
+            document.getElementById('pdf-face-progress-percent').textContent = `${pct}%`;
+            document.getElementById('pdf-face-progress-fill').style.width = `${pct}%`;
+            document.getElementById('pdf-face-progress-detail').textContent =
+                `${result.progress}/${result.total} file`;
+            setTimeout(checkPDFFaceProgress, 1000);
+            return;
+        }
+
+        if (result.status === 'cancelling') {
+            if (btnCancel) {
+                btnCancel.disabled = true;
+                btnCancel.textContent = 'Đang dừng...';
+            }
+            document.getElementById('pdf-face-progress-title').textContent = 'Đang dừng quét mặt PDF...';
+            setTimeout(checkPDFFaceProgress, 1000);
+            return;
+        }
+
+        if (result.status === 'cancelled') {
+            if (btnCancel) btnCancel.style.display = 'none';
+            document.getElementById('pdf-face-progress-title').textContent = 'Đã dừng quét!';
+            document.getElementById('pdf-face-progress-detail').textContent = `Đã giữ lại ${result.progress || 0} file Word hoàn tất`;
+            showToast(`Đã dừng quét! Đã bảo toàn ${result.progress || 0} file Word cá nhân.`, 'warning');
+            loadPDFFaceFiles();
+            loadAggregateReports();
+            setTimeout(() => {
+                document.getElementById('pdf-face-progress-section').style.display = 'none';
+            }, 3500);
+            return;
+        }
+
+        if (result.status === 'interrupted') {
+            if (btnCancel) btnCancel.style.display = 'none';
+            document.getElementById('pdf-face-progress-title').textContent = 'Đợt quét bị gián đoạn do máy chủ tắt ngang';
+            showToast('Đợt quét bị gián đoạn do máy chủ tắt ngang. Bạn có thể bấm quét lại.', 'warning');
+            loadPDFFaceFiles();
+            setTimeout(() => {
+                document.getElementById('pdf-face-progress-section').style.display = 'none';
+            }, 4000);
+            return;
+        }
 
         if (result.status === 'completed') {
+            if (btnCancel) btnCancel.style.display = 'none';
+            document.getElementById('pdf-face-progress-percent').textContent = '100%';
+            document.getElementById('pdf-face-progress-fill').style.width = '100%';
             showToast(`Hoàn thành! Đã tạo file Word theo nhân viên và báo cáo giải trình tổng hợp.`, 'success', 'Xem Kết Quả Ngay', () => navigateToResults('summary'));
             loadPDFFaceFiles();
             loadAggregateReports();
             setTimeout(() => {
                 document.getElementById('pdf-face-progress-section').style.display = 'none';
             }, 3000);
-        } else if (result.status === 'failed') {
+            return;
+        }
+
+        if (result.status === 'failed') {
+            if (btnCancel) btnCancel.style.display = 'none';
             showToast((result.errors && result.errors[0]) || 'Lỗi quét mặt từ PDF', 'error');
-        } else {
-            setTimeout(checkPDFFaceProgress, 1000);
         }
     } catch (error) {
         console.error('Lỗi kiểm tra tiến độ PDF face:', error);
@@ -1121,7 +1270,22 @@ async function startExcelFaceAnalyze(folder) {
         });
         if (result.success) {
             excelFaceTaskId = result.task_id;
-            showToast('Đã bắt đầu quét mặt...', 'info');
+            const btnCancel = document.getElementById('btn-cancel-excel-face');
+            if (btnCancel) {
+                btnCancel.style.display = 'inline-block';
+                btnCancel.disabled = false;
+                btnCancel.textContent = 'Dừng quét';
+            }
+            if (result.status === 'queued') {
+                showToast('Đã thêm vào hàng đợi (đang có đợt khác quét)...', 'info');
+                const badge = document.getElementById('excel-face-queue-badge');
+                if (badge) badge.style.display = 'inline-block';
+                document.getElementById('excel-face-progress-title').textContent = 'Đang chờ lượt...';
+            } else {
+                showToast('Đã bắt đầu quét mặt...', 'info');
+                const badge = document.getElementById('excel-face-queue-badge');
+                if (badge) badge.style.display = 'none';
+            }
             checkExcelFaceProgress();
         } else {
             showToast(result.error || 'Lỗi quét mặt', 'error');
@@ -1136,28 +1300,154 @@ async function checkExcelFaceProgress() {
     try {
         const result = await apiGet(`/api/excel/face/status/${excelFaceTaskId}`);
         const pct = result.total > 0 ? Math.round((result.progress / result.total) * 100) : 0;
-        document.getElementById('excel-face-progress-title').textContent =
-            result.current ? `Đang xuất: ${result.current}` : 'Đang quét mặt...';
-        document.getElementById('excel-face-progress-percent').textContent = `${pct}%`;
-        document.getElementById('excel-face-progress-fill').style.width = `${pct}%`;
-        document.getElementById('excel-face-progress-detail').textContent =
-            `${result.progress}/${result.total} file`;
+        const queueBadge = document.getElementById('excel-face-queue-badge');
+        const btnCancel = document.getElementById('btn-cancel-excel-face');
+
+        if (result.status === 'queued') {
+            if (queueBadge) queueBadge.style.display = 'inline-block';
+            if (btnCancel) {
+                btnCancel.style.display = 'inline-block';
+                btnCancel.disabled = false;
+                btnCancel.textContent = 'Hủy chờ';
+            }
+            document.getElementById('excel-face-progress-title').textContent = 'Đang chờ lượt (có đợt khác đang quét)...';
+            document.getElementById('excel-face-progress-percent').textContent = '0%';
+            document.getElementById('excel-face-progress-fill').style.width = '0%';
+            document.getElementById('excel-face-progress-detail').textContent = 'Hàng đợi tuần tự';
+            setTimeout(checkExcelFaceProgress, 1500);
+            return;
+        }
+
+        if (queueBadge) queueBadge.style.display = 'none';
+
+        if (result.status === 'running') {
+            if (btnCancel) {
+                btnCancel.style.display = 'inline-block';
+                btnCancel.disabled = false;
+                btnCancel.textContent = 'Dừng quét';
+            }
+            document.getElementById('excel-face-progress-title').textContent =
+                result.current ? `Đang xuất: ${result.current}` : 'Đang quét mặt...';
+            document.getElementById('excel-face-progress-percent').textContent = `${pct}%`;
+            document.getElementById('excel-face-progress-fill').style.width = `${pct}%`;
+            document.getElementById('excel-face-progress-detail').textContent =
+                `${result.progress}/${result.total} file`;
+            setTimeout(checkExcelFaceProgress, 1000);
+            return;
+        }
+
+        if (result.status === 'cancelling') {
+            if (btnCancel) {
+                btnCancel.disabled = true;
+                btnCancel.textContent = 'Đang dừng...';
+            }
+            document.getElementById('excel-face-progress-title').textContent = 'Đang dừng quét mặt...';
+            setTimeout(checkExcelFaceProgress, 1000);
+            return;
+        }
+
+        if (result.status === 'cancelled') {
+            if (btnCancel) btnCancel.style.display = 'none';
+            document.getElementById('excel-face-progress-title').textContent = 'Đã dừng quét!';
+            document.getElementById('excel-face-progress-detail').textContent = `Đã giữ lại ${result.progress || 0} file Word hoàn tất`;
+            showToast(`Đã dừng quét! Đã bảo toàn ${result.progress || 0} file Word cá nhân.`, 'warning');
+            loadExcelFaceFiles();
+            loadAggregateReports();
+            setTimeout(() => {
+                document.getElementById('excel-face-progress-section').style.display = 'none';
+            }, 3500);
+            return;
+        }
+
+        if (result.status === 'interrupted') {
+            if (btnCancel) btnCancel.style.display = 'none';
+            document.getElementById('excel-face-progress-title').textContent = 'Đợt quét bị gián đoạn do máy chủ tắt ngang';
+            showToast('Đợt quét bị gián đoạn do máy chủ tắt ngang. Bạn có thể bấm quét lại.', 'warning');
+            loadExcelFaceFiles();
+            setTimeout(() => {
+                document.getElementById('excel-face-progress-section').style.display = 'none';
+            }, 4000);
+            return;
+        }
 
         if (result.status === 'completed') {
+            if (btnCancel) btnCancel.style.display = 'none';
+            document.getElementById('excel-face-progress-percent').textContent = '100%';
+            document.getElementById('excel-face-progress-fill').style.width = '100%';
             showToast(`Hoàn thành! Đã tạo file Word theo nhân viên và báo cáo giải trình tổng hợp.`, 'success', 'Xem Kết Quả Ngay', () => navigateToResults('summary'));
             loadExcelFaceFiles();
             loadAggregateReports();
             setTimeout(() => {
                 document.getElementById('excel-face-progress-section').style.display = 'none';
             }, 3000);
-        } else if (result.status === 'failed') {
+            return;
+        }
+
+        if (result.status === 'failed') {
+            if (btnCancel) btnCancel.style.display = 'none';
             showToast('Lỗi: ' + (result.errors[0] || 'Không rõ'), 'error');
-        } else {
-            setTimeout(checkExcelFaceProgress, 1000);
         }
     } catch (error) {
         console.error('Lỗi kiểm tra tiến độ quét mặt:', error);
         setTimeout(checkExcelFaceProgress, 2000);
+    }
+}
+
+async function cancelExcelFaceTask() {
+    if (!excelFaceTaskId) return;
+    const btn = document.getElementById('btn-cancel-excel-face');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Đang dừng...';
+    }
+    try {
+        const res = await apiPost(`/api/task/cancel/${excelFaceTaskId}`);
+        if (res.success) {
+            showToast('Đã gửi yêu cầu dừng quét', 'info');
+        } else {
+            showToast('Không thể hủy tác vụ: ' + (res.error || ''), 'error');
+            if (btn) btn.disabled = false;
+        }
+    } catch (e) {
+        showToast('Lỗi gửi lệnh dừng: ' + e.message, 'error');
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function cancelPdfFaceTask() {
+    if (!pdfFaceTaskId) return;
+    const btn = document.getElementById('btn-cancel-pdf-face');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Đang dừng...';
+    }
+    try {
+        const res = await apiPost(`/api/task/cancel/${pdfFaceTaskId}`);
+        if (res.success) {
+            showToast('Đã gửi yêu cầu dừng quét PDF', 'info');
+        } else {
+            showToast('Không thể hủy tác vụ: ' + (res.error || ''), 'error');
+            if (btn) btn.disabled = false;
+        }
+    } catch (e) {
+        showToast('Lỗi gửi lệnh dừng: ' + e.message, 'error');
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function confirmClearFaceCache() {
+    if (!confirm('Bạn có chắc chắn muốn xóa và làm mới toàn bộ bộ nhớ đệm vector khuôn mặt SQLite không?\n\nLưu ý: Các đợt quét tiếp theo sẽ tính toán lại vector cho ảnh camera và ảnh chân dung.')) {
+        return;
+    }
+    try {
+        const res = await apiPost('/api/cache/face/clear');
+        if (res.success) {
+            showToast('Đã làm mới bộ nhớ đệm khuôn mặt SQLite thành công!', 'success');
+        } else {
+            showToast('Lỗi: ' + (res.error || 'Không thể xóa cache'), 'error');
+        }
+    } catch (e) {
+        showToast('Lỗi: ' + e.message, 'error');
     }
 }
 
@@ -1639,7 +1929,12 @@ function selectedPhotoPeriod() {
     const input = document.getElementById('photo-period');
     if (input && !input.value) {
         const now = new Date();
-        input.value = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2, '0');
+        const defaultVal = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2, '0');
+        if (input._flatpickr) {
+            input._flatpickr.setDate(defaultVal, false);
+        } else {
+            input.value = defaultVal;
+        }
     }
     return input ? input.value : '';
 }
@@ -2626,27 +2921,27 @@ function setZaloDatePreset(preset) {
     });
 
     if (preset === 'today') {
-        fromInput.value = todayStr;
-        toInput.value = todayStr;
+        setDatePickerValue(fromInput, todayStr);
+        setDatePickerValue(toInput, todayStr);
     } else if (preset === 'yesterday') {
         const y = new Date();
         y.setDate(y.getDate() - 1);
         const yStr = formatDate(y);
-        fromInput.value = yStr;
-        toInput.value = yStr;
+        setDatePickerValue(fromInput, yStr);
+        setDatePickerValue(toInput, yStr);
     } else if (preset === '3days') {
         const d = new Date();
         d.setDate(d.getDate() - 2);
-        fromInput.value = formatDate(d);
-        toInput.value = todayStr;
+        setDatePickerValue(fromInput, formatDate(d));
+        setDatePickerValue(toInput, todayStr);
     } else if (preset === '7days') {
         const d = new Date();
         d.setDate(d.getDate() - 6);
-        fromInput.value = formatDate(d);
-        toInput.value = todayStr;
+        setDatePickerValue(fromInput, formatDate(d));
+        setDatePickerValue(toInput, todayStr);
     } else if (preset === 'all') {
-        fromInput.value = '';
-        toInput.value = '';
+        setDatePickerValue(fromInput, '');
+        setDatePickerValue(toInput, '');
     }
 }
 
@@ -3357,7 +3652,7 @@ function supplementFillFromMissing(name, date) {
         }
     }
     document.getElementById('supp-employee').value = name;
-    document.getElementById('supp-date').value = isoDate;
+    setDatePickerValue(document.getElementById('supp-date'), isoDate);
     document.getElementById('supp-time').value = '08:00';
     // Scroll to upload form
     document.getElementById('supplement-upload-form').scrollIntoView({ behavior: 'smooth' });

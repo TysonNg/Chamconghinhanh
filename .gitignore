@@ -4,6 +4,12 @@ dist/
 build/
 .env
 
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
 # Zalo service profile & runtime cache
 zalo-service/zalo-browser-profile/
 **/zalo-browser-profile/
