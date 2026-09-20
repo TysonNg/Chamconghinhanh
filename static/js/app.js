@@ -98,7 +98,7 @@ function initVietnameseDatePickers() {
     }
 
     // 2. Date pickers cho các ô ngày thông thường (dd/mm/yyyy tiếng Việt)
-    const dateInputs = document.querySelectorAll('.vn-date-picker, #report-from-date, #report-to-date, #zalo-date-from, #zalo-date-to, #supp-date, #tool-same-date-input');
+    const dateInputs = document.querySelectorAll('.vn-date-picker, #zalo-date-from, #zalo-date-to, #supp-date, #tool-same-date-input');
     dateInputs.forEach(el => {
         if (!el || el._flatpickr) return;
         const currentVal = el.value;
@@ -118,45 +118,18 @@ function initVietnameseDatePickers() {
     });
 }
 
-function initializeAggregateReportSettings() {
-    const fromInput = document.getElementById('report-from-date');
-    const toInput = document.getElementById('report-to-date');
-    if (!fromInput || !toInput) return;
-
-    const now = new Date();
-    const localToday = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-        .toISOString().slice(0, 10);
-    const firstDay = `${localToday.slice(0, 8)}01`;
-    if (!fromInput.value) setDatePickerValue(fromInput, firstDay);
-    if (!toInput.value) setDatePickerValue(toInput, localToday);
-}
-
 function getAggregateReportSettings(projectFallback) {
     const projectInput = document.getElementById('project-name');
-    const fromInput = document.getElementById('report-from-date');
-    const toInput = document.getElementById('report-to-date');
     const reportProjectName = projectInput && projectInput.value.trim()
         ? projectInput.value.trim()
         : projectFallback;
-    const fromDate = fromInput ? fromInput.value : '';
-    const toDate = toInput ? toInput.value : '';
 
     if (!reportProjectName) {
         showToast('Vui lòng nhập tên dự án cho báo cáo tổng hợp', 'warning');
         return null;
     }
-    if (!fromDate || !toDate) {
-        showToast('Vui lòng chọn đầy đủ Từ ngày và Đến ngày', 'warning');
-        return null;
-    }
-    if (fromDate > toDate) {
-        showToast('Từ ngày không được sau Đến ngày', 'warning');
-        return null;
-    }
     return {
-        report_project_name: reportProjectName,
-        from_date: fromDate,
-        to_date: toDate
+        report_project_name: reportProjectName
     };
 }
 
@@ -423,7 +396,6 @@ async function loadAggregateReports(btn) {
 
 // PDF Upload Zone
 document.addEventListener('DOMContentLoaded', () => {
-    initializeAggregateReportSettings();
     initVietnameseDatePickers();
     const uploadZone = document.getElementById('pdf-upload-zone');
     const fileInput = document.getElementById('pdf-file-input');
@@ -2185,6 +2157,9 @@ function renderEmployeeCards(list) {
                 </div>
                 <div class="employee-name" title="${emp.name}">${emp.name}</div>
                 ${badgeHtml}
+                <div class="employee-badge" style="background: ${emp.payroll_code ? 'rgba(16, 185, 129, 0.12)' : 'var(--bg-subtle)'}; color: ${emp.payroll_code ? '#059669' : 'var(--text-muted)'}; font-weight: 500;">
+                    Mã chấm công: ${escapeHtml(emp.payroll_code || "Chưa có")}
+                </div>
                 <div class="employee-badge">Mã nội bộ: ${escapeHtml(emp.internal_code || "Chưa tạo")}</div>
                 <div class="employee-card-actions">
                     <button class="btn btn-secondary btn-sm" onclick="openEmployeePhotosModal('${safeName}')" title="Xem hoặc thêm ảnh chân dung">
@@ -2211,8 +2186,10 @@ function onEmployeeSearch(keyword) {
 
 function openCreateEmployeeModal() {
     const nameInput = document.getElementById('new-employee-name');
+    const codeInput = document.getElementById('new-employee-code');
     const fileInput = document.getElementById('new-employee-photos');
     if (nameInput) nameInput.value = '';
+    if (codeInput) codeInput.value = '';
     if (fileInput) fileInput.value = '';
     openModal('modal-create-employee');
     if (nameInput) nameInput.focus();
@@ -2220,20 +2197,19 @@ function openCreateEmployeeModal() {
 
 async function submitCreateEmployee() {
     const nameInput = document.getElementById('new-employee-name');
+    const codeInput = document.getElementById('new-employee-code');
     const fileInput = document.getElementById('new-employee-photos');
     const name = nameInput ? nameInput.value.trim() : '';
+    const payroll_code = codeInput ? codeInput.value.trim() : '';
 
     if (!name) {
         showToast('Vui lòng nhập họ tên nhân viên', 'warning');
         return;
     }
 
-    const payroll_code = prompt('Mã chấm công chính xác (giữ số 0 đầu):');
-    if (!payroll_code) return;
-    const valid_from = prompt('Ngày bắt đầu thuộc dự án (YYYY-MM-DD):');
-    if (!valid_from) return;
-    const reviewer = prompt('Người xác nhận:');
-    if (!reviewer) return;
+    const valid_from = '2000-01-01';
+    const reviewer = 'system';
+
     try {
         const createRes = await apiPost('/api/portraits/employee/create', {
             project_id: allProjectsList.find(p => p.name === currentProjectName)?.project_id,
@@ -2269,6 +2245,116 @@ async function submitCreateEmployee() {
 
         showToast(`Đã thêm nhân viên: ${name}`, 'success');
         closeModal('modal-create-employee');
+        await loadPortraits();
+        await loadProjects();
+    } catch (err) {
+        showToast('Lỗi: ' + err.message, 'error');
+    }
+}
+
+function triggerImportEmployeesFile() {
+    const fileInput = document.getElementById('import-employees-file-input');
+    if (fileInput) {
+        fileInput.value = '';
+        fileInput.click();
+    }
+}
+
+async function handleImportEmployeesFile(input) {
+    if (!input || !input.files || input.files.length === 0) return;
+    const file = input.files[0];
+    const project = currentProjectName;
+    const proj = allProjectsList.find(p => p.name === project);
+    const projectId = proj ? proj.project_id : '';
+
+    showToast(`Đang quét nhân viên từ file: ${file.name}...`, 'info');
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('project', project);
+    formData.append('project_id', projectId);
+
+    try {
+        const res = await fetch('/api/portraits/import-file', {
+            method: 'POST',
+            body: formData
+        }).then(r => r.json());
+
+        if (!res.success) {
+            throw new Error(res.error || 'Lỗi khi nhập file');
+        }
+
+        const msg = res.message || `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh.`;
+        showToast(msg, 'success');
+        await loadPortraits();
+        await loadProjects();
+    } catch (err) {
+        showToast('Lỗi: ' + err.message, 'error');
+    } finally {
+        input.value = '';
+    }
+}
+
+async function syncEmployeesFromExcel() {
+    const filenameEl = document.getElementById('excel-filename');
+    const filename = filenameEl ? filenameEl.textContent.trim() : '';
+    if (!filename) {
+        showToast('Vui lòng chọn hoặc tải lên file Excel trước', 'warning');
+        return;
+    }
+
+    const selectEl = document.getElementById('excel-project-select');
+    const projectName = selectEl && selectEl.value ? selectEl.value : currentProjectName;
+    const proj = allProjectsList.find(p => p.name === projectName);
+    const projectId = proj ? proj.project_id : '';
+
+    showToast(`Đang đồng bộ nhân viên từ file Excel: ${filename}...`, 'info');
+    try {
+        const res = await apiPost('/api/portraits/import-file', {
+            filename: filename,
+            project: projectName,
+            project_id: projectId
+        });
+
+        if (!res.success) {
+            throw new Error(res.error || 'Lỗi đồng bộ nhân viên');
+        }
+
+        const msg = res.message || `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh.`;
+        showToast(msg, 'success');
+        await loadPortraits();
+        await loadProjects();
+    } catch (err) {
+        showToast('Lỗi: ' + err.message, 'error');
+    }
+}
+
+async function syncEmployeesFromPDF() {
+    const filenameEl = document.getElementById('pdf-filename');
+    const filename = filenameEl ? filenameEl.textContent.trim() : '';
+    if (!filename) {
+        showToast('Vui lòng chọn hoặc tải lên file PDF trước', 'warning');
+        return;
+    }
+
+    const selectEl = document.getElementById('pdf-project-select');
+    const projectName = selectEl && selectEl.value ? selectEl.value : currentProjectName;
+    const proj = allProjectsList.find(p => p.name === projectName);
+    const projectId = proj ? proj.project_id : '';
+
+    showToast(`Đang đồng bộ nhân viên từ file PDF: ${filename}...`, 'info');
+    try {
+        const res = await apiPost('/api/portraits/import-file', {
+            filename: filename,
+            project: projectName,
+            project_id: projectId
+        });
+
+        if (!res.success) {
+            throw new Error(res.error || 'Lỗi đồng bộ nhân viên');
+        }
+
+        const msg = res.message || `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh.`;
+        showToast(msg, 'success');
         await loadPortraits();
         await loadProjects();
     } catch (err) {

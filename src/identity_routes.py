@@ -3,6 +3,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlencode
 import io
+import os
 import re
 import uuid
 from flask import Blueprint, jsonify, request, send_file
@@ -135,7 +136,10 @@ def register_identity_routes(app, registry_provider, input_root):
     @bp.post("/api/portraits/employee/confirm")
     def confirm():
         data=payload(); p=project(data); e=employee(data,p)
-        registry().confirm_source(p["project_id"],e["employee_id"],data.get("payroll_code"),data.get("valid_from"),data.get("reviewer"))
+        payroll_code = data.get("payroll_code")
+        valid_from = data.get("valid_from") or "2000-01-01"
+        reviewer = str(data.get("reviewer") or "system").strip()
+        registry().confirm_source(p["project_id"],e["employee_id"],payroll_code,valid_from,reviewer)
         return jsonify(success=True,employee_id=e["employee_id"])
 
     @bp.post("/api/portraits/employee/create")
@@ -143,27 +147,109 @@ def register_identity_routes(app, registry_provider, input_root):
         from src.identity_registry import _day
         data=payload(); p=project(data); r=registry()
         name=str(data.get("name") or "").strip()
-        reviewer=str(data.get("reviewer") or "").strip()
-        if not name or not reviewer:
-            raise ValueError("Nhập tên nhân viên và người xác nhận")
+        reviewer=str(data.get("reviewer") or "system").strip()
+        if not name:
+            raise ValueError("Nhập tên nhân viên")
+        payroll_code = str(data.get("payroll_code") or "").strip()
+        valid_from = data.get("valid_from") or "2000-01-01"
         eid=uuid.uuid4().hex
         with r._connect() as c:
             c.execute("BEGIN IMMEDIATE")
             c.execute("INSERT INTO employees(employee_id,display_name) VALUES(?,?)",(eid,name))
-            r._assign(c,p["project_id"],eid,data.get("payroll_code"),_day(data.get("valid_from")),None)
+            if payroll_code:
+                r._assign(c,p["project_id"],eid,payroll_code,_day(valid_from),None)
         folder=r.project_portrait_dir(p["project_id"])/eid
         folder.mkdir(parents=True,exist_ok=True)
         r.bind_portrait(p["project_id"],eid,eid,reviewer)
-        return jsonify(success=True,name=name,employee_id=eid,project_id=p["project_id"])
+        return jsonify(success=True,name=name,employee_id=eid,project_id=p["project_id"],payroll_code=payroll_code)
+
+    @bp.post("/api/portraits/import-file")
+    def import_file():
+        """Nhập danh sách nhân viên & mã từ file Excel (.xls/.xlsx) hoặc PDF."""
+        from src.employee_importer import extract_employees_from_file, sync_employees_to_project
+        import tempfile
+        r = registry()
+
+        # Xác định dự án đích
+        form_project = request.form.get("project_id") or request.form.get("project")
+        json_data = request.get_json(silent=True) or {}
+        proj_val = form_project or json_data.get("project_id") or json_data.get("project") or ""
+        p = registry().get_project(proj_val)
+        if not p["active"]:
+            raise ValueError("Dự án đã được lưu trữ")
+
+        temp_path = None
+        target_path = None
+
+        try:
+            if "file" in request.files:
+                file = request.files["file"]
+                if not file or not file.filename:
+                    raise ValueError("Không có file được chọn")
+                ext = Path(file.filename).suffix.lower()
+                if ext not in (".xls", ".xlsx", ".pdf"):
+                    raise ValueError("Chỉ chấp nhận file .xls, .xlsx hoặc .pdf")
+                fd, temp_path = tempfile.mkstemp(suffix=ext)
+                os.close(fd)
+                file.save(temp_path)
+                target_path = temp_path
+            else:
+                raw_path = json_data.get("file_path") or json_data.get("filename")
+                if not raw_path:
+                    raise ValueError("Thiếu file upload hoặc đường dẫn file")
+                # Kiểm tra trong các thư mục uploads nếu chỉ truyền filename
+                candidates = [
+                    Path(raw_path),
+                    Path(r.portrait_root).parent / "excel_uploads" / raw_path,
+                    Path(r.portrait_root).parent / "pdf_uploads" / raw_path,
+                ]
+                for cand in candidates:
+                    if cand.exists() and cand.is_file():
+                        target_path = str(cand)
+                        break
+                if not target_path:
+                    raise ValueError(f"Không tìm thấy file: {raw_path}")
+
+            employees = extract_employees_from_file(target_path)
+            if not employees:
+                return jsonify(
+                    success=True,
+                    project=p["storage_dir"],
+                    project_id=p["project_id"],
+                    total_found=0,
+                    bound_existing=0,
+                    created_new=0,
+                    updated_code=0,
+                    unchanged=0,
+                    details=[],
+                    message="Không tìm thấy nhân viên nào trong file"
+                )
+
+            sync_results = sync_employees_to_project(
+                project_id=p["project_id"],
+                employees=employees,
+                identity_registry=r
+            )
+
+            return jsonify(
+                success=True,
+                project=p["storage_dir"],
+                project_id=p["project_id"],
+                **sync_results
+            )
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
 
     @bp.post("/api/portraits/employee/upload")
     def upload():
         p=project(request.form); e=employee(request.form,p); r=registry()
         if not e["active"]:
             raise ValueError("Nhân viên đã được lưu trữ")
-        reviewer=str(request.form.get("reviewer") or "").strip()
-        if not reviewer:
-            raise ValueError("Nhập người xác nhận ảnh chân dung")
+        reviewer=str(request.form.get("reviewer") or "system").strip()
         files=request.files.getlist("files") or request.files.getlist("photos")
         if not files:
             raise ValueError("Chọn ảnh chân dung")
@@ -183,9 +269,6 @@ def register_identity_routes(app, registry_provider, input_root):
             except OSError as exc:
                 raise ValueError("Ảnh không hợp lệ") from exc
             prepared.append((name,raw))
-        memberships=next(row["memberships"] for row in r.list_employees(p["project_id"]) if row["employee_id"]==e["employee_id"])
-        if not memberships:
-            raise ValueError("Xác nhận mã chấm công và ngày hiệu lực trước khi thêm ảnh")
         folder=r.project_portrait_dir(p["project_id"])/e["employee_id"]
         folder.mkdir(parents=True,exist_ok=True)
         for name,raw in prepared:

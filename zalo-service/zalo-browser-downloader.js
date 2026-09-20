@@ -32,6 +32,7 @@ class ZaloBrowserDownloader {
         this.isLoggedIn = false;
         this.isDownloading = false;
         this.currentQrBase64 = null;
+        this.scanDelayMs = 1500;
 
         this.progress = {
             status: "idle", // idle | waiting_qr | opening_group | scanning_media | downloading | done | error
@@ -531,12 +532,20 @@ class ZaloBrowserDownloader {
         const collected = [];
         const seenIds = new Set();
         const seenUrls = new Map();
-        for (let scroll = 0; scroll < 8 && collected.length < limit; scroll++) {
+        const maxScrolls = fromDateStr ? 120 : 8;
+        let stagnantScans = 0;
+        let previousVisibleKey = "";
+        for (let scroll = 0; scroll < maxScrolls && collected.length < limit; scroll++) {
             const raw = await this.page.evaluate(collectVisiblePhotos);
-            const batch = mergePhotos(raw.map(photo => {
+            const normalized = mergePhotos(raw.map(photo => {
                 const date = normalizeSendDate(photo);
                 return {...photo, date, dateSource: photo.timestamp && date ? "message" : photo.dateSource};
-            })).filter(photo => {
+            }));
+            const visibleDates = normalized.map(photo => photo.date).filter(validDate).sort();
+            const visibleKey = normalized.map(photo => `${photo.id}:${photo.date}`).sort().join("|");
+            stagnantScans = visibleKey && visibleKey === previousVisibleKey ? stagnantScans + 1 : 0;
+            previousVisibleKey = visibleKey;
+            const batch = normalized.filter(photo => {
                 if (photo.date && ((fromDateStr && photo.date < fromDateStr) || (toDateStr && photo.date > toDateStr))) return false;
                 if (seenIds.has(photo.messageId ? photo.id : `${photo.id}:${photo.date}`)) return false;
                 const previous = seenUrls.get(photo.url) || [];
@@ -551,6 +560,8 @@ class ZaloBrowserDownloader {
             if (batch.length && onBatch) await onBatch(batch);
             this._log(`Lần quét #${scroll + 1}: Tìm thấy ${collected.length} ảnh...`);
             if (collected.length >= limit) break;
+            if (fromDateStr && visibleDates.length && visibleDates[0] < fromDateStr) break;
+            if (stagnantScans >= 3) break;
             await this.page.evaluate(() => {
                 const mediaScroll = document.querySelector("#innerScrollContainer")?.parentElement ||
                     document.querySelector(".media-store-view, .chat-right-menu, .chat-right-menu-content");
@@ -558,7 +569,7 @@ class ZaloBrowserDownloader {
                 const chatScroll = document.querySelector("#messageViewContainer, .chat-message-list, #chatViewContainer, .chat-content");
                 if (chatScroll) chatScroll.scrollTop -= 600;
             });
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, this.scanDelayMs));
         }
         return collected;
     }

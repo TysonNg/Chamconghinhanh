@@ -170,6 +170,9 @@
                                             <label for="excel-face-threshold">Ngưỡng match:</label>
                                             <input id="excel-face-threshold" type="number" step="0.01" min="0.20" max="0.80" value="0.40" style="width: 80px;">
                                         </div>
+                                        <button class="btn btn-secondary" onclick="syncEmployeesFromExcel()" id="btn-excel-sync-employees" title="Đồng bộ danh sách nhân viên và mã từ file Excel này vào dự án">
+                                            Đồng Bộ Nhân Viên
+                                        </button>
                                         <button class="btn btn-primary" onclick="extractExcel()" id="btn-excel-extract">
                                             Bắt Đầu Tách
                                         </button>
@@ -312,6 +315,9 @@
                                             <label for="pdf-face-threshold">Ngưỡng match:</label>
                                             <input id="pdf-face-threshold" type="number" step="0.01" min="0.20" max="0.80" value="0.40" style="width: 80px;">
                                         </div>
+                                        <button class="btn btn-secondary" onclick="syncEmployeesFromPDF()" id="btn-pdf-sync-employees" title="Đồng bộ danh sách nhân viên và mã từ file PDF này vào dự án">
+                                            Đồng Bộ Nhân Viên
+                                        </button>
                                         <button class="btn btn-primary" onclick="extractPDF()" id="btn-extract">
                                             Bắt Đầu Tách
                                         </button>
@@ -532,17 +538,9 @@
                                     <label for="project-name">Tên Dự Án:</label>
                                     <input type="text" id="project-name" class="form-input" value="Chung cư Tân Thuận Đông">
                                 </div>
-                                <div class="form-group" style="flex: 1; min-width: 190px;">
-                                    <label for="report-from-date">Từ Ngày:</label>
-                                    <input type="text" id="report-from-date" class="form-input vn-date-picker" placeholder="dd/mm/yyyy" autocomplete="off">
-                                </div>
-                                <div class="form-group" style="flex: 1; min-width: 190px;">
-                                    <label for="report-to-date">Đến Ngày:</label>
-                                    <input type="text" id="report-to-date" class="form-input vn-date-picker" placeholder="dd/mm/yyyy" autocomplete="off">
-                                </div>
                             </div>
                             <p class="form-help" style="margin: 4px 0 0;">
-                                Các thông tin này được dùng khi quét mặt từ Excel hoặc PDF để tạo file giải trình tổng hợp A4.
+                                Kỳ báo cáo được tự động lấy từ các file nhân viên. Thông tin này được dùng khi quét mặt từ Excel hoặc PDF để tạo file giải trình tổng hợp A4.
                             </p>
                         </div>
                     </div>
@@ -722,6 +720,15 @@
                                     </svg>
                                     <span>Thêm Nhân Viên</span>
                                 </button>
+                                <button class="btn btn-secondary btn-sm" onclick="triggerImportEmployeesFile()" title="Nhập danh sách nhân viên và mã từ file Excel (.xls/.xlsx) hoặc PDF">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="17 8 12 3 7 8"></polyline>
+                                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                                    </svg>
+                                    <span>Nhập từ Excel/PDF</span>
+                                </button>
+                                <input type="file" id="import-employees-file-input" accept=".xls,.xlsx,.pdf" style="display: none;" onchange="handleImportEmployeesFile(this)">
                                 <button id="generate-internal-codes" class="btn btn-secondary btn-sm"
                                     onclick="generateInternalEmployeeCodes(this)"
                                     title="Tạo mã nội bộ cho mọi nhân viên đang hoạt động chưa có mã, trên tất cả dự án">
@@ -1275,6 +1282,10 @@
                 <div class="form-group">
                     <label for="new-employee-name">Họ và Tên Nhân Viên:</label>
                     <input type="text" id="new-employee-name" class="form-input" placeholder="Ví dụ: Nguyễn Văn A">
+                </div>
+                <div class="form-group">
+                    <label for="new-employee-code">Mã Chấm Công (tùy chọn):</label>
+                    <input type="text" id="new-employee-code" class="form-input" placeholder="Ví dụ: 000123">
                 </div>
                 <div class="form-group">
                     <label for="new-employee-photos">Ảnh Chân Dung (tùy chọn, có thể chọn nhiều ảnh):</label>

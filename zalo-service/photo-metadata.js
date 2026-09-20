@@ -8,6 +8,12 @@ function validDate(value) {
     return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+function normalizeMessageTimestamp(value) {
+    const timestamp = typeof value === 'number' ? value
+        : (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) : NaN);
+    return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : '';
+}
+
 function normalizeSendDate(photo) {
     let value = photo.timestamp;
     if (typeof value === 'string' && /^\d+(\.\d+)?$/.test(value)) value = Number(value);
@@ -101,4 +107,4 @@ function collectVisiblePhotos() {
     });
 }
 
-module.exports = {validDate, normalizeSendDate, mergePhotos, collectVisiblePhotos};
+module.exports = {validDate, normalizeMessageTimestamp, normalizeSendDate, mergePhotos, collectVisiblePhotos};

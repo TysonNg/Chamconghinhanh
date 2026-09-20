@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {normalizeSendDate, mergePhotos} = require('../photo-metadata');
+const {normalizeSendDate, mergePhotos, normalizeMessageTimestamp} = require('../photo-metadata');
 
 test('send times use Vietnam midnight independently of the host timezone', () => {
     for (const tz of ['UTC', 'America/Los_Angeles', 'Asia/Ho_Chi_Minh']) {
@@ -23,6 +23,13 @@ test('unknown dates, CDN timestamps and impossible dates do not acquire a day', 
     assert.equal(normalizeSendDate({date: '2026-02-30', dateSource: 'header'}), '');
     assert.equal(normalizeSendDate({date: '2026-09-12'}), '');
     assert.equal(normalizeSendDate({timestamp: '2026-09-12T17:01:00'}), '');
+});
+
+test('missing or invalid Zalo message timestamps stay unknown instead of becoming now', () => {
+    assert.equal(normalizeMessageTimestamp(undefined), '');
+    assert.equal(normalizeMessageTimestamp('not-a-timestamp'), '');
+    assert.equal(normalizeMessageTimestamp('0'), '');
+    assert.equal(normalizeMessageTimestamp('1789232460000'), 1789232460000);
 });
 
 test('full-year headers survive year rollover, send time takes precedence', () => {

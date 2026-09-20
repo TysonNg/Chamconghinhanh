@@ -57,25 +57,9 @@ def _build_report_options(data, fallback_project_name):
     if not project_name:
         raise ValueError('Thiếu tên dự án cho báo cáo tổng hợp')
 
-    from_date = str(data.get('from_date') or '').strip()
-    to_date = str(data.get('to_date') or '').strip()
-    if bool(from_date) != bool(to_date):
-        raise ValueError('Vui lòng chọn đầy đủ Từ ngày và Đến ngày')
-
-    if from_date and to_date:
-        try:
-            start = datetime.strptime(from_date, '%Y-%m-%d').date()
-            end = datetime.strptime(to_date, '%Y-%m-%d').date()
-        except ValueError as exc:
-            raise ValueError('Ngày báo cáo phải có định dạng YYYY-MM-DD') from exc
-        if start > end:
-            raise ValueError('Từ ngày không được sau Đến ngày')
-
-    options = {'project_name': project_name}
-    if from_date:
-        options['from_date'] = from_date
-        options['to_date'] = to_date
-    return options
+    # Kỳ báo cáo luôn được suy ra từ ngày nhỏ nhất/lớn nhất trong các file
+    # nhân viên của chính đợt quét; không dùng khoảng ngày cũ từ giao diện.
+    return {'project_name': project_name}
 
 def _normalize_folder_name(name: str) -> str:
     import unicodedata

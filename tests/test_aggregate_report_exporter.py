@@ -146,7 +146,6 @@ def test_export_aggregate_report_creates_print_ready_a4_document(tmp_path):
         "NGÀY",
         "GIẢI TRÌNH",
         "HÌNH ẢNH THỰC TẾ",
-        "GHI CHÚ",
     ]
     assert len(data_table.rows) == 2
     assert data_table.cell(1, 0).text == "Nguyễn Văn A"
@@ -311,3 +310,36 @@ def test_export_many_rows_for_print_preview(tmp_path):
     doc = Document(output_path)
     assert len(doc.tables[0].rows) == 15
     assert len(doc.inline_shapes) == 10
+    # First row has name, all 13 subsequent rows have blank name
+    assert doc.tables[0].rows[1].cells[0].text == "Nguyễn Văn Nhân Viên Có Tên Dài"
+    for r in doc.tables[0].rows[2:]:
+        assert r.cells[0].text == ""
+
+
+def test_duplicate_consecutive_person_names_are_cleared_for_each_person(tmp_path):
+    persons = [
+        {
+            "name": "Trần Văn A",
+            "records": [
+                {"date": "01/08/2026", "is_absent": True},
+                {"date": "02/08/2026", "is_absent": True},
+            ],
+        },
+        {
+            "name": "Lê Thị B",
+            "records": [
+                {"date": "01/08/2026", "is_absent": True},
+                {"date": "03/08/2026", "is_absent": True},
+                {"date": "05/08/2026", "is_absent": True},
+            ],
+        },
+    ]
+    out_path = export_aggregate_report(persons, output_dir=str(tmp_path), project_name="Dự án Test")
+    doc = Document(out_path)
+    rows = doc.tables[0].rows
+    # row 0 is header
+    # rows 1-2 for Lê Thị B (alphabetical sort)
+    # rows 3-5 for Trần Văn A
+    names_in_col = [r.cells[0].text for r in rows[1:]]
+    assert names_in_col == ["Lê Thị B", "", "", "Trần Văn A", ""]
+

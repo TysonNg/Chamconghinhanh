@@ -8,6 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const http = require("http");
+const {normalizeMessageTimestamp} = require("./photo-metadata");
 
 const CREDENTIALS_PATH = path.join(__dirname, "credentials.json");
 const QR_IMAGE_PATH = path.join(__dirname, "qr.png");
@@ -242,7 +243,7 @@ class ZaloClient {
                                 msgId: msgData.msgId || msgData.cliMsgId,
                                 url: content.href,
                                 thumb: content.thumb || "",
-                                timestamp: parseInt(msgData.ts) || Date.now(),
+                                timestamp: normalizeMessageTimestamp(msgData.ts),
                                 sender: msgData.uidFrom || "",
                                 senderName: msgData.dName || "",
                             });
@@ -259,7 +260,7 @@ class ZaloClient {
                                         msgId: msgData.msgId || msgData.cliMsgId,
                                         url: imgUrl,
                                         thumb: params.thumbUrl || content.thumb || "",
-                                        timestamp: parseInt(msgData.ts) || Date.now(),
+                                        timestamp: normalizeMessageTimestamp(msgData.ts),
                                         sender: msgData.uidFrom || "",
                                         senderName: msgData.dName || "",
                                     });
@@ -279,7 +280,7 @@ class ZaloClient {
                                         msgId: msgData.msgId || msgData.cliMsgId,
                                         url: imgUrl,
                                         thumb: parsed.thumbUrl || "",
-                                        timestamp: parseInt(msgData.ts) || Date.now(),
+                                        timestamp: normalizeMessageTimestamp(msgData.ts),
                                         sender: msgData.uidFrom || "",
                                         senderName: msgData.dName || "",
                                     });

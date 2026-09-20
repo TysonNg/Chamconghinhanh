@@ -22,8 +22,8 @@ _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_TEMPLATE_PATH = os.path.join(
     _ROOT_DIR, "templates", "word", "giai_trinh_tong_hop.docx"
 )
-DATA_HEADERS = ["TÊN", "NGÀY", "GIẢI TRÌNH", "HÌNH ẢNH THỰC TẾ", "GHI CHÚ"]
-DATA_WIDTHS = [Cm(3.2), Cm(2.2), Cm(4.4), Cm(5.0), Cm(3.4)]
+DATA_HEADERS = ["TÊN", "NGÀY", "GIẢI TRÌNH", "HÌNH ẢNH THỰC TẾ"]
+DATA_WIDTHS = [Cm(4.0), Cm(2.4), Cm(5.8), Cm(6.0)]
 
 
 def _parse_date(value) -> Optional[date]:
@@ -270,7 +270,7 @@ def build_default_template(template_path=DEFAULT_TEMPLATE_PATH):
         paragraph.paragraph_format.line_spacing = 1.15
         _set_font(paragraph.add_run(text), size=10.5, bold=(index == 0))
 
-    table = doc.add_table(rows=2, cols=5)
+    table = doc.add_table(rows=2, cols=4)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = False
     _set_table_layout_fixed(table)
@@ -366,7 +366,7 @@ def _find_data_table(doc):
     raise ValueError("Template không có bảng dữ liệu giải trình hợp lệ")
 
 
-def _fit_image(image_path, max_width_cm=4.6, max_height_cm=3.2):
+def _fit_image(image_path, max_width_cm=5.4, max_height_cm=3.6):
     with Image.open(image_path) as image:
         width, height = image.size
     if width <= 0 or height <= 0:
@@ -393,10 +393,14 @@ def _fill_data_table(table, rows):
         _set_row_cant_split(row)
         return
 
+    previous_name = None
     for row_index, item in enumerate(rows, 1):
         row = table.add_row()
         _set_row_cant_split(row)
-        values = [item["name"], item["date"], item["explanation"], "", item["note"]]
+        current_name = str(item.get("name") or "").strip()
+        display_name = "" if previous_name and current_name.casefold() == previous_name.casefold() else current_name
+        previous_name = current_name
+        values = [display_name, item["date"], item["explanation"], ""]
         for cell_index, (cell, width) in enumerate(zip(row.cells, DATA_WIDTHS)):
             cell.width = width
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER

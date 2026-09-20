@@ -10,15 +10,15 @@ Template `giai_trinh_tong_hop.docx` dùng để tạo một báo cáo giải tr�
 - `{{FROM_DATE}}`: ngày bắt đầu, định dạng `dd/mm/yyyy`.
 - `{{TO_DATE}}`: ngày kết thúc, định dạng `dd/mm/yyyy`.
 - `{{REPORT_DATE_LONG}}`: ngày lập báo cáo bằng tiếng Việt.
-- `{{DATA_ROWS}}`: vị trí chèn các dòng bất thường; token này phải nằm trong dòng dữ liệu đầu tiên của bảng 5 cột.
+- `{{DATA_ROWS}}`: vị trí chèn các dòng bất thường; token này phải nằm trong dòng dữ liệu đầu tiên của bảng 4 cột.
 
 ## Ràng buộc bố cục
 
 - Khổ A4 dọc, lề trái/phải 1,4 cm và lề trên/dưới 1,25 cm.
-- Bảng dữ liệu có đúng 5 cột: Tên, Ngày, Giải trình, Hình ảnh thực tế, Ghi chú.
+- Bảng dữ liệu có đúng 4 cột: Tên, Ngày, Giải trình, Hình ảnh thực tế.
 - Hàng tiêu đề phải lặp lại ở đầu mỗi trang.
 - Mỗi hàng dữ liệu phải bật `cantSplit` để ảnh và nội dung không tách qua hai trang.
-- Ảnh phải được co vừa khung tối đa 4,6 x 3,2 cm, giữ nguyên tỷ lệ.
+- Ảnh phải được co vừa khung tối đa 5,4 x 3,6 cm, giữ nguyên tỷ lệ.
 - Khối kết luận và ký xác nhận phải được giữ cùng nhau trên trang cuối.
 - Footer hiển thị `Trang X / Y`.
 

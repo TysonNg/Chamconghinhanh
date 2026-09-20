@@ -3,15 +3,27 @@ from pathlib import Path
 from flask import Flask, render_template
 
 
-def test_summary_settings_offer_project_and_date_range_fields():
+def test_summary_settings_explain_period_is_derived_from_employee_files():
     app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[1] / "templates"))
     with app.test_request_context("/"):
         html = render_template("index.html")
 
     assert 'id="project-name"' in html
-    assert 'id="report-from-date"' in html
-    assert 'id="report-to-date"' in html
+    assert 'id="report-from-date"' not in html
+    assert 'id="report-to-date"' not in html
+    assert "Kỳ báo cáo được tự động lấy từ các file nhân viên" in html
     assert 'id="export-month"' not in html
+
+
+def test_face_scan_payload_does_not_send_a_ui_date_range():
+    project_root = Path(__file__).resolve().parents[1]
+    app_js = (project_root / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    settings_start = app_js.index("function getAggregateReportSettings")
+    settings_end = app_js.index("// ==================== Toast Notifications", settings_start)
+    settings = app_js[settings_start:settings_end]
+    assert "report_project_name: reportProjectName" in settings
+    assert "from_date:" not in settings
+    assert "to_date:" not in settings
 
 
 def test_summary_tab_has_aggregate_report_list_and_auto_refresh_hook():
