@@ -41,9 +41,12 @@ test('virtualized next scan never inherits the previous scan last date', async (
     assert.equal(normalizeSendDate((await page.evaluate(collectVisiblePhotos))[0]), '');
 });
 
-test('a yearless header does not borrow the date above it', async () => {
+test('a yearless header is parsed with the current year and does not borrow the date above it', async () => {
     await page.setContent('<div id="innerScrollContainer"><div id="date_31122025"></div><div class="media-item-date-group">Ngày 1 Tháng 1</div><div><img src="https://cdn.test/a"></div></div>');
-    assert.equal(normalizeSendDate((await page.evaluate(collectVisiblePhotos))[0]), '');
+    const date = normalizeSendDate((await page.evaluate(collectVisiblePhotos))[0]);
+    // Yearless header "Ngày 1 Tháng 1" is parsed with the current year, NOT borrowing 2025 from above
+    const expectedYear = new Date().getFullYear();
+    assert.equal(date, `${expectedYear}-01-01`);
 });
 
 test('real image decoding rejects HTML and preserves image bytes', async () => {

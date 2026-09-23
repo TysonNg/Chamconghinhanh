@@ -356,11 +356,14 @@ def sync_employees_to_project(
         'created_new': 0,
         'updated_code': 0,
         'unchanged': 0,
+        'internal_codes_created': 0,
         'details': []
     }
 
     with identity_registry._connect() as c:
         c.execute("BEGIN IMMEDIATE")
+        used_codes = {r[0].upper() for r in c.execute("SELECT code FROM employee_internal_codes")}
+        used_codes.update(r[0].upper() for r in c.execute("SELECT payroll_code FROM memberships"))
 
         for emp_item in employees:
             raw_name = clean_display_name(emp_item.get('name', ''))
@@ -375,6 +378,11 @@ def sync_employees_to_project(
                 emp = existing_by_norm[norm_name]
                 eid = emp["employee_id"]
                 current_memberships = emp.get("memberships", [])
+
+                # Đảm bảo nhân viên có mã nội bộ
+                internal_code, is_new_code = identity_registry._ensure_internal_code(c, eid, used_codes)
+                if is_new_code:
+                    results['internal_codes_created'] += 1
 
                 # Kiểm tra xem đã có mã chấm công trùng chưa
                 has_code = any(m.get("payroll_code") == payroll_code for m in current_memberships)
@@ -408,7 +416,8 @@ def sync_employees_to_project(
                     'name': emp["display_name"],
                     'payroll_code': payroll_code,
                     'status': status_note,
-                    'employee_id': eid
+                    'employee_id': eid,
+                    'internal_code': internal_code
                 })
 
             # Trường hợp 2: Chưa có hồ sơ nhân viên trong DB
@@ -417,6 +426,11 @@ def sync_employees_to_project(
                 import uuid
                 eid = uuid.uuid4().hex
                 c.execute("INSERT INTO employees(employee_id, display_name) VALUES(?,?)", (eid, raw_name))
+
+                # Đảm bảo nhân viên có mã nội bộ
+                internal_code, is_new_code = identity_registry._ensure_internal_code(c, eid, used_codes)
+                if is_new_code:
+                    results['internal_codes_created'] += 1
 
                 # Gán mã chấm công nếu có
                 if payroll_code:
@@ -448,14 +462,16 @@ def sync_employees_to_project(
                     "display_name": raw_name,
                     "memberships": [{"payroll_code": payroll_code}] if payroll_code else [],
                     "source_paths": [],
-                    "status": "confirmed"
+                    "status": "confirmed",
+                    "internal_code": internal_code
                 }
 
                 results['details'].append({
                     'name': raw_name,
                     'payroll_code': payroll_code,
                     'status': "Đã ghép ảnh có sẵn" if bound_photo else "Tạo mới (chưa có ảnh)",
-                    'employee_id': eid
+                    'employee_id': eid,
+                    'internal_code': internal_code
                 })
 
     return results

@@ -2283,7 +2283,14 @@ async function handleImportEmployeesFile(input) {
             throw new Error(res.error || 'Lỗi khi nhập file');
         }
 
-        const msg = res.message || `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh.`;
+        let msg = res.message;
+        if (!msg) {
+            msg = `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh`;
+            if (res.internal_codes_created) {
+                msg += `, Cấp mới ${res.internal_codes_created} mã nội bộ`;
+            }
+            msg += '.';
+        }
         showToast(msg, 'success');
         await loadPortraits();
         await loadProjects();
@@ -2319,7 +2326,14 @@ async function syncEmployeesFromExcel() {
             throw new Error(res.error || 'Lỗi đồng bộ nhân viên');
         }
 
-        const msg = res.message || `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh.`;
+        let msg = res.message;
+        if (!msg) {
+            msg = `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh`;
+            if (res.internal_codes_created) {
+                msg += `, Cấp mới ${res.internal_codes_created} mã nội bộ`;
+            }
+            msg += '.';
+        }
         showToast(msg, 'success');
         await loadPortraits();
         await loadProjects();
@@ -2353,7 +2367,14 @@ async function syncEmployeesFromPDF() {
             throw new Error(res.error || 'Lỗi đồng bộ nhân viên');
         }
 
-        const msg = res.message || `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh.`;
+        let msg = res.message;
+        if (!msg) {
+            msg = `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh`;
+            if (res.internal_codes_created) {
+                msg += `, Cấp mới ${res.internal_codes_created} mã nội bộ`;
+            }
+            msg += '.';
+        }
         showToast(msg, 'success');
         await loadPortraits();
         await loadProjects();
@@ -2549,6 +2570,7 @@ let zaloPollTimer = null;
 let zaloEventSource = null;
 let zaloGroupsList = [];
 let zaloIsDownloading = false;
+let zaloCurrentQrSource = null;
 
 function initZaloTab() {
     setZaloDatePreset('today');
@@ -2663,6 +2685,7 @@ async function checkZaloStatus(showToastMsg = false) {
 
 // Bắt đầu đăng nhập bằng QR
 async function startZaloQrLogin(force = false) {
+    zaloCurrentQrSource = 'login';
     const qrCard = document.getElementById('zalo-qr-card');
     const qrLoading = document.getElementById('zalo-qr-loading');
     const qrImg = document.getElementById('zalo-qr-img');
@@ -2699,6 +2722,43 @@ async function startZaloQrLogin(force = false) {
     } catch (err) {
         showToast('Lỗi gửi yêu cầu tạo QR: ' + err.message, 'error');
         appendZaloLog('[Lỗi] ' + err.message, 'error');
+    }
+}
+
+// Xử lý làm mới mã QR thông minh theo ngữ cảnh (Tải ảnh vs Đăng nhập API)
+async function handleZaloQrRefresh() {
+    if (zaloIsDownloading || zaloCurrentQrSource === 'download') {
+        const qrLoading = document.getElementById('zalo-qr-loading');
+        const qrImg = document.getElementById('zalo-qr-img');
+        const qrMsg = document.getElementById('zalo-qr-status-msg');
+
+        if (qrLoading) qrLoading.style.display = 'flex';
+        if (qrImg) qrImg.style.display = 'none';
+        if (qrMsg) qrMsg.innerHTML = '<span class="pulse-dot warning"></span> Đang tạo lại mã QR tải ảnh mới...';
+
+        appendZaloLog('[Hệ thống] Đang yêu cầu trình duyệt làm mới mã QR tải ảnh...', 'info');
+        try {
+            const res = await fetch('/api/zalo/download/qr/refresh', { method: 'POST' });
+            const data = await res.json();
+            if (data.success && data.data && data.data.image) {
+                if (qrImg) {
+                    qrImg.src = data.data.image;
+                    qrImg.style.display = 'block';
+                }
+                if (qrLoading) qrLoading.style.display = 'none';
+                if (qrMsg) qrMsg.innerHTML = '<span class="status-indicator-dot warning"></span> <strong>Đã cập nhật mã QR mới!</strong> Vui lòng quét bằng app Zalo.';
+                appendZaloLog('[Hệ thống] Đã tạo mã QR mới thành công.', 'success');
+            } else {
+                throw new Error(data.error || 'Không thể tạo mã mới');
+            }
+        } catch (err) {
+            showToast('Lỗi làm mới QR: ' + err.message, 'error');
+            appendZaloLog('[Lỗi] ' + err.message, 'error');
+            if (qrLoading) qrLoading.style.display = 'none';
+            if (qrImg) qrImg.style.display = 'block';
+        }
+    } else {
+        await startZaloQrLogin(true);
     }
 }
 
@@ -2767,14 +2827,37 @@ async function pollZaloQr() {
     }
 }
 
-function cancelZaloLogin() {
+async function cancelZaloLogin() {
     if (zaloPollTimer) {
         clearInterval(zaloPollTimer);
         zaloPollTimer = null;
     }
     const qrCard = document.getElementById('zalo-qr-card');
     if (qrCard) qrCard.style.display = 'none';
-    appendZaloLog('[Hệ thống] Đã đóng cửa sổ đăng nhập QR.', 'info');
+
+    if (zaloIsDownloading || zaloCurrentQrSource === 'download') {
+        try {
+            await fetch('/api/zalo/download/cancel', { method: 'POST' });
+        } catch {}
+        zaloIsDownloading = false;
+        zaloCurrentQrSource = null;
+        if (zaloEventSource) {
+            zaloEventSource.close();
+            zaloEventSource = null;
+        }
+        const btn = document.getElementById('btn-start-zalo-download');
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>Bắt Đầu Tải Ảnh Về Máy</span>`;
+        }
+    }
+    appendZaloLog('[Hệ thống] Đã đóng cửa sổ đăng nhập / hủy chờ quét QR.', 'info');
 }
 
 async function logoutZalo() {
@@ -3067,7 +3150,7 @@ async function startZaloDownload() {
     const dateFrom = document.getElementById('zalo-date-from')?.value || null;
     const dateTo = document.getElementById('zalo-date-to')?.value || null;
     const folderFormat = document.getElementById('zalo-folder-format')?.value || 'date';
-    const msgLimit = parseInt(document.getElementById('zalo-msg-limit')?.value || '200', 10);
+    const msgLimit = parseInt(document.getElementById('zalo-msg-limit')?.value || '1000', 10);
 
     const btn = document.getElementById('btn-start-zalo-download');
     if (btn) {
@@ -3186,6 +3269,7 @@ function listenZaloProgress() {
         const qrMsg = document.getElementById('zalo-qr-status-msg');
 
         if (p.status === 'waiting_qr' || p.qrImage) {
+            zaloCurrentQrSource = 'download';
             if (qrCard && qrCard.style.display !== 'block') {
                 qrCard.style.display = 'block';
                 qrCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -3198,11 +3282,29 @@ function listenZaloProgress() {
                 if (qrLoading) qrLoading.style.display = 'none';
             }
             if (qrMsg) {
-                qrMsg.innerHTML = '<span class="status-indicator-dot warning"></span> <strong>Quét mã QR dưới đây để liên kết Chrome tải ảnh</strong> (chỉ cần làm 1 lần)...';
+                let countdownHtml = '';
+                if (p.qrExpiresAt) {
+                    const remaining = Math.max(0, Math.ceil((p.qrExpiresAt - Date.now()) / 1000));
+                    if (remaining > 0) {
+                        const color = remaining <= 15 ? '#ff4444' : remaining <= 30 ? '#ffaa00' : '#4caf50';
+                        countdownHtml = ` <span style="color:${color};font-weight:bold;font-size:0.95em;">(⏱ còn ${remaining}s)</span>`;
+                    } else {
+                        countdownHtml = ' <span style="color:#ff4444;font-weight:bold;">⏳ Đang lấy mã mới...</span>';
+                    }
+                }
+                qrMsg.innerHTML = '<span class="status-indicator-dot warning"></span> <strong>Quét mã QR dưới đây trong app Zalo để bắt đầu tải ảnh</strong>' + countdownHtml + ' (chỉ cần làm 1 lần, tự động làm mới khi hết hạn)...';
             }
         } else if (p.status && p.status !== 'waiting_qr' && p.status !== 'idle' && !p.qrImage) {
             if (qrCard && qrCard.style.display !== 'none') {
                 qrCard.style.display = 'none';
+            }
+            if (zaloCurrentQrSource === 'download') {
+                zaloCurrentQrSource = null;
+                // Người dùng đã quét mã thành công và đang tải ảnh -> Tự động đồng bộ trạng thái Zalo trên header
+                setTimeout(() => {
+                    checkZaloStatus(false);
+                    loadZaloGroups(false);
+                }, 1500);
             }
         }
 
@@ -3238,7 +3340,7 @@ function listenZaloProgress() {
 
                 if (p.status === 'done') {
                     const actualDownloaded = p.counterVersion === 2 ? (p.downloaded || 0) : Math.max(0, (p.downloaded || 0) - (p.skipped || 0));
-                    const warningText = `Ảnh xem trước: ${p.lowQuality || 0}; bỏ qua vì không rõ ngày gửi: ${p.unknownDate || 0}; lỗi tải: ${p.failed || 0}.`;
+                    const warningText = `Ảnh xem trước: ${p.lowQuality || 0}; không rõ ngày gửi (đã lưu vào thư mục unknown-date): ${p.unknownDate || 0}; lỗi tải: ${p.failed || 0}.`;
                     const hasWarnings = (p.lowQuality || 0) + (p.unknownDate || 0) + (p.failed || 0) > 0;
                     appendZaloLog(`[Hoàn thành] Đã lưu ${actualDownloaded} ảnh mới. ${warningText}`, hasWarnings ? 'warning' : 'success');
                     showToast(`Đã xử lý xong: ${actualDownloaded} ảnh mới.${hasWarnings ? ' Có cảnh báo, xem kết quả tải.' : ''}`, hasWarnings ? 'warning' : 'success');
@@ -3372,7 +3474,7 @@ function updateZaloProgressUI(p) {
 
     if (currentFileText) {
         if (p.status === 'done') {
-            currentFileText.textContent = `Đã lưu ${actualNew} ảnh; ${p.lowQuality || 0} ảnh xem trước; ${p.unknownDate || 0} ảnh không rõ ngày gửi; ${failed} lỗi tải.`;
+            currentFileText.textContent = `Đã lưu ${actualNew} ảnh; ${p.lowQuality || 0} ảnh xem trước; ${p.unknownDate || 0} ảnh không rõ ngày (lưu vào unknown-date); ${failed} lỗi tải.`;
         } else if (p.currentFile) {
             currentFileText.textContent = `File hiện tại: ${p.currentFile}`;
         }

@@ -78,3 +78,26 @@ def test_archiving_project_keeps_photos(tmp_path):
     assert c.post("/api/projects/delete",json={"project_id":p["project_id"]}).status_code==200
     assert f.exists()
     assert c.get("/api/projects").json["projects"]==[]
+
+def test_create_employee_assigns_internal_code(tmp_path):
+    c, r = client(tmp_path)
+    p = c.post("/api/projects/create", json={"name": "Site"}).json
+    res = c.post("/api/portraits/employee/create", json={
+        "project_id": p["project_id"],
+        "name": "Nguyen Van Test",
+        "payroll_code": "0099",
+        "valid_from": "2026-01-01",
+        "reviewer": "Reviewer"
+    })
+    assert res.status_code == 200
+    data = res.json
+    assert data["success"] is True
+    assert "internal_code" in data
+    assert data["internal_code"].startswith("NV-")
+    assert len(data["internal_code"]) == 11
+
+    # Check via list portraits endpoint
+    portraits = c.get("/api/portraits", query_string={"project_id": p["project_id"]}).json
+    emp = next(e for e in portraits["employees"] if e["employee_id"] == data["employee_id"])
+    assert emp["internal_code"] == data["internal_code"]
+

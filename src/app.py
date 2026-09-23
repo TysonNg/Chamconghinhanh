@@ -1940,6 +1940,20 @@ def zalo_download_progress_poll():
     return jsonify(result), status
 
 
+@app.route('/api/zalo/download/qr/refresh', methods=['POST'])
+def zalo_download_qr_refresh():
+    """Làm mới mã QR tải ảnh từ trình duyệt"""
+    result, status = _proxy_zalo('/api/download/qr/refresh', method='POST')
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/download/cancel', methods=['POST'])
+def zalo_download_cancel():
+    """Hủy tiến trình tải ảnh hoặc chờ quét QR"""
+    result, status = _proxy_zalo('/api/download/cancel', method='POST')
+    return jsonify(result), status
+
+
 @app.route('/api/zalo/health')
 def zalo_health():
     """Kiểm tra Zalo service có đang chạy không"""

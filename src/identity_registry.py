@@ -132,7 +132,30 @@ class IdentityRegistry:
         eid = uuid.uuid4().hex
         with self._connect() as c:
             c.execute("INSERT INTO employees(employee_id,display_name) VALUES(?,?)",(eid,name.strip()))
+            self._ensure_internal_code(c, eid)
         return self.get_employee(eid)
+
+    def _ensure_internal_code(self, c, employee_id, used_codes=None):
+        """Đảm bảo nhân viên có mã nội bộ (NV-XXXXXXXX). Trả về (code, created: bool)."""
+        row = c.execute("SELECT code FROM employee_internal_codes WHERE employee_id=?", (employee_id,)).fetchone()
+        if row:
+            return row[0], False
+
+        if used_codes is None:
+            used_codes = {r[0].upper() for r in c.execute("SELECT code FROM employee_internal_codes")}
+            used_codes.update(r[0].upper() for r in c.execute("SELECT payroll_code FROM memberships"))
+
+        for _ in range(100):
+            code = "NV-" + secrets.token_hex(4).upper()
+            if code not in used_codes:
+                break
+        else:
+            raise ValueError("Không tạo được mã duy nhất; vui lòng thử lại")
+
+        now_str = datetime.now(timezone.utc).isoformat()
+        c.execute("INSERT INTO employee_internal_codes VALUES(?,?,?)", (employee_id, code, now_str))
+        used_codes.add(code)
+        return code, True
 
     def generate_internal_codes(self):
         """Assign display codes once, without modifying payroll or identity approval."""
@@ -143,19 +166,14 @@ class IdentityRegistry:
                 ORDER BY e.employee_id""").fetchall()
             used={row[0].upper() for row in c.execute("SELECT code FROM employee_internal_codes")}
             used.update(row[0].upper() for row in c.execute("SELECT payroll_code FROM memberships"))
+            created = 0
             for row in pending:
-                for _ in range(100):
-                    code="NV-"+secrets.token_hex(4).upper()
-                    if code not in used:
-                        break
-                else:
-                    raise ValueError("Không tạo được mã duy nhất; vui lòng thử lại")
-                c.execute("INSERT INTO employee_internal_codes VALUES(?,?,?)",
-                          (row["employee_id"],code,datetime.now(timezone.utc).isoformat()))
-                used.add(code)
+                _, is_new = self._ensure_internal_code(c, row["employee_id"], used)
+                if is_new:
+                    created += 1
             total=c.execute("""SELECT COUNT(*) FROM employee_internal_codes n
                 JOIN employees e ON e.employee_id=n.employee_id WHERE e.active=1""").fetchone()[0]
-        return {"created_count":len(pending),"total_count":total,"unchanged_count":total-len(pending)}
+        return {"created_count":created,"total_count":total,"unchanged_count":total-created}
 
     def get_employee(self, employee_id):
         with self._connect() as c:

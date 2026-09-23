@@ -818,7 +818,7 @@
                             <h3 style="font-size: 15px; font-weight: 600; margin: 0;">Quét Mã QR Đăng Nhập Zalo</h3>
                         </div>
                         <div class="d-flex gap-2">
-                            <button class="btn btn-secondary btn-sm" onclick="startZaloQrLogin(true)" title="Tạo mã QR mới nếu mã cũ hết hạn hoặc không quét được">
+                            <button class="btn btn-secondary btn-sm" onclick="handleZaloQrRefresh()" title="Tạo mã QR mới nếu mã cũ hết hạn hoặc không quét được">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="23 4 23 10 17 10"></polyline>
                                     <polyline points="1 20 1 14 7 14"></polyline>
@@ -837,7 +837,7 @@
                                     <span style="font-size: 13px; color: var(--text-secondary); margin-top: 8px;">Đang khởi tạo mã QR...</span>
                                 </div>
                                 <img id="zalo-qr-img" src="" alt="Mã QR Zalo" style="display: none;" class="zalo-qr-image">
-                                <button type="button" class="btn-text-link mt-2" onclick="startZaloQrLogin(true)" style="font-size: 12px; display: inline-flex; align-items: center; gap: 4px; color: var(--primary);">
+                                <button type="button" class="btn-text-link mt-2" onclick="handleZaloQrRefresh()" style="font-size: 12px; display: inline-flex; align-items: center; gap: 4px; color: var(--primary);">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="23 4 23 10 17 10"></polyline>
                                         <polyline points="1 20 1 14 7 14"></polyline>
@@ -977,9 +977,11 @@
                                         <label for="zalo-msg-limit" style="font-size: 12px; font-weight: 500;">Số lượng ảnh quét tối đa:</label>
                                         <select id="zalo-msg-limit" class="form-input">
                                             <option value="100">100 ảnh gần nhất</option>
-                                            <option value="200" selected>200 ảnh gần nhất (Khuyên dùng)</option>
+                                            <option value="200">200 ảnh gần nhất</option>
                                             <option value="500">500 ảnh gần nhất</option>
-                                            <option value="1000">1000 ảnh gần nhất</option>
+                                            <option value="1000" selected>1000 ảnh gần nhất (Mặc định)</option>
+                                            <option value="2000">2000 ảnh gần nhất</option>
+                                            <option value="5000">5000 ảnh gần nhất</option>
                                         </select>
                                     </div>
                                     <div class="form-group" style="margin-top: 10px;">

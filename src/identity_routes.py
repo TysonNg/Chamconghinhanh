@@ -156,12 +156,13 @@ def register_identity_routes(app, registry_provider, input_root):
         with r._connect() as c:
             c.execute("BEGIN IMMEDIATE")
             c.execute("INSERT INTO employees(employee_id,display_name) VALUES(?,?)",(eid,name))
+            internal_code, _ = r._ensure_internal_code(c, eid)
             if payroll_code:
                 r._assign(c,p["project_id"],eid,payroll_code,_day(valid_from),None)
         folder=r.project_portrait_dir(p["project_id"])/eid
         folder.mkdir(parents=True,exist_ok=True)
         r.bind_portrait(p["project_id"],eid,eid,reviewer)
-        return jsonify(success=True,name=name,employee_id=eid,project_id=p["project_id"],payroll_code=payroll_code)
+        return jsonify(success=True,name=name,employee_id=eid,project_id=p["project_id"],payroll_code=payroll_code,internal_code=internal_code)
 
     @bp.post("/api/portraits/import-file")
     def import_file():

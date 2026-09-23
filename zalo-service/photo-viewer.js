@@ -126,11 +126,27 @@ async function resolvePhoto(page, photo) {
 
         const metadata = await dialog.evaluate(root => {
             const time = root.querySelector('time[datetime]') || document.querySelector('.imageShowMainImage time[datetime]');
-            const fullDate = (time?.textContent || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)
-                || (document.querySelector('.media-slider-header, .header-title')?.textContent || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            const sliderText = (document.querySelector('.media-slider-header, .header-title')?.textContent || '');
+            const timeText = (time?.textContent || '');
+            // Match DD/MM/YYYY
+            const fullDate = timeText.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+                || sliderText.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            let date = '';
+            if (fullDate) {
+                date = `${fullDate[3]}-${fullDate[2].padStart(2, '0')}-${fullDate[1].padStart(2, '0')}`;
+            } else {
+                // Zalo Media Store viewer: "Ngày DD Tháng M" (không có năm)
+                const noYear = timeText.match(/Ngày\s+(\d{1,2})\s+Tháng\s+(\d{1,2})/i)
+                    || sliderText.match(/Ngày\s+(\d{1,2})\s+Tháng\s+(\d{1,2})/i)
+                    || (root.textContent || '').match(/Ngày\s+(\d{1,2})\s+Tháng\s+(\d{1,2})/i);
+                if (noYear) {
+                    const year = new Date().getFullYear();
+                    date = `${year}-${noYear[2].padStart(2, '0')}-${noYear[1].padStart(2, '0')}`;
+                }
+            }
             return {
                 timestamp: time?.getAttribute('datetime') || '',
-                date: fullDate ? `${fullDate[3]}-${fullDate[2].padStart(2, '0')}-${fullDate[1].padStart(2, '0')}` : ''
+                date
             };
         });
         if (!result.timestamp && metadata.timestamp) result.timestamp = metadata.timestamp;

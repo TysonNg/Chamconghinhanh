@@ -31,6 +31,7 @@ const zaloClient = new ZaloClient();
 const imageDownloader = new ImageDownloader();
 const ZaloBrowserDownloader = require("./zalo-browser-downloader");
 const browserDownloader = new ZaloBrowserDownloader(path.resolve(__dirname, ".."));
+const { collectVisiblePhotos, normalizeSendDate } = require("./photo-metadata");
 
 // SSE clients for progress updates
 let sseClients = [];
@@ -240,7 +241,7 @@ app.get("/api/groups", async (req, res) => {
 app.post("/api/groups/:groupId/download", async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { groupName, projectName, dateFrom, dateTo, count = 200, folderFormat = "YYYY-MM-DD", headless = true } = req.body;
+        const { groupName, projectName, dateFrom, dateTo, count = 1000, folderFormat = "YYYY-MM-DD", headless = true } = req.body;
 
         if (!groupName) {
             return res.status(400).json({
@@ -344,6 +345,44 @@ app.get("/api/download/progress/poll", (req, res) => {
 });
 
 /**
+ * POST /api/download/qr/refresh
+ * Request browser downloader to refresh the QR code
+ */
+app.post("/api/download/qr/refresh", async (req, res) => {
+    try {
+        const newQr = await browserDownloader.refreshQrCode();
+        res.json({
+            success: true,
+            data: { image: newQr, status: browserDownloader.getStatus().progress.status }
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+});
+
+/**
+ * POST /api/download/cancel
+ * Cancel download / QR waiting
+ */
+app.post("/api/download/cancel", async (req, res) => {
+    try {
+        await browserDownloader.cancelDownload();
+        res.json({
+            success: true,
+            message: "Đã hủy tiến trình tải ảnh."
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+});
+
+/**
  * Debug endpoint to inspect current browser DOM and screenshot
  */
 app.get("/api/debug/dom", async (req, res) => {
@@ -370,17 +409,150 @@ app.get("/api/debug/dom", async (req, res) => {
 
             const chatMessages = Array.from(document.querySelectorAll(".chat-message, .msg-item, .chat-item, [data-id*='msg']")).length;
 
+            // Deep inspect innerScrollContainer
+            const isc = document.querySelector('#innerScrollContainer');
+            let innerScrollInfo = null;
+            if (isc) {
+                // Find all elements with text containing date patterns
+                const dateElements = [];
+                const walker = document.createTreeWalker(isc, NodeFilter.SHOW_ELEMENT, null);
+                let node;
+                while (node = walker.nextNode()) {
+                    const text = (node.textContent || '').trim();
+                    if (text.length < 80 && text.length > 3 && /Ngày|Tháng|Năm|\d{1,2}\/\d{1,2}|\d{2}\d{2}\d{4}/.test(text)) {
+                        dateElements.push({
+                            tag: node.tagName,
+                            className: (node.className || '').slice(0, 100),
+                            id: node.id || '',
+                            text: text.slice(0, 80),
+                            childCount: node.children.length,
+                            display: window.getComputedStyle(node).display,
+                            dataAttrs: Object.fromEntries(
+                                Array.from(node.attributes || [])
+                                    .filter(a => a.name.startsWith('data-'))
+                                    .map(a => [a.name, a.value.slice(0, 50)])
+                            )
+                        });
+                    }
+                }
+
+                // First 3 media-store images full parent chain
+                const mediaImgs = isc.querySelectorAll('img');
+                const imgChains = [];
+                for (let i = 0; i < Math.min(3, mediaImgs.length); i++) {
+                    const chain = [];
+                    let el = mediaImgs[i];
+                    for (let d = 0; el && el !== isc && d < 8; d++) {
+                        chain.push({
+                            tag: el.tagName,
+                            className: (el.className || '').slice(0, 100),
+                            id: el.id || '',
+                            dataAttrs: Object.fromEntries(
+                                Array.from(el.attributes || [])
+                                    .filter(a => a.name.startsWith('data-'))
+                                    .map(a => [a.name, a.value.slice(0, 50)])
+                            )
+                        });
+                        el = el.parentElement;
+                    }
+                    imgChains.push(chain);
+                }
+
+                // Direct children of innerScrollContainer
+                const directChildren = Array.from(isc.children).slice(0, 20).map(child => ({
+                    tag: child.tagName,
+                    className: (child.className || '').slice(0, 100),
+                    id: child.id || '',
+                    text: (child.textContent || '').trim().slice(0, 60),
+                    childCount: child.children.length,
+                    dataAttrs: Object.fromEntries(
+                        Array.from(child.attributes || [])
+                            .filter(a => a.name.startsWith('data-'))
+                            .map(a => [a.name, a.value.slice(0, 50)])
+                    )
+                }));
+
+                // Scroll container analysis
+                const scrollAnalysis = [];
+                let currEl = isc;
+                while (currEl && currEl !== document.body) {
+                    const style = window.getComputedStyle(currEl);
+                    scrollAnalysis.push({
+                        tag: currEl.tagName,
+                        className: (currEl.className || '').slice(0, 50),
+                        id: currEl.id || '',
+                        overflowY: style.overflowY,
+                        scrollHeight: currEl.scrollHeight,
+                        clientHeight: currEl.clientHeight,
+                        scrollTop: currEl.scrollTop
+                    });
+                    currEl = currEl.parentElement;
+                }
+
+                innerScrollInfo = {
+                    totalImgs: mediaImgs.length,
+                    dateElements,
+                    imgChains,
+                    directChildren,
+                    scrollAnalysis,
+                    innerHTML_first_1000: isc.innerHTML.slice(0, 1000)
+                };
+            }
+
             return {
                 url: window.location.href,
                 title: document.title,
                 totalImages: allImages.length,
                 images: allImages,
                 chatMessagesCount: chatMessages,
-                rightSidebarPreview: rightSidebar
+                rightSidebarPreview: rightSidebar,
+                innerScrollInfo
             };
         });
 
-        res.json({ success: true, domInfo, screenshotPath });
+        // Test collectVisiblePhotos
+        let testCollect = [];
+        try {
+            const raw = await page.evaluate(collectVisiblePhotos);
+            testCollect = raw.map(p => ({
+                id: p.id,
+                source: p.source,
+                date: p.date,
+                normalizedDate: normalizeSendDate(p),
+                dateSource: p.dateSource,
+                url: (p.url || '').slice(0, 60)
+            }));
+        } catch (e) {
+            testCollect = [{ error: e.message }];
+        }
+
+        // Test scroll step
+        const scrollTest = await page.evaluate(() => {
+            const isc = document.querySelector('#innerScrollContainer');
+            if (!isc) return { error: "No isc" };
+            let scrollEl = isc;
+            while (scrollEl && scrollEl !== document.body) {
+                const s = window.getComputedStyle(scrollEl);
+                if (s.overflowY === 'scroll' || s.overflowY === 'auto') break;
+                scrollEl = scrollEl.parentElement;
+            }
+            if (!scrollEl || scrollEl === document.body) return { error: "No scroll container found" };
+            const before = {
+                tag: scrollEl.tagName,
+                className: scrollEl.className,
+                scrollTop: scrollEl.scrollTop,
+                scrollHeight: scrollEl.scrollHeight,
+                clientHeight: scrollEl.clientHeight
+            };
+            scrollEl.scrollTop += 800;
+            scrollEl.dispatchEvent(new Event('scroll', { bubbles: true }));
+            const after = {
+                scrollTop: scrollEl.scrollTop
+            };
+            return { before, after };
+        });
+
+        res.json({ success: true, domInfo, testCollect, scrollTest, screenshotPath });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

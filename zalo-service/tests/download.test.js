@@ -25,8 +25,9 @@ test('an undated photo is not silently saved under the selected start date', asy
     const {downloader, root} = fixture(t);
     await downloader._downloadPhotos([{id: 'missing', url: 'preview', date: ''}], 'Project', 'YYYY-MM-DD', '2026-09-12', '2026-09-12');
     assert.equal(fs.existsSync(path.join(root, 'input_images', 'Project', '2026-09-12')), false);
+    assert.equal(fs.existsSync(path.join(root, 'input_images', 'Project', 'unknown-date')), true);
     assert.equal(downloader.progress.unknownDate, 1);
-    assert.equal(downloader.progress.downloaded, 0);
+    assert.equal(downloader.progress.downloaded, 1);
 });
 
 test('a send date outside the selected range never gets written', async t => {

@@ -91,6 +91,8 @@ def test_sync_employees_to_project_with_mock_portraits(tmp_path):
     assert results["total_found"] == 2
     assert results["bound_existing"] == 1  # Bui Tien Giap matched existing folder
     assert results["created_new"] == 1     # Tran Van Moi is newly created
+    assert results["internal_codes_created"] == 2
+    assert all("internal_code" in d and d["internal_code"].startswith("NV-") for d in results["details"])
 
     # Verify employees in registry
     emp_list = registry.list_employees(pid)
@@ -98,9 +100,18 @@ def test_sync_employees_to_project_with_mock_portraits(tmp_path):
 
     giap = next(e for e in emp_list if "Giáp" in e["display_name"] or "Giap" in e["display_name"])
     assert giap["memberships"][0]["payroll_code"] == "00328"
+    assert giap["internal_code"].startswith("NV-")
 
     moi = next(e for e in emp_list if "Mới" in e["display_name"])
     assert moi["memberships"][0]["payroll_code"] == "00999"
+    assert moi["internal_code"].startswith("NV-")
+
+    # Run sync again: internal code should remain unchanged and not created again
+    results2 = sync_employees_to_project(pid, extracted, registry)
+    assert results2["internal_codes_created"] == 0
+    emp_list2 = registry.list_employees(pid)
+    giap2 = next(e for e in emp_list2 if "Giáp" in e["display_name"] or "Giap" in e["display_name"])
+    assert giap2["internal_code"] == giap["internal_code"]
 
 
 def test_api_import_file_endpoint(tmp_path):
@@ -142,6 +153,7 @@ def test_api_import_file_endpoint(tmp_path):
     assert data["success"] is True
     assert data["total_found"] == 2
     assert data["created_new"] == 2
+    assert data["internal_codes_created"] == 2
 
     # Verify employees now exist in project
     emp_res = client.get(f"/api/portraits?project_id={pid}")
@@ -150,3 +162,4 @@ def test_api_import_file_endpoint(tmp_path):
     assert emp_data["total"] == 2
     assert any(e["payroll_code"] == "00111" for e in emp_data["employees"])
     assert any(e["payroll_code"] == "00222" for e in emp_data["employees"])
+    assert all(e["internal_code"].startswith("NV-") for e in emp_data["employees"])
