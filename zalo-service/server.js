@@ -99,7 +99,14 @@ app.post("/api/login/qr", async (req, res) => {
         }
 
         // Start QR login in background (non-blocking)
-        zaloClient.loginWithQR().catch((err) => {
+        zaloClient.loginWithQR().then(async () => {
+            console.log("[Server] QR login succeeded, syncing session to browser...");
+            if (zaloClient.credentials) {
+                await browserDownloader.syncSessionFromCredentials(zaloClient.credentials).catch((e) => {
+                    console.warn("[Server] Browser session sync error:", e.message);
+                });
+            }
+        }).catch((err) => {
             console.error("[Server] QR login error:", err.message);
         });
 
@@ -383,6 +390,19 @@ app.post("/api/download/cancel", async (req, res) => {
 });
 
 /**
+ * POST /api/download/browser/show
+ * Show Chrome browser window to user
+ */
+app.post("/api/download/browser/show", async (req, res) => {
+    try {
+        const ok = await browserDownloader.setBrowserVisible(true);
+        res.json({ success: ok });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
  * Debug endpoint to inspect current browser DOM and screenshot
  */
 app.get("/api/debug/dom", async (req, res) => {
@@ -586,9 +606,12 @@ async function start() {
 
     // Try auto-login with saved credentials in background without blocking server listen
     zaloClient.tryAutoLogin()
-        .then((success) => {
+        .then(async (success) => {
             if (success) {
                 console.log("[Server] Auto-login completed successfully");
+                if (zaloClient.credentials) {
+                    await browserDownloader.syncSessionFromCredentials(zaloClient.credentials).catch(() => {});
+                }
             }
         })
         .catch((err) => {

@@ -2725,6 +2725,25 @@ async function startZaloQrLogin(force = false) {
     }
 }
 
+// Hiển thị trực tiếp cửa sổ Chrome thật
+async function showZaloBrowserWindow() {
+    try {
+        appendZaloLog('[Hệ thống] Đang yêu cầu hiển thị cửa sổ trình duyệt Chrome...', 'info');
+        const res = await fetch('/api/zalo/download/browser/show', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            showToast('Đã mở cửa sổ Chrome trên màn hình', 'success');
+            appendZaloLog('[Hệ thống] Đã đưa cửa sổ Chrome lên màn hình.', 'success');
+        } else {
+            showToast('Không thể mở cửa sổ Chrome: ' + (data.error || 'Trình duyệt chưa sẵn sàng'), 'warning');
+            appendZaloLog('[Cảnh báo] ' + (data.error || 'Trình duyệt chưa sẵn sàng'), 'warning');
+        }
+    } catch (err) {
+        showToast('Lỗi kết nối: ' + err.message, 'error');
+        appendZaloLog('[Lỗi] ' + err.message, 'error');
+    }
+}
+
 // Xử lý làm mới mã QR thông minh theo ngữ cảnh (Tải ảnh vs Đăng nhập API)
 async function handleZaloQrRefresh() {
     if (zaloIsDownloading || zaloCurrentQrSource === 'download') {

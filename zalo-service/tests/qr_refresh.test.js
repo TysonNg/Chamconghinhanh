@@ -7,6 +7,18 @@ test("ZaloBrowserDownloader exposes refreshQrCode, cancelDownload, and _captureQ
     assert.equal(typeof downloader.refreshQrCode, "function");
     assert.equal(typeof downloader.cancelDownload, "function");
     assert.equal(typeof downloader._captureQrImage, "function");
+    assert.equal(typeof downloader.syncSessionFromCredentials, "function");
+    assert.equal(typeof downloader.setBrowserVisible, "function");
+});
+
+test("syncSessionFromCredentials returns false gracefully when no cookies provided", async () => {
+    const downloader = new ZaloBrowserDownloader();
+    const result1 = await downloader.syncSessionFromCredentials(null);
+    assert.equal(result1, false);
+    const result2 = await downloader.syncSessionFromCredentials({});
+    assert.equal(result2, false);
+    const result3 = await downloader.syncSessionFromCredentials({ cookie: [] });
+    assert.equal(result3, false);
 });
 
 test("refreshQrCode throws error when not in waiting_qr state or no page", async () => {

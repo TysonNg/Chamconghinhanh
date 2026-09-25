@@ -1954,6 +1954,13 @@ def zalo_download_cancel():
     return jsonify(result), status
 
 
+@app.route('/api/zalo/download/browser/show', methods=['POST'])
+def zalo_download_browser_show():
+    """Hiển thị cửa sổ trình duyệt Chrome tải ảnh"""
+    result, status = _proxy_zalo('/api/download/browser/show', method='POST')
+    return jsonify(result), status
+
+
 @app.route('/api/zalo/health')
 def zalo_health():
     """Kiểm tra Zalo service có đang chạy không"""

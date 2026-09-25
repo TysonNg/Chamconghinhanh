@@ -184,15 +184,92 @@ class ZaloBrowserDownloader {
     }
 
     /**
+     * Đồng bộ phiên đăng nhập từ ZaloClient (credentials.json) vào Puppeteer
+     */
+    async syncSessionFromCredentials(credentials) {
+        if (!credentials || !credentials.cookie || !Array.isArray(credentials.cookie) || credentials.cookie.length === 0) {
+            return false;
+        }
+        try {
+            this._log("Đang đồng bộ phiên đăng nhập Zalo vào trình duyệt...");
+            await this.getOrLaunchBrowser(true); // khởi chạy ngầm
+
+            const puppeteerCookies = credentials.cookie.map(c => {
+                let domain = c.domain || ".zalo.me";
+                if (!domain.includes("zalo.me")) domain = ".zalo.me";
+                return {
+                    name: c.key || c.name,
+                    value: String(c.value || ""),
+                    domain: domain,
+                    path: c.path || "/",
+                    httpOnly: !!c.httpOnly,
+                    secure: c.secure !== false
+                };
+            }).filter(c => c.name && c.value);
+
+            if (puppeteerCookies.length > 0) {
+                await this.page.setCookie(...puppeteerCookies);
+                this._log(`Đã nạp ${puppeteerCookies.length} cookies vào trình duyệt.`);
+
+                // Mở thử trang chat.zalo.me để kích hoạt session
+                await this.page.goto("https://chat.zalo.me", { waitUntil: "domcontentloaded", timeout: 25000 });
+                await new Promise(r => setTimeout(r, 2500));
+
+                const isChatReady = await this.page.$("#contact-search-input, .conv-item, #main-tab").catch(() => null);
+                if (isChatReady) {
+                    this.isLoggedIn = true;
+                    this.currentQrBase64 = null;
+                    this.progress.qrImage = null;
+                    this.progress.qrExpiresAt = null;
+                    this._log("Đồng bộ phiên Zalo Web thành công! Trình duyệt đã sẵn sàng tải ảnh.");
+                    return true;
+                }
+            }
+        } catch (err) {
+            this._log(`Cảnh báo đồng bộ phiên: ${err.message}`);
+        }
+        return false;
+    }
+
+    /**
+     * Bật/Tắt hiển thị cửa sổ Chrome thật cho người dùng xem
+     */
+    async setBrowserVisible(visible = true) {
+        try {
+            if (this.currentHeadless === !visible && this.browser && this.browser.connected) {
+                if (visible && this.page) {
+                    await this.page.bringToFront();
+                    const { exec } = require("child_process");
+                    const psFocus = `powershell -NoProfile -Command "$wshell = New-Object -ComObject wscript.shell; $procs = Get-Process -Name chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -match 'Zalo' }; if ($procs) { $wshell.AppActivate($procs[0].Id) }"`;
+                    exec(psFocus);
+                }
+                return true;
+            }
+
+            // Khởi động lại ở chế độ hiển thị mong muốn
+            this._log(`Chuyển trình duyệt sang chế độ: ${visible ? "Hiển thị cửa sổ Chrome" : "Chạy ngầm"}`);
+            const wasUrl = this.page ? this.page.url() : "https://chat.zalo.me";
+            await this.getOrLaunchBrowser(!visible);
+            if (wasUrl && !wasUrl.startsWith("about:")) {
+                await this.page.goto(wasUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+            }
+            return true;
+        } catch (err) {
+            this._log(`Lỗi khi chuyển đổi hiển thị trình duyệt: ${err.message}`);
+            return false;
+        }
+    }
+
+    /**
      * Ensure user is logged in to Zalo Web
      */
     async ensureLoggedIn(headless = true) {
         await this.getOrLaunchBrowser(headless);
 
         const currentUrl = this.page.url();
-        if (!currentUrl.includes("chat.zalo.me") || currentUrl.includes("id.zalo.me")) {
+        if (!currentUrl.includes("chat.zalo.me") && !currentUrl.includes("id.zalo.me")) {
             this._log("Đang mở trang https://chat.zalo.me...");
-            await this.page.goto("https://chat.zalo.me", { waitUntil: "domcontentloaded", timeout: 45000 });
+            await this.page.goto("https://chat.zalo.me", { waitUntil: "domcontentloaded", timeout: 30000 });
         }
 
         if (!headless) {
@@ -206,9 +283,10 @@ class ZaloBrowserDownloader {
 
         this._log("Đang kiểm tra trạng thái đăng nhập Zalo Web...");
 
+        // Kiểm tra nhanh xem đã ở trạng thái đăng nhập hay chưa (tối đa 8 giây)
         let state = null; // 'logged_in' | 'needs_login'
         const startCheck = Date.now();
-        while (Date.now() - startCheck < 45000) {
+        while (Date.now() - startCheck < 10000) {
             const url = this.page.url();
             if (url.includes("id.zalo.me") || url.includes("/login")) {
                 state = "needs_login";
@@ -227,161 +305,153 @@ class ZaloBrowserDownloader {
                 break;
             }
 
-            await new Promise(r => setTimeout(r, 1000));
+            await new Promise(r => setTimeout(r, 600));
         }
 
-        // If state is still unknown, try reloading once
-        if (state === null) {
-            this._log("Trang Zalo Web tải chậm, đang thử tải lại trang...");
-            try {
-                await this.page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
-                await new Promise(r => setTimeout(r, 5000));
-
-                const url2 = this.page.url();
-                if (url2.includes("id.zalo.me") || url2.includes("/login")) {
-                    state = "needs_login";
-                } else {
-                    const isQr2 = await this.page.$(".qr-container, .qrcode, canvas").catch(() => null);
-                    if (isQr2) {
-                        state = "needs_login";
-                    } else {
-                        const isChat2 = await this.page.$("#contact-search-input, .conv-item, #main-tab").catch(() => null);
-                        if (isChat2) {
-                            state = "logged_in";
-                        }
-                    }
-                }
-            } catch (reloadErr) {
-                this._log(`Không thể reload trang: ${reloadErr.message}`);
-            }
-        }
-
-        if (state === "needs_login" || this.page.url().includes("id.zalo.me")) {
-            this.isLoggedIn = false;
-            this.progress.status = "waiting_qr";
-            this.abortLogin = false;
-
-            if (!headless || this.currentHeadless === false) {
-                try {
-                    await this.page.bringToFront();
-                    const { exec } = require("child_process");
-                    const psFocus = `powershell -NoProfile -Command "$wshell = New-Object -ComObject wscript.shell; $procs = Get-Process -Name chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -match 'Zalo' }; if ($procs) { $wshell.AppActivate($procs[0].Id) }"`;
-                    exec(psFocus);
-                } catch (e) {}
-            }
-
-            this._log("👉 Vui lòng mở app Zalo trên điện thoại, quét mã QR hiển thị ngay trên giao diện web để đăng nhập.");
-
-            // Chụp mã QR lần đầu (cắt chuẩn hình vuông từ SVG)
-            await this._captureQrImage();
-            this.progress.qrExpiresAt = Date.now() + 60000; // QR Zalo có hiệu lực ~60s
-
-            // Chờ người dùng quét mã trên điện thoại (tối đa 120s)
-            this._log("Đang chờ xác nhận quét mã trên điện thoại (tối đa 2 phút, tự động làm mới khi hết hạn)...");
-            const startWait = Date.now();
-            let lastCaptureTime = Date.now();
-
-            while (Date.now() - startWait < 120000) {
-                if (this.abortLogin) {
-                    throw new Error("Đã hủy quá trình chờ quét mã QR.");
-                }
-
-                const isChatReady = await this.page.$("#contact-search-input, .conv-item, #main-tab").catch(() => null);
-                if (isChatReady) {
-                    this.isLoggedIn = true;
-                    this.currentQrBase64 = null;
-                    this.progress.qrImage = null;
-                    this.progress.qrExpiresAt = null;
-                    this.progress.status = "opening_group";
-                    this._log("Đăng nhập Zalo Web thành công! Đã lưu phiên làm việc.");
-                    await new Promise(r => setTimeout(r, 2000));
-                    return true;
-                }
-
-                // Tự động kiểm tra mã QR hết hạn trên Zalo Web và click làm mới
-                try {
-                    const isExpired = await this.page.evaluate(() => {
-                        // Kiểm tra nhiều selectors khác nhau cho QR hết hạn
-                        const selectors = [
-                            ".qrcode-expired",
-                            ".qr-expired",
-                            "[class*='expired']",
-                            "[class*='refresh-qr']"
-                        ];
-                        for (const sel of selectors) {
-                            const el = document.querySelector(sel);
-                            if (!el) continue;
-                            const style = window.getComputedStyle(el);
-                            if (style.display !== "none" && style.visibility !== "hidden") return sel;
-                        }
-                        // Kiểm tra text "hết hạn" hoặc "tải lại" trên trang
-                        const allText = document.body.innerText || '';
-                        if (/mã.*hết hạn|hết hạn.*qr|tải lại mã|refresh.*qr/i.test(allText)) return 'text';
-                        return false;
-                    }).catch(() => false);
-
-                    if (isExpired) {
-                        this._log("Mã QR Zalo đã hết hạn, đang tự động lấy mã mới...");
-                        // Click bất kỳ nút làm mới nào tìm được
-                        await this.page.evaluate(() => {
-                            const refreshSelectors = [
-                                ".qrcode-expired", ".qr-expired",
-                                "[class*='expired']", "[class*='refresh-qr']",
-                                "[class*='retry']"
-                            ];
-                            for (const sel of refreshSelectors) {
-                                const el = document.querySelector(sel);
-                                if (el && el.getClientRects().length) { el.click(); return; }
-                            }
-                        }).catch(() => {});
-                        await new Promise(r => setTimeout(r, 2500));
-                        await this._captureQrImage();
-                        lastCaptureTime = Date.now();
-                        this.progress.qrExpiresAt = Date.now() + 60000;
-                    }
-                } catch (e) {}
-
-                // Định kỳ chụp lại nếu chưa có ảnh hoặc sau 5 giây (giảm từ 15s)
-                if (!this.progress.qrImage || (Date.now() - lastCaptureTime > 5000)) {
-                    await this._captureQrImage();
-                    lastCaptureTime = Date.now();
-                }
-
-                await new Promise(r => setTimeout(r, 1500));
-            }
-
-            throw new Error("Hết thời gian chờ quét mã QR đăng nhập (2 phút). Vui lòng bấm Lấy mã mới hoặc thử lại.");
-        }
-
-        // Nếu đã có giao diện chat
-        const isChatReady = await this.page.$("#contact-search-input, .conv-item, #main-tab").catch(() => null);
-        if (isChatReady) {
+        // Nếu đã ở trong giao diện chat
+        if (state === "logged_in") {
             this.isLoggedIn = true;
             this.currentQrBase64 = null;
             this.progress.qrImage = null;
+            this.progress.qrExpiresAt = null;
             this._log("Đã kết nối tài khoản Zalo Web thành công.");
             return true;
         }
 
-        throw new Error("Không thể kết nối vào Zalo Web. Vui lòng kiểm tra lại mạng hoặc thử lại.");
+        // Nếu chưa đăng nhập, điều hướng trực tiếp đến trang đăng nhập QR để tránh chờ redirect
+        this._log("Chưa có phiên Zalo Web, đang tải trang đăng nhập mã QR...");
+        const targetLoginUrl = "https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me%2F";
+        if (!this.page.url().includes("id.zalo.me")) {
+            await this.page.goto(targetLoginUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+        }
+
+        this.isLoggedIn = false;
+        this.progress.status = "waiting_qr";
+        this.abortLogin = false;
+
+        if (!headless || this.currentHeadless === false) {
+            try {
+                await this.page.bringToFront();
+                const { exec } = require("child_process");
+                const psFocus = `powershell -NoProfile -Command "$wshell = New-Object -ComObject wscript.shell; $procs = Get-Process -Name chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -match 'Zalo' }; if ($procs) { $wshell.AppActivate($procs[0].Id) }"`;
+                exec(psFocus);
+            } catch (e) {}
+        }
+
+        this._log("👉 Vui lòng mở app Zalo trên điện thoại, quét mã QR hiển thị ngay trên giao diện web để đăng nhập.");
+
+        // Chụp mã QR lần đầu (chuẩn hình vuông sắc nét)
+        await this._captureQrImage();
+        this.progress.qrExpiresAt = Date.now() + 60000;
+
+        // Chờ người dùng quét mã trên điện thoại (tối đa 120s)
+        this._log("Đang chờ quét mã trên điện thoại (tự động làm mới khi hết hạn, hoặc bấm 'Hiện Cửa Sổ Chrome')...");
+        const startWait = Date.now();
+        let lastCaptureTime = Date.now();
+
+        while (Date.now() - startWait < 120000) {
+            if (this.abortLogin) {
+                throw new Error("Đã hủy quá trình chờ quét mã QR.");
+            }
+
+            const isChatReady = await this.page.$("#contact-search-input, .conv-item, #main-tab").catch(() => null);
+            if (isChatReady) {
+                this.isLoggedIn = true;
+                this.currentQrBase64 = null;
+                this.progress.qrImage = null;
+                this.progress.qrExpiresAt = null;
+                this.progress.status = "opening_group";
+                this._log("Đăng nhập Zalo Web thành công! Đã lưu phiên làm việc.");
+                await new Promise(r => setTimeout(r, 1500));
+                return true;
+            }
+
+            // Tự động kiểm tra mã QR hết hạn trên Zalo Web và click làm mới
+            try {
+                const isExpired = await this.page.evaluate(() => {
+                    const selectors = [
+                        ".qrcode-expired",
+                        ".qr-expired",
+                        "[class*='expired']",
+                        "[class*='refresh-qr']"
+                    ];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (!el) continue;
+                        const style = window.getComputedStyle(el);
+                        if (style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0") return sel;
+                    }
+                    return false;
+                }).catch(() => false);
+
+                if (isExpired) {
+                    this._log("Mã QR Zalo đã hết hạn, đang tự động lấy mã mới...");
+                    await this.page.evaluate(() => {
+                        const refreshSelectors = [
+                            ".qrcode-expired", ".qr-expired",
+                            "[class*='expired']", "[class*='refresh-qr']",
+                            "[class*='retry']", "button[class*='refresh']"
+                        ];
+                        for (const sel of refreshSelectors) {
+                            const el = document.querySelector(sel);
+                            if (el && el.getClientRects().length) { el.click(); return; }
+                        }
+                    }).catch(() => {});
+                    await new Promise(r => setTimeout(r, 2000));
+                    await this._captureQrImage();
+                    lastCaptureTime = Date.now();
+                    this.progress.qrExpiresAt = Date.now() + 60000;
+                }
+            } catch (e) {}
+
+            // Định kỳ chụp lại nếu chưa có ảnh hoặc sau 6 giây
+            if (!this.progress.qrImage || (Date.now() - lastCaptureTime > 6000)) {
+                await this._captureQrImage();
+                lastCaptureTime = Date.now();
+            }
+
+            await new Promise(r => setTimeout(r, 1200));
+        }
+
+        throw new Error("Hết thời gian chờ quét mã QR đăng nhập (2 phút). Vui lòng bấm Lấy Mã QR Mới hoặc bấm 'Hiện Cửa Sổ Chrome'.");
     }
 
     /**
      * Chụp mã QR sắc nét, chuẩn hình vuông từ trang Zalo Web
+     * Đảm bảo ảnh luôn vuông vức, không chụp viền ngoài làm co nhỏ mã
      */
     async _captureQrImage() {
         if (!this.page) return null;
         try {
-            await this.page.waitForSelector(".qr-container svg, .qr-container, .qrcode", { timeout: 12000 });
-            // Ưu tiên svg bên trong qr-container để có hình vuông sát viền, nét cao nhất
+            // Đợi selector xuất hiện
+            await this.page.waitForSelector(".qr-container svg, .qrcode canvas, .qrcode img, .qr-container", { timeout: 8000 });
+
+            // Kiểm tra xem mã QR có đang bị che bởi overlay hết hạn không
+            const isOverlayExpired = await this.page.evaluate(() => {
+                const expEl = document.querySelector(".qrcode-expired, .qr-expired, [class*='expired']");
+                if (expEl) {
+                    const style = window.getComputedStyle(expEl);
+                    if (style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0") {
+                        return true;
+                    }
+                }
+                return false;
+            }).catch(() => false);
+
+            if (isOverlayExpired) {
+                // Không chụp ảnh khi đang báo hết hạn để tránh hiển thị ảnh co nhỏ/lỗi
+                return null;
+            }
+
+            // Ưu tiên 1: svg bên trong .qr-container (Zalo Web chuẩn)
             const svgEl = await this.page.$(".qr-container svg");
             let targetEl = svgEl;
+
+            // Ưu tiên 2: canvas hoặc img
             if (!targetEl) {
-                targetEl = await this.page.$(".qr-container");
+                targetEl = await this.page.$(".qrcode canvas, .qrcode img, canvas.qrcode");
             }
-            if (!targetEl) {
-                targetEl = await this.page.$(".qrcode");
-            }
+
             if (targetEl) {
                 const b64 = await targetEl.screenshot({ encoding: "base64" });
                 const dataUri = "data:image/png;base64," + b64;
@@ -391,6 +461,31 @@ class ZaloBrowserDownloader {
                     fs.writeFileSync(path.join(__dirname, "qr.png"), Buffer.from(b64, "base64"));
                 } catch {}
                 return dataUri;
+            }
+
+            // Fallback: Nếu chỉ tìm thấy .qr-container, clip lấy vùng hình vuông ở trên (chứa mã QR)
+            const qrCont = await this.page.$(".qr-container");
+            if (qrCont) {
+                const box = await qrCont.boundingBox();
+                if (box) {
+                    const side = Math.min(box.width, box.height, 240);
+                    const b64 = await this.page.screenshot({
+                        clip: {
+                            x: box.x + (box.width - side) / 2,
+                            y: box.y,
+                            width: side,
+                            height: side
+                        },
+                        encoding: "base64"
+                    });
+                    const dataUri = "data:image/png;base64," + b64;
+                    this.currentQrBase64 = dataUri;
+                    this.progress.qrImage = dataUri;
+                    try {
+                        fs.writeFileSync(path.join(__dirname, "qr.png"), Buffer.from(b64, "base64"));
+                    } catch {}
+                    return dataUri;
+                }
             }
         } catch (e) {
             console.warn("[BrowserDownloader] _captureQrImage warning:", e.message);
@@ -408,21 +503,29 @@ class ZaloBrowserDownloader {
         this._log("Đang làm mới mã QR Zalo theo yêu cầu...");
         try {
             const clicked = await this.page.evaluate(() => {
-                const expiredEl = document.querySelector(".qrcode-expired");
-                if (expiredEl) {
-                    expiredEl.click();
-                    return true;
+                const refreshSelectors = [
+                    ".qrcode-expired", ".qr-expired",
+                    "[class*='expired']", "[class*='refresh-qr']",
+                    "[class*='retry']", "button[class*='refresh']"
+                ];
+                for (const sel of refreshSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el && el.getClientRects().length) {
+                        el.click();
+                        return true;
+                    }
                 }
                 return false;
             });
             if (!clicked) {
-                await this.page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+                await this.page.goto("https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me%2F", { waitUntil: "domcontentloaded", timeout: 20000 });
             }
         } catch (e) {
-            await this.page.reload({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+            await this.page.goto("https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me%2F", { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
         }
-        await new Promise(r => setTimeout(r, 2500));
+        await new Promise(r => setTimeout(r, 2000));
         const newQr = await this._captureQrImage();
+        this.progress.qrExpiresAt = Date.now() + 60000;
         this._log("Đã cập nhật mã QR mới thành công.");
         return newQr;
     }
