@@ -355,17 +355,47 @@ class ZaloBrowserDownloader {
                 throw new Error("Đã hủy quá trình chờ quét mã QR.");
             }
 
-            const isChatReady = await this.page.$("#contact-search-input, .conv-item, #main-tab").catch(() => null);
-            if (isChatReady) {
-                this.isLoggedIn = true;
-                this.currentQrBase64 = null;
-                this.progress.qrImage = null;
-                this.progress.qrExpiresAt = null;
-                this.progress.status = "opening_group";
-                this._log("Đăng nhập Zalo Web thành công! Đã lưu phiên làm việc.");
+            const currentUrl = this.page.url();
+            const isOnChatDomain = currentUrl.includes("chat.zalo.me") && !currentUrl.includes("id.zalo.me");
+
+            // Kiểm tra xem có đang yêu cầu xác minh bảo mật không (Chọn 3 người bạn gần đây)
+            const needsVerification = await this.page.evaluate(() => {
+                const text = (document.body ? document.body.innerText : "").toLowerCase();
+                return text.includes("chọn 3 người") || text.includes("xác thực tài khoản") || text.includes("xác minh danh tính") || text.includes("liên lạc gần đây");
+            }).catch(() => false);
+
+            if (needsVerification && this.currentHeadless) {
+                this._log("⚠️ Zalo yêu cầu xác minh danh tính (chọn 3 người bạn). Đang tự động mở cửa sổ Chrome lên màn hình để bạn chọn...");
+                await this.setBrowserVisible(true);
+            }
+
+            if (isOnChatDomain) {
                 await this._checkAndClickSyncPrompt();
-                await new Promise(r => setTimeout(r, 1500));
-                return true;
+                const isChatReady = await this.page.$("#contact-search-input, .conv-item, #main-tab, .chat-message, .zl-avatar").catch(() => null);
+                if (isChatReady) {
+                    this.isLoggedIn = true;
+                    this.currentQrBase64 = null;
+                    this.progress.qrImage = null;
+                    this.progress.qrExpiresAt = null;
+                    this.progress.status = "opening_group";
+                    this._log("Đăng nhập Zalo Web thành công! Đã lưu phiên làm việc.");
+                    await this._checkAndClickSyncPrompt();
+                    await new Promise(r => setTimeout(r, 1500));
+                    return true;
+                }
+            } else {
+                const isChatReady = await this.page.$("#contact-search-input, .conv-item, #main-tab").catch(() => null);
+                if (isChatReady) {
+                    this.isLoggedIn = true;
+                    this.currentQrBase64 = null;
+                    this.progress.qrImage = null;
+                    this.progress.qrExpiresAt = null;
+                    this.progress.status = "opening_group";
+                    this._log("Đăng nhập Zalo Web thành công! Đã lưu phiên làm việc.");
+                    await this._checkAndClickSyncPrompt();
+                    await new Promise(r => setTimeout(r, 1500));
+                    return true;
+                }
             }
 
             // Tự động kiểm tra mã QR hết hạn trên Zalo Web và click làm mới
@@ -462,6 +492,10 @@ class ZaloBrowserDownloader {
                          text === "bắt đầu đồng bộ" ||
                          text === "tiếp tục đồng bộ" ||
                          text === "đồng bộ dữ liệu" ||
+                         text === "bỏ qua" ||
+                         text === "để sau" ||
+                         text === "lúc khác" ||
+                         text === "không phải bây giờ" ||
                          text.includes("sync now")) &&
                         el.children.length <= 2
                     ) {

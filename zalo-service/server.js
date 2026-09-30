@@ -417,6 +417,9 @@ app.get("/api/debug/dom", async (req, res) => {
         await page.screenshot({ path: screenshotPath });
 
         const domInfo = await page.evaluate(() => {
+            const bodyText = document.body ? document.body.innerText : "";
+            const qrText = document.querySelector(".qr-container, .qrcode, [class*='qr']")?.innerText || "";
+            const forms = Array.from(document.querySelectorAll("input, button")).map(el => el.outerHTML.slice(0, 100));
             const allImages = Array.from(document.querySelectorAll("img")).map(img => ({
                 src: img.src ? img.src.slice(0, 100) : "",
                 className: img.className,

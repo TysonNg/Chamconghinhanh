@@ -230,6 +230,12 @@ class SyncManager {
         if (this.isRunningSync) return;
         if (!this.config.mappings || this.config.mappings.length === 0) return;
 
+        // Nếu trình duyệt chưa đăng nhập Zalo Web, không tự động chạy ngầm tránh treo chờ mã QR
+        if (this.browserDownloader && !this.browserDownloader.isLoggedIn) {
+            console.log("[SyncManager] Trình duyệt chưa đăng nhập Zalo Web, tạm hoãn tự động tải bù khi khởi động để chờ người dùng đăng nhập.");
+            return;
+        }
+
         console.log("[SyncManager] Đang kiểm tra ngày thiếu ảnh khi khởi động hệ thống...");
         let needBackfill = false;
         for (const m of this.config.mappings) {

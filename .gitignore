@@ -57,8 +57,19 @@ ngay_rong/
 !templates/word/giai_trinh_tong_hop.docx
 *.pdf
 
-# Local identity registry and review snapshots
-data/identity.sqlite3*
+# Local databases, sqlite3, and backup files
+data/*.sqlite3*
+data/*.db*
+*.sqlite3*
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.bak
+
+# Zalo credentials
+zalo-service/credentials.json
+zalo-service/credentials*.json
+!zalo-service/credentials.example.json
 
 # Test/render caches
 .cache/

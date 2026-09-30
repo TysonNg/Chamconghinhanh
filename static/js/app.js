@@ -289,7 +289,7 @@ function switchResultSubtab(subtab, updateUrl = true) {
 }
 
 function switchTab(tabId, targetSubtab = null, pushHistory = true) {
-    if (!VALID_TABS[tabId]) {
+    if (!VALID_TABS.hasOwnProperty(tabId)) {
         tabId = 'process';
     }
 
@@ -329,12 +329,20 @@ function switchTab(tabId, targetSubtab = null, pushHistory = true) {
         }
         activeSub = sub;
     } else if (tabId === 'zalo') {
-        if (typeof initZaloTab === 'function') {
-            initZaloTab();
+        try {
+            if (typeof initZaloTab === 'function') {
+                initZaloTab();
+            }
+        } catch (e) {
+            console.error('[TabNav] Lỗi initZaloTab:', e);
         }
     } else if (tabId === 'supplement') {
-        if (typeof supplementLoadRecords === 'function') {
-            supplementLoadRecords();
+        try {
+            if (typeof supplementLoadRecords === 'function') {
+                supplementLoadRecords();
+            }
+        } catch (e) {
+            console.error('[TabNav] Lỗi supplementLoadRecords:', e);
         }
     }
 
@@ -354,7 +362,9 @@ function initTabFromUrl(pushHistory = false) {
     const tabParam = params.get('tab');
     const subtabParam = params.get('subtab');
 
-    if (tabParam && VALID_TABS[tabParam]) {
+    console.log('[TabNav] initTabFromUrl:', { tabParam, subtabParam, hasTab: !!tabParam, isValid: tabParam ? !!VALID_TABS[tabParam] : false });
+
+    if (tabParam && VALID_TABS.hasOwnProperty(tabParam)) {
         switchTab(tabParam, subtabParam, pushHistory);
     } else {
         switchTab('process', 'excel', false);
@@ -374,6 +384,9 @@ document.querySelectorAll('.nav-item').forEach(item => {
         switchTab(tabId, null, true);
     });
 });
+
+// Khôi phục tab ngay khi script load (DOM đã sẵn sàng vì script ở cuối body)
+initTabFromUrl(false);
 // ==================== Results ====================
 
 async function loadAggregateReports(btn) {
@@ -2795,11 +2808,81 @@ function initZaloTab() {
     loadProjectsForZalo();
     checkZaloStatus();
     initZaloAutoSync();
+    checkActiveZaloDownload();
 
     // Re-render cached groups & restore selected group UI when switching tabs
     if (zaloGroupsList.length > 0) {
         renderZaloGroupItems(zaloGroupsList);
         restoreZaloGroupSelection();
+    }
+}
+
+// Kiểm tra xem hiện tại có tiến trình tải nào đang chạy ngầm hoặc chờ quét QR không
+async function checkActiveZaloDownload() {
+    try {
+        const res = await fetch('/api/zalo/download/progress/poll');
+        const data = await res.json();
+        if (data.success && data.data) {
+            const p = data.data;
+            if (p.status && p.status !== 'idle' && p.status !== 'done' && p.status !== 'error') {
+                console.log('[Zalo] Phát hiện tiến trình tải đang chạy ngầm, tự động kết nối:', p.status);
+                zaloIsDownloading = true;
+                const cancelBtn = document.getElementById('btn-cancel-zalo-download');
+                if (cancelBtn) cancelBtn.style.display = 'inline-flex';
+                listenZaloProgress();
+            }
+        }
+    } catch (e) {
+        console.warn('checkActiveZaloDownload error:', e);
+    }
+}
+
+// Hủy / Dừng tiến trình tải ảnh đang chạy
+async function cancelZaloDownload() {
+    if (!confirm('Bạn có chắc chắn muốn hủy / dừng tiến trình tải ảnh hiện tại không?')) return;
+    try {
+        appendZaloLog('[Hệ thống] Đang gửi yêu cầu dừng tiến trình...', 'warning');
+        const res = await fetch('/api/zalo/download/cancel', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.message || 'Đã hủy tiến trình tải ảnh', 'info');
+        appendZaloLog('[Hệ thống] ' + (data.message || 'Đã hủy tiến trình tải ảnh.'), 'info');
+    } catch (e) {
+        showToast('Lỗi khi hủy tiến trình: ' + e.message, 'error');
+    } finally {
+        zaloIsDownloading = false;
+        zaloCurrentQrSource = null;
+        if (zaloEventSource) {
+            zaloEventSource.close();
+            zaloEventSource = null;
+        }
+        const cancelBtn = document.getElementById('btn-cancel-zalo-download');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+
+        const btn = document.getElementById('btn-start-zalo-download');
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>Bắt Đầu Tải Ảnh Về Máy</span>`;
+        }
+
+        const qrCard = document.getElementById('zalo-qr-card');
+        if (qrCard) qrCard.style.display = 'none';
+        const inlineBox = document.getElementById('zalo-download-qr-box');
+        if (inlineBox) inlineBox.style.display = 'none';
+
+        updateZaloProgressUI({
+            status: 'idle',
+            total: 0,
+            downloaded: 0,
+            skipped: 0,
+            failed: 0,
+            currentFile: 'Đã dừng tiến trình.'
+        });
     }
 }
 
@@ -3436,9 +3519,20 @@ async function startZaloDownload() {
 
         const data = await res.json();
         if (!data.success) {
+            if (data.error && data.error.includes('tiến trình tải ảnh đang chạy')) {
+                showToast('Đang kết nối vào tiến trình tải đang chạy...', 'info');
+                appendZaloLog('[Hệ thống] Đang có tiến trình tải ảnh đang hoạt động. Đã tự động kết nối theo dõi...', 'info');
+                zaloIsDownloading = true;
+                const cancelBtn = document.getElementById('btn-cancel-zalo-download');
+                if (cancelBtn) cancelBtn.style.display = 'inline-flex';
+                listenZaloProgress();
+                return;
+            }
             throw new Error(data.error || 'Lỗi bắt đầu tải');
         }
 
+        const cancelBtn = document.getElementById('btn-cancel-zalo-download');
+        if (cancelBtn) cancelBtn.style.display = 'inline-flex';
         appendZaloLog(`[Zalo] ${data.message || 'Đã tìm thấy tin nhắn, đang tải ảnh...'}`, 'info');
 
         // Lắng nghe tiến trình tải
@@ -3448,6 +3542,8 @@ async function startZaloDownload() {
         showToast('Lỗi tải ảnh: ' + err.message, 'error');
         appendZaloLog('[Lỗi] ' + err.message, 'error');
         zaloIsDownloading = false;
+        const cancelBtn = document.getElementById('btn-cancel-zalo-download');
+        if (cancelBtn) cancelBtn.style.display = 'none';
         if (btn) {
             btn.disabled = false;
             btn.innerHTML = `
@@ -3540,12 +3636,46 @@ function listenZaloProgress() {
             }
             if (zaloCurrentQrSource === 'download') {
                 zaloCurrentQrSource = null;
-                // Người dùng đã quét mã thành công và đang tải ảnh -> Tự động đồng bộ trạng thái Zalo trên header
                 setTimeout(() => {
                     checkZaloStatus(false);
                     loadZaloGroups(false);
                 }, 1500);
             }
+        }
+
+        // Đồng thời hiển thị khung QR trực quan ngay tại cột Tiến Trình Tải
+        const inlineBox = document.getElementById('zalo-download-qr-box');
+        const inlineImg = document.getElementById('zalo-inline-qr-img');
+        const inlineCountdown = document.getElementById('zalo-inline-qr-countdown');
+
+        if (p.status === 'waiting_qr' || p.qrImage) {
+            if (inlineBox) inlineBox.style.display = 'block';
+            if (inlineImg && p.qrImage) {
+                if (inlineImg.src !== p.qrImage) inlineImg.src = p.qrImage;
+            }
+            if (inlineCountdown && p.qrExpiresAt) {
+                const remaining = Math.max(0, Math.ceil((p.qrExpiresAt - Date.now()) / 1000));
+                inlineCountdown.innerHTML = remaining > 0
+                    ? `⏱ Mã QR còn hiệu lực: <strong style="color:#16a34a;">${remaining}s</strong>`
+                    : `⏳ Đang tự động đổi mã mới...`;
+            }
+        } else {
+            if (inlineBox) inlineBox.style.display = 'none';
+        }
+
+        const cancelBtn = document.getElementById('btn-cancel-zalo-download');
+        if (cancelBtn) {
+            if (['downloading', 'waiting_qr', 'opening_group', 'scanning_media'].includes(p.status)) {
+                cancelBtn.style.display = 'inline-flex';
+            } else if (p.status === 'done' || p.status === 'error' || p.status === 'idle') {
+                cancelBtn.style.display = 'none';
+            }
+        }
+
+        const startBtn = document.getElementById('btn-start-zalo-download');
+        if (startBtn && p.status === 'waiting_qr') {
+            startBtn.disabled = true;
+            startBtn.innerHTML = '<div class="spinner spinner-sm"></div> <span>Đang Chờ Quét QR...</span>';
         }
 
         if (p.errors && p.errors.length > 0) {
@@ -3557,6 +3687,7 @@ function listenZaloProgress() {
             if (!isDone) {
                 isDone = true;
                 zaloIsDownloading = false;
+                if (cancelBtn) cancelBtn.style.display = 'none';
                 if (zaloEventSource) {
                     zaloEventSource.close();
                     zaloEventSource = null;
