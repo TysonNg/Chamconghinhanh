@@ -23,11 +23,11 @@ test('same-name employees open separate portrait collections by ID',()=>{
   assert.equal(nodes['emp-photos-modal-name'].dataset.employeeId,'e2');
   assert.equal(refreshed,1);
 });
-test('portrait upload submits employee ID and reviewer, never a name identity',async()=>{
+test('portrait upload submits employee ID without asking for a reviewer',async()=>{
   const calls=[];
   const context=vm.createContext({
     activeEmpModalName:'e2',currentProjectName:'A',allProjectsList:[{name:'A',project_id:'p1'}],FormData,
-    prompt:()=> 'Reviewer',showToast(){},loadPortraits:async()=>{},
+    prompt:()=> { throw new Error('reviewer prompt must not open'); },showToast(){},loadPortraits:async()=>{},
     refreshEmployeePhotosModal(){},loadProjects:async()=>{},
     fetch:async(url,options)=>{calls.push({url,options});return {json:async()=>({success:true,saved_count:1})};}
   });
@@ -36,8 +36,39 @@ test('portrait upload submits employee ID and reviewer, never a name identity',a
   const form=calls[0].options.body;
   assert.equal(form.get('employee_id'),'e2');
   assert.equal(form.get('project_id'),'p1');
-  assert.equal(form.get('reviewer'),'Reviewer');
+  assert.equal(form.get('reviewer'),'system');
   assert.equal(form.has('name'),false);
+});
+test('employee transfer uses today, existing payroll code, and system reviewer without prompts',async()=>{
+  const calls=[];
+  const context=vm.createContext({
+    currentProjectName:'A',allProjectsList:[{name:'A',project_id:'p1'}],
+    allEmployeesList:[{employee_id:'e2',name:'Employee',payroll_code:'001'}],
+    document:{getElementById:id=>id==='transfer-employee-name'
+      ? {dataset:{employeeId:'e2'}} : {value:'p2'}},
+    prompt:()=> { throw new Error('transfer prompt must not open'); },
+    apiPost:async(url,payload)=>{calls.push({url,payload});return {success:true};},
+    showToast(){},closeModal(){},loadPortraits:async()=>{},loadProjects:async()=>{}
+  });
+  vm.runInContext('async '+section('submitTransferEmployee','refreshEmployeePhotosModal'),context);
+  await context.submitTransferEmployee();
+  assert.equal(calls[0].payload.employee_id,'e2');
+  assert.equal(calls[0].payload.payroll_code,'001');
+  assert.equal(calls[0].payload.reviewer,'system');
+  assert.match(calls[0].payload.effective_date,/^\d{4}-\d{2}-\d{2}$/);
+});
+test('legacy folder mapping asks only for folder, date, and safety confirmation',async()=>{
+  const calls=[];const prompts=['01','2026-09-01'];
+  const context=vm.createContext({
+    currentProjectName:'A',prompt:()=>prompts.shift(),confirm:()=>true,
+    apiPost:async(url,payload)=>{calls.push({url,payload});return {success:true};},
+    showToast(){},loadDailyPhotosStats(){}
+  });
+  vm.runInContext('async '+section('mapLegacyPhotoDay','loadDailyPhotosStats'),context);
+  await context.mapLegacyPhotoDay();
+  assert.equal(prompts.length,0);
+  assert.equal(calls[0].payload.reviewer,'system');
+  assert.equal(calls[0].payload.confirm_single_period,true);
 });
 test('confirmation preserves leading zeros and explicit membership date',async()=>{
   const prompts=['001','2026-01-01','Reviewer'];const calls=[];

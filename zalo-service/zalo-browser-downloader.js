@@ -315,6 +315,7 @@ class ZaloBrowserDownloader {
             this.progress.qrImage = null;
             this.progress.qrExpiresAt = null;
             this._log("Đã kết nối tài khoản Zalo Web thành công.");
+            await this._checkAndClickSyncPrompt();
             return true;
         }
 
@@ -362,6 +363,7 @@ class ZaloBrowserDownloader {
                 this.progress.qrExpiresAt = null;
                 this.progress.status = "opening_group";
                 this._log("Đăng nhập Zalo Web thành công! Đã lưu phiên làm việc.");
+                await this._checkAndClickSyncPrompt();
                 await new Promise(r => setTimeout(r, 1500));
                 return true;
             }
@@ -414,6 +416,119 @@ class ZaloBrowserDownloader {
         }
 
         throw new Error("Hết thời gian chờ quét mã QR đăng nhập (2 phút). Vui lòng bấm Lấy Mã QR Mới hoặc bấm 'Hiện Cửa Sổ Chrome'.");
+    }
+
+    /**
+     * Tự động phát hiện và nhấn nút Đồng bộ tin nhắn trên Zalo Web nếu có xuất hiện
+     * Quét cả popup, banner thông báo và dialog xác nhận đồng bộ
+     */
+    async _checkAndClickSyncPrompt() {
+        if (!this.page) return;
+        try {
+            const clicked = await this.page.evaluate(() => {
+                // 1. Tìm theo selectors cụ thể của Zalo Web cho popup/banner đồng bộ
+                const specificSelectors = [
+                    ".sync-msg-btn",
+                    ".sync-banner button",
+                    ".sync-popup button",
+                    "[data-id*='sync'] button",
+                    "[class*='sync-msg']",
+                    "[class*='sync-banner']",
+                    "[class*='sync_btn']",
+                    "div[title*='Đồng bộ']",
+                    "button[title*='Đồng bộ']"
+                ];
+
+                for (const sel of specificSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el && el.getClientRects().length > 0) {
+                        const style = window.getComputedStyle(el);
+                        if (style.display !== "none" && style.visibility !== "hidden") {
+                            el.click();
+                            return sel;
+                        }
+                    }
+                }
+
+                // 2. Tìm theo text "đồng bộ ngay", "đồng bộ tin nhắn", "bắt đầu đồng bộ", "đồng bộ dữ liệu"
+                const candidates = Array.from(document.querySelectorAll("button, .btn, div[role='button'], a, span, p"));
+                for (const el of candidates) {
+                    const text = (el.textContent || "").trim().toLowerCase();
+                    if (
+                        (text === "đồng bộ ngay" ||
+                         text === "đồng bộ tin nhắn" ||
+                         text.includes("đồng bộ ngay") ||
+                         text.includes("đồng bộ tin nhắn") ||
+                         text === "bắt đầu đồng bộ" ||
+                         text === "tiếp tục đồng bộ" ||
+                         text === "đồng bộ dữ liệu" ||
+                         text.includes("sync now")) &&
+                        el.children.length <= 2
+                    ) {
+                        const clickable = el.closest("button, .btn, div[role='button'], a") || el;
+                        clickable.click();
+                        return text;
+                    }
+                }
+                return false;
+            });
+
+            if (clicked) {
+                this._log(`Đã phát hiện và tự động nhấn nút đồng bộ: "${clicked}".`);
+                await new Promise(r => setTimeout(r, 2000));
+
+                // 3. Kiểm tra xem có popup phụ xác nhận không: "Xác nhận" / "Đồng ý" / "Tiếp tục"
+                await this.page.evaluate(() => {
+                    const confirmBtns = Array.from(document.querySelectorAll(".modal button, .dialog button, [role='dialog'] button, .popup button"));
+                    for (const btn of confirmBtns) {
+                        const t = (btn.textContent || "").trim().toLowerCase();
+                        if (t === "xác nhận" || t === "đồng ý" || t === "tiếp tục" || t === "bắt đầu") {
+                            btn.click();
+                            return t;
+                        }
+                    }
+                    return false;
+                });
+                await new Promise(r => setTimeout(r, 2000));
+            }
+        } catch {}
+    }
+
+    /**
+     * Tự động làm mới danh sách tin nhắn & ảnh trong nhóm trước khi quét
+     * Kích hoạt Zalo Web fetch dữ liệu mới nhất từ server, tránh bị lưu cache DOM cũ
+     */
+    async _refreshGroupMessages() {
+        if (!this.page) return;
+        this._log("Đang làm mới danh sách tin nhắn và ảnh mới nhất trong nhóm...");
+        try {
+            await this.page.evaluate(() => {
+                // 1. Cuộn cửa sổ chat xuống cuối để nhận tin nhắn mới nhất
+                const chatScroll = document.querySelector("#messageViewContainer, .chat-message-list, #chatViewContainer, .chat-content");
+                if (chatScroll) {
+                    chatScroll.scrollTop = chatScroll.scrollHeight;
+                    chatScroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+                }
+
+                // 2. Click nút "Tin nhắn mới" hoặc "Cuộn xuống cuối" nếu xuất hiện
+                const newMsgBtn = document.querySelector(".chat-new-msg, [class*='new-msg'], [class*='scroll-bottom'], div[title*='Tin nhắn mới'], [data-id*='new_msg']");
+                if (newMsgBtn) {
+                    newMsgBtn.click();
+                }
+
+                // 3. Nếu Kho Media đang mở từ trước, đóng lại để chuẩn bị mở mới sạch sẽ
+                const sidebarBtn = document.querySelector("div[title='Thông tin hội thoại'], div[title='Thông tin nhóm']");
+                if (sidebarBtn && sidebarBtn.className.includes("focused")) {
+                    sidebarBtn.click(); // Đóng lại
+                }
+            });
+
+            // Chờ 1.5 giây để Zalo Web cập nhật trạng thái DOM sạch sẽ
+            await new Promise(r => setTimeout(r, 1500));
+            this._log("Đã làm mới dữ liệu nhóm thành công.");
+        } catch (e) {
+            this._log(`Cảnh báo làm mới nhóm: ${e.message}`);
+        }
     }
 
     /**
@@ -597,6 +712,10 @@ class ZaloBrowserDownloader {
             // Step 2: Search and open group
             this.progress.status = "opening_group";
             await this._openGroup(groupName);
+            await this._checkAndClickSyncPrompt();
+
+            // Tự động làm mới danh sách tin nhắn & ảnh mới nhất trong nhóm, tránh cache DOM cũ
+            await this._refreshGroupMessages();
 
             // Step 3: Open Media Store (Ảnh/Video tab)
             this.progress.status = "scanning_media";

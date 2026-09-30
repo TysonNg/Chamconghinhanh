@@ -116,7 +116,7 @@ def register_batches(app, data_dir):
         bid = uuid.uuid4().hex
         folder = root / bid
         folder.mkdir()
-        b = {'id': bid, 'employee': employee, 'label': LABEL, 'status': 'draft',
+        b = {'id': bid, 'employee': employee, 'label': LABEL, 'status': 'approved',
              'items': [i for _, i in prepared], 'history': []}
         try:
             for raw, item in prepared:
@@ -151,7 +151,7 @@ def register_batches(app, data_dir):
                 raise LookupError('Không tìm thấy ảnh')
             old = dict(item)
             item.update(supplement_date=day, note=note)
-            b['status'] = 'draft'
+            b['status'] = 'approved'
             log(b, 'item_updated', {'item_id': iid, 'before': old, 'after': dict(item)})
             save(c, b)
         return jsonify(batch=b)

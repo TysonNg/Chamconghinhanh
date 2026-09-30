@@ -1031,9 +1031,15 @@ input[type="number"]:focus {
     margin-bottom: 16px;
 }
 
-.upload-dropzone-inline:hover {
+.upload-dropzone-inline:hover,
+.upload-dropzone-inline.dragover {
     border-color: var(--primary);
     background: var(--primary-light);
+}
+
+.upload-dropzone-inline.dragover {
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+    transform: scale(1.005);
 }
 
 .upload-dropzone-inline svg {
@@ -4506,4 +4512,258 @@ span.flatpickr-weekday {
 .vn-month-picker-alt {
     min-width: 145px;
     text-align: center;
+}
+
+/* Zalo Auto-Sync & Timeline */
+.zalo-day-pill {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    background: #ffffff;
+    min-width: 74px;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.zalo-day-pill.ok {
+    background: #f0fdf4;
+    border-color: #86efac;
+    color: #166534;
+}
+.zalo-day-pill.missing {
+    background: #fef2f2;
+    border-color: #fca5a5;
+    color: #991b1b;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.15);
+}
+.zalo-day-pill.today_pending {
+    background: #eff6ff;
+    border-color: #93c5fd;
+    color: #1e40af;
+}
+.zalo-day-pill .day-date {
+    font-weight: 700;
+    font-size: 13px;
+}
+.zalo-day-pill .day-count {
+    font-size: 11px;
+    margin-top: 2px;
+}
+.zalo-day-pill .day-status {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 1px;
+    opacity: 0.85;
+}
+
+/* Toggle Switch */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.switch-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #cbd5e1;
+    transition: 0.25s ease;
+    border-radius: 24px;
+}
+.switch-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.25s ease;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.switch input:checked + .switch-slider {
+    background-color: var(--primary, #2563eb);
+}
+.switch input:checked + .switch-slider:before {
+    transform: translateX(20px);
+}
+
+/* Zalo Header & Smart Gap Alert */
+.zalo-status-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.zalo-smart-alert {
+    border-radius: var(--radius-md, 8px);
+    border: 1px solid #fed7aa;
+    background: #fffbeb;
+    padding: 10px 14px;
+    transition: all 0.2s ease;
+}
+
+.zalo-smart-alert-ok {
+    border-radius: var(--radius-md, 8px);
+    border: 1px solid #bbf7d0;
+    background: #f0fdf4;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #166534;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Modal Header Close Button */
+.modal-header-btn-close {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #f1f5f9;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+}
+.modal-header-btn-close:hover {
+    background: #fee2e2;
+    color: #ef4444;
+    border-color: #fca5a5;
+    transform: scale(1.05);
+}
+
+/* Flex utilities */
+.d-flex { display: flex !important; }
+.d-inline-flex { display: inline-flex !important; }
+.align-center { align-items: center !important; }
+.justify-between { justify-content: space-between !important; }
+.justify-center { justify-content: center !important; }
+.justify-end { justify-content: flex-end !important; }
+.flex-column { flex-direction: column !important; }
+.flex-wrap { flex-wrap: wrap !important; }
+.gap-1 { gap: 4px !important; }
+.gap-2 { gap: 8px !important; }
+.gap-3 { gap: 12px !important; }
+.gap-4 { gap: 16px !important; }
+
+/* Zalo Auto-Sync Mapping Item */
+.zalo-mapping-item {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 12px 18px !important;
+    margin-bottom: 10px !important;
+    gap: 16px !important;
+    background: #ffffff !important;
+    border-radius: 9px !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03) !important;
+    transition: all 0.15s ease !important;
+}
+.zalo-mapping-item:last-child {
+    margin-bottom: 0 !important;
+}
+.zalo-mapping-item:hover {
+    border-color: #cbd5e1 !important;
+    background: #f8fafc !important;
+}
+.zalo-mapping-info {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    padding-right: 14px !important;
+}
+.zalo-mapping-title {
+    font-weight: 600 !important;
+    font-size: 13.5px !important;
+    color: var(--text-primary, #1e293b) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    line-height: 1.4 !important;
+}
+.zalo-mapping-sub {
+    font-size: 12px !important;
+    color: var(--text-secondary, #64748b) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    margin-top: 4px !important;
+    line-height: 1.4 !important;
+}
+.zalo-mapping-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    flex-shrink: 0 !important;
+}
+.zalo-mapping-toggle {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    cursor: pointer !important;
+    margin: 0 !important;
+    background: #f1f5f9 !important;
+    padding: 5px 12px !important;
+    border-radius: 6px !important;
+    border: 1px solid #e2e8f0 !important;
+    user-select: none !important;
+    color: var(--text-secondary) !important;
+    transition: all 0.15s ease !important;
+}
+.zalo-mapping-toggle:hover {
+    background: #e2e8f0 !important;
+}
+.zalo-mapping-toggle input[type="checkbox"] {
+    accent-color: var(--primary, #2563eb) !important;
+    cursor: pointer !important;
+    width: 14px !important;
+    height: 14px !important;
+    margin: 0 !important;
+}
+.zalo-mapping-delete-btn {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 6px !important;
+    border: 1px solid #fecaca !important;
+    background: #fef2f2 !important;
+    color: #ef4444 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    padding: 0 !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    transition: all 0.15s ease !important;
+}
+.zalo-mapping-delete-btn:hover {
+    background: #fee2e2 !important;
+    color: #b91c1c !important;
+    border-color: #f87171 !important;
+    transform: scale(1.05) !important;
 }

@@ -156,6 +156,60 @@ def register_daily_photo_routes(app, input_root, project_resolver=None):
         data = request.get_json()
         if not isinstance(data, dict):
             raise ValueError("Yêu cầu phải là JSON object")
+
+        if data.get("delete_all_days") is True or (data.get("delete_all") is True and not data.get("date") and not data.get("day") and not data.get("filename")):
+            project, root = project_path(data)
+            if not root.exists():
+                return jsonify(success=True, deleted_count=0, message="Không tìm thấy thư mục dự án")
+
+            period = data.get("period")
+            scope = str(data.get("scope", "period" if period else "all")).strip().lower()
+            target_folders = set()
+
+            if scope == "all" or not period or period == "all":
+                for sub in root.iterdir():
+                    if sub.is_dir() and not sub.is_symlink():
+                        if (re.fullmatch(r"\d{4}-\d{2}-\d{2}", sub.name) or
+                            re.fullmatch(r"\d{2}-\d{2}-\d{4}", sub.name) or
+                            re.fullmatch(r"\d{1,2}", sub.name)):
+                            target_folders.add(sub)
+            else:
+                if not re.fullmatch(r"\d{4}-\d{2}", period):
+                    raise ValueError("Chọn tháng/năm theo định dạng YYYY-MM")
+                first = parse_attendance_date(period + "-01")
+                num_days = calendar.monthrange(first.year, first.month)[1]
+                for d in range(1, num_days + 1):
+                    day_obj = date(first.year, first.month, d)
+                    resolution = resolve_day_folder(root, day_obj)
+                    if resolution.path and resolution.path.is_dir():
+                        target_folders.add(resolution.path)
+                    canon = canonical_day_path(root, day_obj)
+                    if canon.is_dir():
+                        target_folders.add(canon)
+                for sub in root.iterdir():
+                    if sub.is_dir() and not sub.is_symlink() and sub.name.startswith(f"{period}-"):
+                        target_folders.add(sub)
+
+            total_deleted = 0
+            for folder in target_folders:
+                selected = images(folder)
+                for p in selected:
+                    p.unlink()
+                    p.with_suffix(p.suffix + ".json").unlink(missing_ok=True)
+                    total_deleted += 1
+                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", folder.name):
+                    try:
+                        folder.rmdir()
+                    except OSError:
+                        pass
+
+            return jsonify(
+                success=True,
+                project=project,
+                deleted_count=total_deleted,
+                message=f"Đã xóa {total_deleted} ảnh của các ngày"
+            )
+
         name = safe_component(data["filename"]) if data.get("filename") else None
         _, folder = folder_for(data, requested_day(data))
         if data.get("delete_all") is not True and not name:
@@ -174,13 +228,13 @@ def register_daily_photo_routes(app, input_root, project_resolver=None):
         _, root = project_path(data)
         folder = data.get("folder", "")
         day = requested_day(data)
-        reviewer = str(data.get("reviewer") or "").strip()
+        reviewer = str(data.get("reviewer") or "system").strip()
         if not re.fullmatch(r"\d{1,2}", folder) or int(folder) != day.day:
             raise ValueError("Thư mục DD phải khớp ngày")
         if not (root / folder).is_dir() or (root / folder).is_symlink():
             raise ValueError("Không tìm thấy thư mục cũ")
-        if data.get("confirm_single_period") is not True or not reviewer:
-            raise ValueError("Cần xác nhận mọi ảnh thuộc cùng ngày và ghi người xác nhận")
+        if data.get("confirm_single_period") is not True:
+            raise ValueError("Cần xác nhận mọi ảnh thuộc cùng ngày")
         path = root / "attendance-period.json"
         with _manifest_lock:
             payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"version": 1, "mappings": {}}

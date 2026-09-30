@@ -39,16 +39,17 @@ def test_incomplete_or_invalid_date_never_writes(tmp_path, day):
     assert r.status_code == 400
     assert not list(tmp_path.rglob("photo.png"))
 
-def test_legacy_mapping_requires_explicit_confirmation(tmp_path):
+def test_legacy_mapping_requires_safety_confirmation_but_not_reviewer_name(tmp_path):
     c = make_client(tmp_path)
     old=tmp_path/"Site"/"01"
     old.mkdir(parents=True)
     (old/"original.png").write_bytes(photo().getvalue())
     assert c.get("/api/photos/daily/2026-09-01?project=Site").status_code == 409
-    r=c.post("/api/photos/daily/legacy-map",json={"project":"Site","folder":"01","date":"2026-09-01","reviewer":"User"})
+    r=c.post("/api/photos/daily/legacy-map",json={"project":"Site","folder":"01","date":"2026-09-01"})
     assert r.status_code == 400
-    r=c.post("/api/photos/daily/legacy-map",json={"project":"Site","folder":"01","date":"2026-09-01","reviewer":"User","confirm_single_period":True})
+    r=c.post("/api/photos/daily/legacy-map",json={"project":"Site","folder":"01","date":"2026-09-01","confirm_single_period":True})
     assert r.status_code == 200
+    assert r.json["mapping"]["confirmed_by"] == "system"
     assert len(c.get("/api/photos/daily/2026-09-01?project=Site").json["photos"]) == 1
     assert len(c.get("/api/photos/daily/2026-08-01?project=Site").json["photos"]) == 0
 
@@ -62,3 +63,32 @@ def test_invalid_project_and_filename_cannot_escape(tmp_path):
     c=make_client(tmp_path)
     assert c.post("/api/photos/daily/upload",data={"project":"..","date":"2026-09-01","files":(photo(),"a.png")}).status_code == 400
     assert c.post("/api/photos/daily/delete",json={"project":"Site","date":"2026-09-01","filename":"../outside"}).status_code == 400
+
+def test_delete_all_days_scoped_to_period(tmp_path):
+    c = make_client(tmp_path)
+    # Upload to August and September
+    c.post("/api/photos/daily/upload", data={"project":"Site","date":"2026-08-15","files":(photo(),"aug.png")})
+    c.post("/api/photos/daily/upload", data={"project":"Site","date":"2026-09-01","files":(photo(),"sep1.png")})
+    c.post("/api/photos/daily/upload", data={"project":"Site","date":"2026-09-02","files":(photo(),"sep2.png")})
+
+    # Delete all days in September 2026
+    r = c.post("/api/photos/daily/delete", json={"project":"Site", "period":"2026-09", "delete_all_days":True, "scope":"period"})
+    assert r.status_code == 200
+    assert r.json["deleted_count"] == 2
+
+    # Verify September photos are gone and August remains
+    assert not (tmp_path / "Site" / "2026-09-01" / "sep1.png").exists()
+    assert not (tmp_path / "Site" / "2026-09-02" / "sep2.png").exists()
+    assert (tmp_path / "Site" / "2026-08-15" / "aug.png").exists()
+
+def test_delete_all_days_entire_project(tmp_path):
+    c = make_client(tmp_path)
+    c.post("/api/photos/daily/upload", data={"project":"Site","date":"2026-08-15","files":(photo(),"aug.png")})
+    c.post("/api/photos/daily/upload", data={"project":"Site","date":"2026-09-01","files":(photo(),"sep1.png")})
+
+    r = c.post("/api/photos/daily/delete", json={"project":"Site", "delete_all_days":True, "scope":"all"})
+    assert r.status_code == 200
+    assert r.json["deleted_count"] == 2
+    assert not (tmp_path / "Site" / "2026-08-15" / "aug.png").exists()
+    assert not (tmp_path / "Site" / "2026-09-01" / "sep1.png").exists()
+

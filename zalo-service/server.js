@@ -31,6 +31,8 @@ const zaloClient = new ZaloClient();
 const imageDownloader = new ImageDownloader();
 const ZaloBrowserDownloader = require("./zalo-browser-downloader");
 const browserDownloader = new ZaloBrowserDownloader(path.resolve(__dirname, ".."));
+const { SyncManager } = require("./sync-manager");
+const syncManager = new SyncManager(path.resolve(__dirname, ".."), browserDownloader);
 const { collectVisiblePhotos, normalizeSendDate } = require("./photo-metadata");
 
 // SSE clients for progress updates
@@ -578,6 +580,89 @@ app.get("/api/debug/dom", async (req, res) => {
     }
 });
 
+// ==================== Auto-Sync & Gap Backfill API ====================
+
+/**
+ * GET /api/sync/config
+ * Lấy cấu hình tự động quét & danh sách mapping
+ */
+app.get("/api/sync/config", (req, res) => {
+    res.json({
+        success: true,
+        data: syncManager.config
+    });
+});
+
+/**
+ * POST /api/sync/config
+ * Lưu cấu hình tự động quét
+ */
+app.post("/api/sync/config", (req, res) => {
+    try {
+        const ok = syncManager.saveConfig(req.body);
+        syncManager.startScheduler(); // Khởi động lại timer với cấu hình mới
+        res.json({
+            success: ok,
+            data: syncManager.config
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * GET /api/sync/gaps
+ * Kiểm tra các ngày bị thiếu ảnh trong N ngày gần nhất của một dự án
+ * Query: ?projectName=...&lookbackDays=10
+ */
+app.get("/api/sync/gaps", (req, res) => {
+    try {
+        const { projectName, lookbackDays = 10 } = req.query;
+        if (!projectName) {
+            return res.status(400).json({ success: false, error: "projectName is required" });
+        }
+        const gaps = syncManager.detectGaps(projectName, lookbackDays);
+        res.json({
+            success: true,
+            data: gaps
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * POST /api/sync/run
+ * Kích hoạt đồng bộ & tải bù ngay lập tức
+ * Body: { backfillMissing: true }
+ */
+app.post("/api/sync/run", async (req, res) => {
+    try {
+        const { backfillMissing = true } = req.body || {};
+        if (browserDownloader.isDownloading) {
+            return res.status(400).json({
+                success: false,
+                error: "Trình duyệt đang bận tải ảnh, vui lòng chờ."
+            });
+        }
+        // Khởi động đồng bộ trong background
+        syncManager.runSync({ backfillMissing, reason: "Kích hoạt thủ công từ giao diện" })
+            .then(result => {
+                console.log("[Server] Chạy đồng bộ tự động hoàn thành:", result);
+            })
+            .catch(err => {
+                console.error("[Server] Lỗi chạy đồng bộ tự động:", err.message);
+            });
+
+        res.json({
+            success: true,
+            message: "Đã bắt đầu tiến trình đồng bộ & tải bù ảnh..."
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 /**
  * Health check
  */
@@ -601,8 +686,15 @@ async function start() {
         console.log(`  GET  /api/groups`);
         console.log(`  POST /api/groups/:groupId/download`);
         console.log(`  GET  /api/download/progress`);
-        console.log(`  GET  /api/download/progress/poll\n`);
+        console.log(`  GET  /api/download/progress/poll`);
+        console.log(`  GET  /api/sync/config`);
+        console.log(`  POST /api/sync/config`);
+        console.log(`  GET  /api/sync/gaps`);
+        console.log(`  POST /api/sync/run\n`);
     });
+
+    // Khởi động bộ lập lịch tự động
+    syncManager.startScheduler();
 
     // Try auto-login with saved credentials in background without blocking server listen
     zaloClient.tryAutoLogin()

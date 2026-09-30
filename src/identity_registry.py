@@ -126,13 +126,14 @@ class IdentityRegistry:
             raise ValueError("Đường dẫn dự án không hợp lệ")
         return folder
 
-    def create_employee(self, name):
+    def create_employee(self, name, auto_code=False):
         if not isinstance(name,str) or not name.strip():
             raise ValueError("Thiếu tên nhân viên")
         eid = uuid.uuid4().hex
         with self._connect() as c:
             c.execute("INSERT INTO employees(employee_id,display_name) VALUES(?,?)",(eid,name.strip()))
-            self._ensure_internal_code(c, eid)
+            if auto_code:
+                self._ensure_internal_code(c, eid)
         return self.get_employee(eid)
 
     def _ensure_internal_code(self, c, employee_id, used_codes=None):
@@ -183,8 +184,8 @@ class IdentityRegistry:
         return dict(row)
 
     def _assign(self,c,project_id,employee_id,code,start,end):
-        if not isinstance(code,str) or not code.strip():
-            raise ValueError("Mã chấm công phải là chuỗi không rỗng")
+        if not isinstance(code,str):
+            raise ValueError("Mã chấm công phải là chuỗi")
         code=code.strip()
         if end and end <= start:
             raise ValueError("Ngày kết thúc phải sau ngày bắt đầu")
@@ -193,9 +194,9 @@ class IdentityRegistry:
         if not c.execute("SELECT 1 FROM employees WHERE employee_id=? AND active=1",(employee_id,)).fetchone():
             raise ValueError("Nhân viên không tồn tại hoặc đã lưu trữ")
         existing = c.execute("""SELECT * FROM memberships WHERE project_id=?
-            AND (payroll_code=? OR employee_id=?) AND valid_from < ?
+            AND ((? <> '' AND payroll_code=?) OR employee_id=?) AND valid_from < ?
             AND (valid_to IS NULL OR valid_to > ?)""",
-            (project_id,code,employee_id,end or "9999-12-31",start)).fetchall()
+            (project_id,code,code,employee_id,end or "9999-12-31",start)).fetchall()
         if existing:
             if len(existing)==1 and all(existing[0][k]==v for k,v in {
                 "employee_id":employee_id,"payroll_code":code,"valid_from":start,"valid_to":end}.items()):

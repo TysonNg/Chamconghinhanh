@@ -39,9 +39,26 @@ async function withLoading(btn, asyncFn) {
 
 // ==================== API Functions ====================
 
+async function parseJsonResponse(response) {
+    const text = await response.text();
+    try {
+        return JSON.parse(text);
+    } catch (_) {
+        if (!response.ok) {
+            return {
+                success: false,
+                error: response.status === 404
+                    ? `Không tìm thấy endpoint (${response.status}). Vui lòng khởi động lại server (tắt terminal python main.py và chạy lại) để nhận API mới.`
+                    : `Máy chủ phản hồi mã lỗi ${response.status} (${response.statusText || 'Lỗi server'})`
+            };
+        }
+        return { success: false, error: text.slice(0, 150) };
+    }
+}
+
 async function apiGet(url) {
     const response = await fetch(url);
-    return response.json();
+    return parseJsonResponse(response);
 }
 
 async function apiPost(url, data = {}) {
@@ -50,7 +67,7 @@ async function apiPost(url, data = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
     });
-    return response.json();
+    return parseJsonResponse(response);
 }
 
 // ==================== Vietnamese Date & Month Pickers ====================
@@ -1918,11 +1935,9 @@ async function mapLegacyPhotoDay() {
     if (!folder) return;
     const target = prompt('Ngày đầy đủ của TẤT CẢ ảnh trong thư mục (YYYY-MM-DD):');
     if (!target) return;
-    const reviewer = prompt('Tên người xác nhận:');
-    if (!reviewer) return;
     if (!confirm('Chỉ xác nhận nếu mọi ảnh trong thư mục thuộc cùng ngày. Nếu lẫn tháng, hãy phân loại từng ảnh trước.')) return;
     const result = await apiPost('/api/photos/daily/legacy-map', {
-        project: currentProjectName, folder, date: target, reviewer, confirm_single_period: true
+        project: currentProjectName, folder, date: target, reviewer: 'system', confirm_single_period: true
     });
     showToast(result.success ? 'Đã lưu ngày của thư mục cũ' : result.error, result.success ? 'success' : 'error');
     if (result.success) loadDailyPhotosStats();
@@ -2096,6 +2111,64 @@ async function confirmDeleteAllDayPhotos() {
             await loadProjects();
         } else {
             showToast(res.error || 'Lỗi khi xóa', 'error');
+        }
+    } catch (err) {
+        showToast('Lỗi: ' + err.message, 'error');
+    }
+}
+
+function confirmDeleteAllDaysPhotos() {
+    if (!currentProjectName) {
+        showToast('Vui lòng chọn dự án trước', 'warning');
+        return;
+    }
+    const period = selectedPhotoPeriod();
+    const periodDisplay = period ? (period.includes('-') ? period.split('-').reverse().join('/') : period) : '';
+    const modal = document.getElementById('modal-delete-all-days');
+    const projectEl = document.getElementById('delete-all-days-project-name');
+    const periodLabelEl = document.getElementById('delete-all-days-period-label');
+
+    if (modal && projectEl && periodLabelEl) {
+        projectEl.textContent = currentProjectName;
+        periodLabelEl.textContent = periodDisplay || '(Tất cả)';
+        const radioPeriod = document.querySelector('input[name="delete-all-days-scope"][value="period"]');
+        if (radioPeriod) radioPeriod.checked = true;
+        openModal('modal-delete-all-days');
+    } else {
+        const ok = confirm(`Bạn có chắc chắn muốn XÓA TOÀN BỘ ảnh camera của TẤT CẢ CÁC NGÀY trong tháng ${periodDisplay} (Dự án: "${currentProjectName}") không?\n\nLưu ý: Thao tác này sẽ xóa vĩnh viễn và không thể hoàn tác!`);
+        if (ok) {
+            submitDeleteAllDaysPhotosDirect('period');
+        }
+    }
+}
+
+async function submitDeleteAllDaysPhotos() {
+    const scopeRadio = document.querySelector('input[name="delete-all-days-scope"]:checked');
+    const scope = scopeRadio ? scopeRadio.value : 'period';
+    const btn = document.getElementById('btn-submit-delete-all-days');
+    closeModal('modal-delete-all-days');
+    await submitDeleteAllDaysPhotosDirect(scope, btn);
+}
+
+async function submitDeleteAllDaysPhotosDirect(scope = 'period', btn = null) {
+    if (!currentProjectName) return;
+    const period = selectedPhotoPeriod();
+    const payload = {
+        project: currentProjectName,
+        delete_all_days: true,
+        scope: scope,
+        period: period
+    };
+
+    try {
+        showToast('Đang tiến hành xóa ảnh của các ngày...', 'info');
+        const res = await apiPost('/api/photos/daily/delete', payload);
+        if (res.success) {
+            showToast(res.message || `Đã xóa thành công ${res.deleted_count || 0} ảnh`, 'success');
+            await loadDailyPhotosStats();
+            await loadProjects();
+        } else {
+            showToast(res.error || 'Lỗi khi xóa ảnh', 'error');
         }
     } catch (err) {
         showToast('Lỗi: ' + err.message, 'error');
@@ -2415,12 +2488,10 @@ async function submitTransferEmployee() {
         return;
     }
 
-    const effective_date = prompt('Ngày chuyển có hiệu lực (YYYY-MM-DD):');
-    if (!effective_date) return;
-    const payroll_code = prompt('Mã chấm công tại dự án đích:');
-    if (!payroll_code) return;
-    const reviewer = prompt('Người xác nhận:');
-    if (!reviewer) return;
+    const employee = allEmployeesList.find(item => item.employee_id === empName);
+    const effective_date = new Date().toLocaleDateString('en-CA');
+    const payroll_code = employee?.payroll_code || '';
+    const reviewer = 'system';
     try {
         const res = await apiPost('/api/portraits/employee/transfer', {
             source_project_id: allProjectsList.find(p => p.name === currentProjectName)?.project_id,
@@ -2447,6 +2518,9 @@ function openEmployeePhotosModal(empName) {
     const nameEl = document.getElementById('emp-photos-modal-name');
     if (nameEl) { nameEl.textContent = allEmployeesList.find(e => e.employee_id === empName)?.name || empName; nameEl.dataset.employeeId = empName; }
     refreshEmployeePhotosModal();
+    if (typeof setupEmployeePhotosModalInteractions === 'function') {
+        setupEmployeePhotosModalInteractions();
+    }
     openModal('modal-employee-photos');
 }
 
@@ -2458,28 +2532,27 @@ function refreshEmployeePhotosModal() {
     if (!emp || !emp.images || emp.images.length === 0) {
         gallery.innerHTML = `
             <div style="grid-column: 1 / -1; padding: 18px; text-align: center; color: var(--text-muted); background: var(--bg-subtle); border-radius: var(--radius);">
-                Chưa có ảnh chân dung nào cho nhân viên này. Nhấp ô phía trên để tải ảnh lên.
+                Chưa có ảnh chân dung nào cho nhân viên này. Nhấp ô phía trên, kéo thả ảnh hoặc nhấn <strong>Ctrl+V</strong> để dán ảnh Zalo.
             </div>
         `;
         return;
     }
 
-    const safeProj = encodeURIComponent(currentProjectName);
-    const safeName = encodeURIComponent(activeEmpModalName);
-
     gallery.innerHTML = emp.images.map(img => {
-        const url = emp.image_urls[img];
-        const safeImg = img.replace(/'/g, "\\'");
+        const url = emp.image_urls[img] || '';
+        const encImg = encodeURIComponent(img);
+        const displayName = (img.split(/[\/\\]/).pop() || img).replace(/"/g, '&quot;');
+        const safeCaption = ((emp.name || activeEmpModalName) + ' - ' + displayName).replace(/'/g, "\\'").replace(/"/g, '&quot;');
         return `
             <div class="thumb-card">
-                <div class="thumb-img-wrap" onclick="openLightbox('${url}', '${emp.name} - ${img}')">
-                    <img src="${url}" alt="${img}" loading="lazy">
+                <div class="thumb-img-wrap" onclick="openLightbox('${url}', '${safeCaption}')">
+                    <img src="${url}" alt="${displayName}" loading="lazy">
                 </div>
                 <div class="thumb-info">
-                    <div class="thumb-name" title="${img}">${img}</div>
+                    <div class="thumb-name" title="${displayName}">${displayName}</div>
                 </div>
                 <div class="thumb-actions">
-                    <button class="btn btn-icon-danger btn-sm" onclick="deleteEmployeePhoto('${safeImg}')" title="Xóa ảnh này">
+                    <button class="btn btn-icon-danger btn-sm" onclick="deleteEmployeePhoto(decodeURIComponent('${encImg}'))" title="Xóa ảnh này">
                         ${TRASH_ICON_SVG}
                     </button>
                 </div>
@@ -2489,16 +2562,16 @@ function refreshEmployeePhotosModal() {
 }
 
 async function handleUploadEmployeePhoto(input) {
-    if (!input.files || input.files.length === 0 || !activeEmpModalName) return;
+    const rawFiles = input && (input.files || (Array.isArray(input) ? input : [input]));
+    const files = Array.from(rawFiles || []).filter(f => f && (f.name || f instanceof Blob));
+    if (!files || files.length === 0 || !activeEmpModalName) return;
     const formData = new FormData();
     formData.append('project', currentProjectName);
-            formData.append('project_id', allProjectsList.find(p => p.name === currentProjectName)?.project_id || '');
+    formData.append('project_id', (typeof allProjectsList !== 'undefined' && Array.isArray(allProjectsList) ? allProjectsList.find(p => p.name === currentProjectName)?.project_id : '') || '');
     formData.append('employee_id', activeEmpModalName);
-    const reviewer = prompt('Người xác nhận ảnh chân dung:');
-    if (!reviewer) return;
-    formData.append('reviewer', reviewer);
-    for (let i = 0; i < input.files.length; i++) {
-        formData.append('files', input.files[i]);
+    formData.append('reviewer', 'system');
+    for (let i = 0; i < files.length; i++) {
+        formData.append('files', files[i]);
     }
 
     try {
@@ -2508,8 +2581,12 @@ async function handleUploadEmployeePhoto(input) {
         }).then(r => r.json());
 
         if (res.success) {
-            showToast(`Đã thêm ${res.saved_count} ảnh chân dung cho ${activeEmpModalName}`, 'success');
-            input.value = '';
+            showToast(`Đã thêm ${res.saved_count || files.length} ảnh chân dung cho ${activeEmpModalName}`, 'success');
+            if (input && 'value' in input) {
+                try { input.value = ''; } catch (_) {}
+            }
+            const fileInput = typeof document !== 'undefined' && document.getElementById ? document.getElementById('emp-photos-upload-input') : null;
+            if (fileInput) fileInput.value = '';
             await loadPortraits();
             refreshEmployeePhotosModal();
             await loadProjects();
@@ -2523,16 +2600,23 @@ async function handleUploadEmployeePhoto(input) {
 
 async function deleteEmployeePhoto(filename) {
     if (!activeEmpModalName) return;
-    if (!confirm(`Bạn có chắc muốn xóa ảnh chân dung "${filename}" của ${activeEmpModalName}?`)) return;
+    let cleanFilename = filename;
+    try {
+        if (cleanFilename && typeof cleanFilename === 'string' && cleanFilename.includes('%')) {
+            cleanFilename = decodeURIComponent(cleanFilename);
+        }
+    } catch (_) {}
+    const displayName = cleanFilename ? cleanFilename.split(/[\/\\]/).pop() : '';
+    if (!confirm(`Bạn có chắc muốn xóa vĩnh viễn ảnh chân dung "${displayName || cleanFilename}" của ${activeEmpModalName}?`)) return;
     try {
         const res = await apiPost('/api/portraits/employee/delete-photo', {
-            project_id: allProjectsList.find(p => p.name === currentProjectName)?.project_id,
+            project_id: (typeof allProjectsList !== 'undefined' && Array.isArray(allProjectsList) ? allProjectsList.find(p => p.name === currentProjectName)?.project_id : '') || '',
             project: currentProjectName,
             employee_id: activeEmpModalName,
-            filename: filename
+            filename: cleanFilename
         });
         if (res.success) {
-            showToast('Đã xóa ảnh chân dung', 'success');
+            showToast('Đã xóa vĩnh viễn ảnh chân dung', 'success');
             await loadPortraits();
             refreshEmployeePhotosModal();
             await loadProjects();
@@ -2564,6 +2648,140 @@ async function deleteEmployee(empName) {
     }
 }
 
+// --- Quản lý Thư Mục Ảnh Chân Dung, Kéo Thả Nhiều Ảnh & Dán Ảnh Zalo (Ctrl+V) ---
+async function openCurrentEmployeeFolder() {
+    if (!activeEmpModalName) {
+        showToast('Chưa chọn nhân viên nào', 'warning');
+        return;
+    }
+    try {
+        const res = await apiPost('/api/portraits/open-folder', {
+            project: currentProjectName,
+            employee_id: activeEmpModalName
+        });
+        if (res.success) {
+            showToast(res.message || 'Đã mở thư mục ảnh nhân viên', 'success');
+        } else {
+            showToast(res.error || 'Không thể mở thư mục ảnh', 'error');
+        }
+    } catch (err) {
+        showToast('Lỗi mở thư mục: ' + err.message, 'error');
+    }
+}
+
+async function openProjectPortraitsFolder() {
+    if (!currentProjectName) {
+        showToast('Chưa chọn dự án nào', 'warning');
+        return;
+    }
+    try {
+        const res = await apiPost('/api/portraits/open-folder', {
+            project: currentProjectName
+        });
+        if (res.success) {
+            showToast(res.message || 'Đã mở thư mục chân dung dự án', 'success');
+        } else {
+            showToast(res.error || 'Không thể mở thư mục chân dung', 'error');
+        }
+    } catch (err) {
+        showToast('Lỗi mở thư mục: ' + err.message, 'error');
+    }
+}
+
+function extractImagesFromClipboard(clipboardData) {
+    if (!clipboardData) return [];
+    const files = [];
+
+    // 1. Check clipboardData.files (file copy from Explorer, Zalo desktop file drop/copy)
+    if (clipboardData.files && clipboardData.files.length > 0) {
+        for (let i = 0; i < clipboardData.files.length; i++) {
+            const f = clipboardData.files[i];
+            if (f && ((f.type && f.type.startsWith('image/')) || /\.(jpe?g|png|webp|bmp|gif)$/i.test(f.name))) {
+                files.push(f);
+            }
+        }
+    }
+
+    // 2. Check clipboardData.items (image bitmap copy from Zalo, snipping tool, browser)
+    if (files.length === 0 && clipboardData.items && clipboardData.items.length > 0) {
+        for (let i = 0; i < clipboardData.items.length; i++) {
+            const item = clipboardData.items[i];
+            if (item && item.type && item.type.startsWith('image/')) {
+                const blob = item.getAsFile();
+                if (blob) {
+                    const ext = (item.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+                    const namedFile = new File(
+                        [blob],
+                        `zalo_paste_${Date.now()}_${i + 1}.${ext}`,
+                        { type: blob.type || item.type }
+                    );
+                    files.push(namedFile);
+                }
+            }
+        }
+    }
+    return files;
+}
+
+function setupEmployeePhotosModalInteractions() {
+    const dropzone = document.getElementById('emp-photos-dropzone');
+    if (dropzone && dropzone.dataset.dndInitialized !== 'true') {
+        dropzone.dataset.dndInitialized = 'true';
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.add('dragover');
+            });
+        });
+
+        ['dragleave', 'dragend'].forEach(eventName => {
+            dropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.remove('dragover');
+            });
+        });
+
+        dropzone.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.remove('dragover');
+
+            const dt = e.dataTransfer;
+            if (!dt || !dt.files || dt.files.length === 0) return;
+
+            const files = Array.from(dt.files).filter(f =>
+                (f.type && f.type.startsWith('image/')) || /\.(jpe?g|png|webp|bmp)$/i.test(f.name)
+            );
+
+            if (files.length === 0) {
+                showToast('Vui lòng chỉ kéo thả tệp hình ảnh (.jpg, .png, .bmp)', 'warning');
+                return;
+            }
+
+            await handleUploadEmployeePhoto({ files: files });
+        });
+    }
+
+    if (typeof window !== 'undefined' && !window._empPhotosPasteBound) {
+        window._empPhotosPasteBound = true;
+        window.addEventListener('paste', async (e) => {
+            const modal = document.getElementById('modal-employee-photos');
+            if (!modal || modal.style.display === 'none' || !activeEmpModalName) return;
+
+            const imageFiles = extractImagesFromClipboard(e.clipboardData);
+            if (imageFiles && imageFiles.length > 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                showToast(`Đang tải lên ${imageFiles.length} ảnh dán từ Zalo...`, 'info');
+                await handleUploadEmployeePhoto({ files: imageFiles });
+            }
+        });
+    }
+}
+
 // ==================== TAB: TẢI ẢNH ZALO ====================
 
 let zaloPollTimer = null;
@@ -2576,6 +2794,7 @@ function initZaloTab() {
     setZaloDatePreset('today');
     loadProjectsForZalo();
     checkZaloStatus();
+    initZaloAutoSync();
 
     // Re-render cached groups & restore selected group UI when switching tabs
     if (zaloGroupsList.length > 0) {
@@ -3024,6 +3243,7 @@ function selectZaloGroup(groupId, groupName, memberCount) {
     showToast(`Đã chọn nhóm: ${groupName}`, 'success');
 
     renderZaloGroupItems(zaloGroupsList);
+    refreshZaloTimelineGaps();
 }
 
 function filterZaloGroups() {
@@ -3069,6 +3289,7 @@ async function loadZaloGroups(manual = false) {
 async function loadProjectsForZalo() {
     const projectSel = document.getElementById('zalo-target-project');
     if (!projectSel) return;
+    projectSel.onchange = () => refreshZaloTimelineGaps();
 
     try {
         const res = await fetch('/api/projects');
@@ -3562,10 +3783,535 @@ async function navigateToPhotosTab(targetDay, targetProject) {
     }
 }
 
+// ==================== ZALO AUTO-SYNC & GAP BACKFILL ====================
+
+let zaloSyncConfig = {
+    enabled: false,
+    scheduleTime: '22:00',
+    lookbackDays: 10,
+    autoBackfillOnStartup: true,
+    lastRun: null,
+    mappings: []
+};
+
+// Cập nhật nhãn trạng thái Lịch Tự Động trên header
+function updateZaloHeaderSyncBadge() {
+    const badge = document.getElementById('zalo-header-sync-status-badge');
+    if (!badge) return;
+    if (zaloSyncConfig.enabled) {
+        badge.className = 'badge badge-success';
+        badge.style.background = '#dcfce7';
+        badge.style.color = '#15803d';
+        badge.textContent = `Bật (${zaloSyncConfig.scheduleTime || '22:00'})`;
+    } else {
+        badge.className = 'badge';
+        badge.style.background = '#e2e8f0';
+        badge.style.color = '#475569';
+        badge.textContent = 'Tắt';
+    }
+}
+
+// Khởi tạo tab Auto-Sync khi mở tab Zalo
+async function initZaloAutoSync() {
+    try {
+        const res = await fetch('/api/zalo/sync/config');
+        const data = await res.json();
+        if (data.success && data.data) {
+            zaloSyncConfig = data.data;
+            updateZaloHeaderSyncBadge();
+        }
+    } catch (err) {
+        console.warn('Lỗi nạp cấu hình Auto-Sync Zalo:', err);
+    }
+
+    // Tự động kiểm tra các ngày thiếu ảnh cho dự án hiện tại
+    refreshZaloTimelineGaps();
+}
+
+// Mở modal cài đặt Lập Lịch Tự Động
+function openZaloAutoSyncModal() {
+    const enabledInput = document.getElementById('modal-zalo-sync-enabled');
+    const timeInput = document.getElementById('modal-zalo-sync-time');
+    const lookbackSelect = document.getElementById('modal-zalo-sync-lookback');
+    const startupCheckbox = document.getElementById('modal-zalo-sync-startup');
+    const lastRunInfo = document.getElementById('modal-zalo-last-run-info');
+
+    if (enabledInput) enabledInput.checked = !!zaloSyncConfig.enabled;
+    if (timeInput && zaloSyncConfig.scheduleTime) timeInput.value = zaloSyncConfig.scheduleTime;
+    if (lookbackSelect && zaloSyncConfig.lookbackDays) lookbackSelect.value = String(zaloSyncConfig.lookbackDays);
+    if (startupCheckbox) startupCheckbox.checked = zaloSyncConfig.autoBackfillOnStartup !== false;
+
+    if (lastRunInfo) {
+        let lastRunStr = 'Chưa chạy';
+        if (zaloSyncConfig.lastRun) {
+            try {
+                lastRunStr = new Date(zaloSyncConfig.lastRun).toLocaleString('vi-VN');
+            } catch {
+                lastRunStr = zaloSyncConfig.lastRun;
+            }
+        }
+        lastRunInfo.textContent = `Lần chạy gần nhất: ${lastRunStr}`;
+    }
+
+    // Nạp danh sách nhóm Zalo vào dropdown thêm nhanh trong modal
+    const groupSel = document.getElementById('modal-add-group-select');
+    const projSel = document.getElementById('modal-add-project-select');
+    if (groupSel) {
+        groupSel.innerHTML = '<option value="">-- Chọn nhóm Zalo để thêm --</option>';
+        (zaloGroupsList || []).forEach(g => {
+            const opt = document.createElement('option');
+            opt.value = g.id;
+            opt.textContent = g.name || g.id;
+            groupSel.appendChild(opt);
+        });
+    }
+    if (projSel) {
+        projSel.innerHTML = '<option value="__AUTO__">[Tự tạo theo tên nhóm]</option>';
+        (allProjectsList || []).forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.name;
+            opt.textContent = `Dự án: ${p.name}`;
+            projSel.appendChild(opt);
+        });
+    }
+    if (groupSel && projSel) {
+        groupSel.onchange = () => {
+            const selectedText = groupSel.options[groupSel.selectedIndex]?.text || '';
+            if (!selectedText) return;
+            for (let i = 0; i < projSel.options.length; i++) {
+                if (projSel.options[i].text.toLowerCase().includes(selectedText.toLowerCase()) ||
+                    projSel.options[i].value.toLowerCase() === selectedText.toLowerCase()) {
+                    projSel.selectedIndex = i;
+                    break;
+                }
+            }
+        };
+    }
+
+    renderZaloAutoSyncModalMappings();
+    openModal('modal-zalo-auto-sync');
+}
+
+// Thêm nhóm & dự án trực tiếp từ trong popup Modal
+function addMappingFromModal() {
+    const groupSel = document.getElementById('modal-add-group-select');
+    const projectSel = document.getElementById('modal-add-project-select');
+    if (!groupSel || !groupSel.value) {
+        showToast('Vui lòng chọn 1 nhóm Zalo trong danh sách!', 'warning');
+        return;
+    }
+    const groupId = groupSel.value;
+    const groupName = groupSel.options[groupSel.selectedIndex]?.text || groupId;
+    let projectName = projectSel ? projectSel.value : '__AUTO__';
+    if (projectName === '__AUTO__' || !projectName) {
+        projectName = groupName;
+    }
+
+    if (!zaloSyncConfig.mappings) zaloSyncConfig.mappings = [];
+
+    const existingIndex = zaloSyncConfig.mappings.findIndex(m => m.groupId === groupId);
+    if (existingIndex >= 0) {
+        zaloSyncConfig.mappings[existingIndex].projectName = projectName;
+        zaloSyncConfig.mappings[existingIndex].active = true;
+    } else {
+        zaloSyncConfig.mappings.push({
+            groupId,
+            groupName,
+            projectName,
+            active: true
+        });
+    }
+
+    zaloSyncConfig.enabled = true;
+    const modalSwitch = document.getElementById('modal-zalo-sync-enabled');
+    if (modalSwitch) modalSwitch.checked = true;
+
+    renderZaloAutoSyncModalMappings();
+    showToast(`Đã thêm "${groupName}" ➔ Dự án "${projectName}" vào lịch!`, 'success');
+    groupSel.value = '';
+}
+
+// Tự động thêm TẤT CẢ các nhóm Zalo hiện có vào lịch tự động
+function addAllZaloGroupsToAutoSync() {
+    if (!zaloGroupsList || zaloGroupsList.length === 0) {
+        showToast('Chưa có danh sách nhóm Zalo (vui lòng đảm bảo đã đăng nhập)', 'warning');
+        return;
+    }
+    if (!zaloSyncConfig.mappings) zaloSyncConfig.mappings = [];
+
+    let count = 0;
+    zaloGroupsList.forEach(g => {
+        const existingIndex = zaloSyncConfig.mappings.findIndex(m => m.groupId === g.id);
+        let matchedProject = g.name;
+        if (allProjectsList && allProjectsList.length > 0) {
+            const found = allProjectsList.find(p => p.name.toLowerCase() === g.name.toLowerCase() || g.name.toLowerCase().includes(p.name.toLowerCase()));
+            if (found) matchedProject = found.name;
+        }
+
+        if (existingIndex >= 0) {
+            zaloSyncConfig.mappings[existingIndex].active = true;
+        } else {
+            zaloSyncConfig.mappings.push({
+                groupId: g.id,
+                groupName: g.name,
+                projectName: matchedProject,
+                active: true
+            });
+            count++;
+        }
+    });
+
+    zaloSyncConfig.enabled = true;
+    const modalSwitch = document.getElementById('modal-zalo-sync-enabled');
+    if (modalSwitch) modalSwitch.checked = true;
+
+    renderZaloAutoSyncModalMappings();
+    showToast(`Đã thêm & kích hoạt ${zaloGroupsList.length} nhóm Zalo vào lịch tự động!`, 'success');
+}
+
+// Đóng modal cài đặt
+function closeZaloAutoSyncModal() {
+    closeModal('modal-zalo-auto-sync');
+}
+
+// Hiển thị danh sách nhóm trong modal
+function renderZaloAutoSyncModalMappings() {
+    const listEl = document.getElementById('modal-zalo-mapping-list');
+    const badgeEl = document.getElementById('modal-mapping-count-badge');
+    if (!listEl) return;
+    const mappings = zaloSyncConfig.mappings || [];
+
+    if (badgeEl) {
+        badgeEl.textContent = `${mappings.length} nhóm`;
+        badgeEl.style.display = mappings.length > 0 ? 'inline-block' : 'none';
+    }
+
+    if (mappings.length === 0) {
+        listEl.innerHTML = `
+            <div class="text-center p-3 text-muted" style="font-size: 12px;">
+                <div style="font-weight: 500;">Chưa có nhóm nào trong lịch tự động.</div>
+                <div style="font-size: 11px; margin-top: 4px; color: var(--text-muted);">Hãy chọn nhóm ở ô trên rồi bấm "Thêm" hoặc "Thêm tất cả nhóm".</div>
+            </div>`;
+        return;
+    }
+
+    listEl.innerHTML = '';
+    mappings.forEach((m, idx) => {
+        const row = document.createElement('div');
+        row.className = 'zalo-mapping-item';
+        row.innerHTML = `
+            <div class="zalo-mapping-info">
+                <div class="zalo-mapping-title" title="${escapeHtml(m.groupName || m.groupId)}">
+                    ${escapeHtml(m.groupName || m.groupId)}
+                </div>
+                <div class="zalo-mapping-sub">
+                    Lưu vào dự án: <strong style="color: var(--text-primary); font-weight: 600;">${escapeHtml(m.projectName || 'Mặc định')}</strong>
+                </div>
+            </div>
+            <div class="zalo-mapping-actions">
+                <label class="zalo-mapping-toggle" title="${m.active !== false ? 'Đang bật quét tự động' : 'Đang tạm dừng'}">
+                    <input type="checkbox" ${m.active !== false ? 'checked' : ''} onchange="toggleZaloMappingActive(${idx}, this.checked)">
+                    <span>${m.active !== false ? 'Bật' : 'Tắt'}</span>
+                </label>
+                <button type="button" class="zalo-mapping-delete-btn" onclick="removeZaloAutoSyncMapping(${idx})" title="Xóa nhóm này khỏi lịch">
+                    ✕
+                </button>
+            </div>
+        `;
+        listEl.appendChild(row);
+    });
+}
+
+// Xóa tất cả các nhóm khỏi lịch tự động
+function clearAllZaloAutoSyncMappings() {
+    const mappings = zaloSyncConfig.mappings || [];
+    if (mappings.length === 0) {
+        showToast('Danh sách nhóm tự động hiện đang trống!', 'info');
+        return;
+    }
+    const count = mappings.length;
+    zaloSyncConfig.mappings = [];
+    renderZaloAutoSyncModalMappings();
+    showToast(`Đã xóa toàn bộ ${count} nhóm khỏi Lịch Tự Động!`, 'success');
+}
+
+// Bật/tắt 1 nhóm trong danh sách
+function toggleZaloMappingActive(idx, active) {
+    if (zaloSyncConfig.mappings && zaloSyncConfig.mappings[idx]) {
+        zaloSyncConfig.mappings[idx].active = active;
+        renderZaloAutoSyncModalMappings();
+    }
+}
+
+// Xóa 1 nhóm khỏi lịch
+function removeZaloAutoSyncMapping(idx) {
+    if (zaloSyncConfig.mappings && zaloSyncConfig.mappings[idx]) {
+        const removed = zaloSyncConfig.mappings.splice(idx, 1);
+        renderZaloAutoSyncModalMappings();
+        showToast(`Đã xóa "${removed[0]?.groupName || 'nhóm'}" khỏi Lịch Tự Động`, 'info');
+    }
+}
+
+// Lưu cấu hình từ Modal
+async function saveZaloSyncModalSettings() {
+    const enabled = document.getElementById('modal-zalo-sync-enabled')?.checked || false;
+    const scheduleTime = document.getElementById('modal-zalo-sync-time')?.value || '22:00';
+    const lookbackDays = parseInt(document.getElementById('modal-zalo-sync-lookback')?.value || '10', 10);
+    const autoBackfillOnStartup = document.getElementById('modal-zalo-sync-startup')?.checked !== false;
+
+    zaloSyncConfig.enabled = enabled;
+    zaloSyncConfig.scheduleTime = scheduleTime;
+    zaloSyncConfig.lookbackDays = lookbackDays;
+    zaloSyncConfig.autoBackfillOnStartup = autoBackfillOnStartup;
+
+    try {
+        const res = await fetch('/api/zalo/sync/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(zaloSyncConfig)
+        });
+        const data = await res.json();
+        if (data.success) {
+            updateZaloHeaderSyncBadge();
+            closeZaloAutoSyncModal();
+            showToast(`Đã lưu lịch tự động: ${scheduleTime} mỗi ngày (${enabled ? 'Đang BẬT' : 'Đang TẮT'})`, 'success');
+            appendZaloLog(`[Lịch tự động] Đã cập nhật cấu hình: ${scheduleTime} mỗi ngày, tự động: ${enabled ? 'BẬT' : 'TẮT'}`, 'info');
+        } else {
+            showToast('Lỗi lưu cấu hình: ' + (data.error || 'Thất bại'), 'error');
+        }
+    } catch (err) {
+        showToast('Lỗi kết nối: ' + err.message, 'error');
+    }
+}
+
+// Lấy tên dự án hiện đang được chọn trên giao diện Zalo
+function getSelectedZaloProjectName() {
+    const projectSel = document.getElementById('zalo-target-project');
+    if (projectSel && projectSel.value && projectSel.value !== '__AUTO__') {
+        return projectSel.value;
+    }
+    const hidTitle = document.getElementById('zalo-selected-group-title')?.value || selectedZaloGroupName;
+    if (hidTitle) return hidTitle;
+    return currentProjectName || '';
+}
+
+// Ẩn/Hiện chi tiết 10 ngày trong Smart Gap Alert
+function toggleZaloTimelineDetails() {
+    const el = document.getElementById('zalo-timeline-details-collapse');
+    if (!el) return;
+    const isHidden = el.style.display === 'none' || !el.style.display;
+    el.style.display = isHidden ? 'block' : 'none';
+}
+
+// Kiểm tra và hiển thị tình trạng ảnh 10 ngày gần nhất (Timeline & Smart Alert)
+async function refreshZaloTimelineGaps() {
+    const projectName = getSelectedZaloProjectName();
+    const alertEl = document.getElementById('zalo-smart-gap-alert');
+    const okEl = document.getElementById('zalo-smart-gap-ok');
+
+    if (!projectName) {
+        if (alertEl) alertEl.style.display = 'none';
+        if (okEl) okEl.style.display = 'none';
+        return;
+    }
+
+    const lookback = zaloSyncConfig.lookbackDays || 10;
+
+    try {
+        const res = await fetch(`/api/zalo/sync/gaps?projectName=${encodeURIComponent(projectName)}&lookbackDays=${lookback}`);
+        const data = await res.json();
+
+        if (data.success && data.data) {
+            renderZalo10DayTimeline(data.data);
+        } else {
+            if (alertEl) alertEl.style.display = 'none';
+            if (okEl) okEl.style.display = 'none';
+        }
+    } catch (err) {
+        console.warn('Lỗi kiểm tra ngày thiếu ảnh:', err);
+    }
+}
+
+// Vẽ Smart Gap Alert và các thẻ ngày chi tiết
+function renderZalo10DayTimeline(gaps) {
+    const alertEl = document.getElementById('zalo-smart-gap-alert');
+    const okEl = document.getElementById('zalo-smart-gap-ok');
+    const titleEl = document.getElementById('zalo-gap-alert-title');
+    const descEl = document.getElementById('zalo-gap-alert-desc');
+    const btnBackfill = document.getElementById('btn-zalo-backfill-now');
+    const stripEl = document.getElementById('zalo-days-strip');
+
+    if (!gaps || !Array.isArray(gaps.dates)) {
+        if (alertEl) alertEl.style.display = 'none';
+        if (okEl) okEl.style.display = 'none';
+        return;
+    }
+
+    const missingCount = (gaps.missingDates || []).length;
+    const projectName = gaps.projectName || getSelectedZaloProjectName();
+
+    if (missingCount > 0) {
+        if (alertEl) alertEl.style.display = 'block';
+        if (okEl) okEl.style.display = 'none';
+
+        if (titleEl) {
+            titleEl.textContent = `Phát hiện thiếu ${missingCount} ngày ảnh!`;
+        }
+
+        if (descEl) {
+            const formattedDates = (gaps.missingDates || []).slice(-3).map(d => {
+                const parts = d.split('-');
+                return parts.length === 3 ? `${parts[2]}/${parts[1]}` : d;
+            });
+            const datesStr = formattedDates.join(', ') + (missingCount > 3 ? '...' : '');
+            descEl.textContent = `Dự án "${projectName}" thiếu ảnh ngày: ${datesStr}.`;
+        }
+
+        if (btnBackfill) {
+            btnBackfill.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg> <span>⚡ Tự Động Tải Bù (${missingCount} ngày)</span>`;
+        }
+
+        // Render dải thẻ chi tiết
+        if (stripEl) {
+            stripEl.innerHTML = '';
+            gaps.dates.forEach(d => {
+                const pill = document.createElement('div');
+                pill.className = `zalo-day-pill ${d.status}`;
+                pill.title = `Ngày ${d.date}: ${d.photoCount} ảnh`;
+
+                let statusText = 'Đủ';
+                if (d.status === 'missing') statusText = 'Thiếu';
+                else if (d.status === 'today_pending') statusText = 'Hôm nay';
+                else if (d.isToday) statusText = 'Hôm nay';
+
+                pill.innerHTML = `
+                    <span class="day-date">${escapeHtml(d.displayDate)}</span>
+                    <span class="day-count">${d.photoCount} ảnh</span>
+                    <span class="day-status">${statusText}</span>
+                `;
+                stripEl.appendChild(pill);
+            });
+        }
+    } else {
+        // Đầy đủ ảnh
+        if (alertEl) alertEl.style.display = 'none';
+        if (okEl) okEl.style.display = 'flex';
+        if (stripEl) stripEl.innerHTML = '';
+    }
+}
+
+// Thêm nhóm & dự án đang chọn vào danh sách Auto-Sync
+async function addCurrentSelectionToAutoSync() {
+    const groupId = document.getElementById('zalo-selected-group-id')?.value || selectedZaloGroupId;
+    const groupName = document.getElementById('zalo-selected-group-title')?.value || selectedZaloGroupName;
+    const projectName = getSelectedZaloProjectName();
+
+    if (!groupId || !groupName) {
+        showToast('Vui lòng chọn 1 nhóm Zalo trước!', 'warning');
+        toggleZaloGroupDropdown(true);
+        return;
+    }
+
+    if (!zaloSyncConfig.mappings) zaloSyncConfig.mappings = [];
+
+    // Kiểm tra xem mapping đã tồn tại chưa
+    const existingIndex = zaloSyncConfig.mappings.findIndex(m => m.groupId === groupId);
+    if (existingIndex >= 0) {
+        zaloSyncConfig.mappings[existingIndex].projectName = projectName;
+        zaloSyncConfig.mappings[existingIndex].active = true;
+    } else {
+        zaloSyncConfig.mappings.push({
+            groupId,
+            groupName,
+            projectName,
+            active: true
+        });
+    }
+
+    // Tự động bật enabled nếu chưa bật
+    zaloSyncConfig.enabled = true;
+    const modalSwitch = document.getElementById('modal-zalo-sync-enabled');
+    if (modalSwitch) modalSwitch.checked = true;
+
+    try {
+        await fetch('/api/zalo/sync/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(zaloSyncConfig)
+        });
+        updateZaloHeaderSyncBadge();
+        renderZaloAutoSyncModalMappings();
+        showToast(`Đã thêm "${groupName}" -> Dự án "${projectName}" vào Lịch Tự Động!`, 'success');
+        appendZaloLog(`[Lịch tự động] Đã thêm nhóm "${groupName}" -> Dự án "${projectName}"`, 'success');
+    } catch (err) {
+        showToast('Lỗi lưu cấu hình: ' + err.message, 'error');
+    }
+}
+
+// Bấm nút "⚡ Tự Động Tải Bù"
+async function triggerManualBackfillNow() {
+    const btn = document.getElementById('btn-zalo-backfill-now');
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<div class="spinner spinner-sm"></div> <span>Đang Quét & Tải Bù...</span>';
+    }
+
+    const projectName = getSelectedZaloProjectName();
+    const groupId = document.getElementById('zalo-selected-group-id')?.value || selectedZaloGroupId;
+
+    if (!groupId) {
+        showToast('Vui lòng chọn nhóm Zalo trước khi tải bù!', 'warning');
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+        return;
+    }
+
+    try {
+        const gapRes = await fetch(`/api/zalo/sync/gaps?projectName=${encodeURIComponent(projectName)}&lookbackDays=10`);
+        const gapData = await gapRes.json();
+        
+        let fromDate = null;
+        if (gapData.success && gapData.data && gapData.data.earliestMissingDate) {
+            fromDate = gapData.data.earliestMissingDate;
+            appendZaloLog(`[Tải bù ngày thiếu] Phát hiện ngày thiếu cũ nhất là: ${fromDate}. Bắt đầu tải bù tới hôm nay...`, 'info');
+            showToast(`Bắt đầu tải bù ảnh từ ngày ${fromDate} đến nay...`, 'info');
+        } else {
+            appendZaloLog(`[Tải bù ngày thiếu] Không có ngày thiếu trong quá khứ, sẽ quét ảnh 3 ngày gần nhất.`, 'info');
+        }
+
+        // Tự động set date range trên UI và kích hoạt download
+        const fromInput = document.getElementById('zalo-date-from');
+        const toInput = document.getElementById('zalo-date-to');
+        if (fromInput && fromDate) setDatePickerValue(fromInput, fromDate);
+        if (toInput) {
+            const today = new Date();
+            const y = today.getFullYear();
+            const m = String(today.getMonth() + 1).padStart(2, '0');
+            const d = String(today.getDate()).padStart(2, '0');
+            setDatePickerValue(toInput, `${y}-${m}-${d}`);
+        }
+
+        // Gọi startZaloDownload
+        await startZaloDownload();
+    } catch (err) {
+        showToast('Lỗi tải bù: ' + err.message, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+        setTimeout(refreshZaloTimelineGaps, 3000);
+    }
+}
+
 // Tự động kiểm tra trạng thái Zalo khi mở trang web
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {
         checkZaloStatus();
+        initZaloAutoSync();
     }, 1000);
 });
 

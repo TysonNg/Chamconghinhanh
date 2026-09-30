@@ -1,0 +1,10 @@
+{
+  "enabled": false,
+  "scheduleTime": "22:00",
+  "lookbackDays": 10,
+  "autoBackfillOnStartup": false,
+  "lastRun": null,
+  "lastStatus": "idle",
+  "lastLog": [],
+  "mappings": []
+}

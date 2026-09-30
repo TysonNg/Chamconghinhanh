@@ -115,6 +115,7 @@ def register_identity_routes(app, registry_provider, input_root):
     def portraits():
         p=project(request.args); r=registry()
         r.import_legacy(p["project_id"])
+        r.generate_internal_codes()
         items=[]
         search=request.args.get("search","").casefold()
         for e in r.list_employees(p["project_id"]):
@@ -157,8 +158,7 @@ def register_identity_routes(app, registry_provider, input_root):
             c.execute("BEGIN IMMEDIATE")
             c.execute("INSERT INTO employees(employee_id,display_name) VALUES(?,?)",(eid,name))
             internal_code, _ = r._ensure_internal_code(c, eid)
-            if payroll_code:
-                r._assign(c,p["project_id"],eid,payroll_code,_day(valid_from),None)
+            r._assign(c,p["project_id"],eid,payroll_code,_day(valid_from),None)
         folder=r.project_portrait_dir(p["project_id"])/eid
         folder.mkdir(parents=True,exist_ok=True)
         r.bind_portrait(p["project_id"],eid,eid,reviewer)
@@ -288,17 +288,77 @@ def register_identity_routes(app, registry_provider, input_root):
             return jsonify(error="Không tìm thấy ảnh của nhân viên"),404
         return send_file(path)
 
+    @bp.post("/api/portraits/open-folder")
+    def open_portrait_folder():
+        import sys
+        data = payload()
+        p = project(data)
+        r = registry()
+        root = r.project_portrait_dir(p["project_id"])
+        root.mkdir(parents=True, exist_ok=True)
+
+        eid = data.get("employee_id")
+        target_folder = root
+        if eid:
+            e = employee(data, p)
+            paths = display_paths(p, e["employee_id"])
+            if paths:
+                target_folder = paths[0].parent
+            else:
+                target_folder = root / e["employee_id"]
+                target_folder.mkdir(parents=True, exist_ok=True)
+
+        target_folder = target_folder.resolve()
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(target_folder))
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", str(target_folder)])
+            return jsonify(success=True, path=str(target_folder))
+        except Exception as exc:
+            return jsonify(success=False, error=str(exc)), 500
+
     @bp.post("/api/portraits/employee/delete-photo")
     def retire_photo():
-        data=payload(); p=project(data); e=employee(data,p); r=registry()
-        path=r._bound_path(p["project_id"],data.get("filename",""))
-        if path not in display_paths(p,e["employee_id"]):
+        data = payload(); p = project(data); e = employee(data, p); r = registry()
+        root = r.project_portrait_dir(p["project_id"])
+        filename = str(data.get("filename", "")).strip()
+        if not filename:
+            raise ValueError("Chọn ảnh cần xóa")
+
+        emp_paths = display_paths(p, e["employee_id"])
+        matched = None
+        for candidate in emp_paths:
+            rel = candidate.relative_to(root).as_posix()
+            if (rel == filename or 
+                rel.replace('\\', '/') == filename.replace('\\', '/') or
+                candidate.name == filename or
+                candidate.name == Path(filename).name):
+                matched = candidate
+                break
+
+        if not matched:
+            try:
+                candidate = r._bound_path(p["project_id"], filename)
+                if candidate in emp_paths or candidate.resolve() in [x.resolve() for x in emp_paths]:
+                    matched = candidate
+            except Exception:
+                pass
+
+        if not matched:
             raise ValueError("Không tìm thấy ảnh của nhân viên")
-        relative=path.relative_to(r.project_portrait_dir(p["project_id"])).as_posix()
+
+        relative = matched.relative_to(root).as_posix()
         with r._connect() as c:
             c.execute("INSERT OR REPLACE INTO portrait_exclusions VALUES(?,?,?,?)",
-                      (p["project_id"],e["employee_id"],relative,date.today().isoformat()))
-        return jsonify(success=True,message="Đã ngừng dùng ảnh cho nhận diện mới; giữ ảnh để đối chiếu lịch sử")
+                      (p["project_id"], e["employee_id"], relative, date.today().isoformat()))
+
+        # Xóa vĩnh viễn tệp ảnh vật lý trên ổ đĩa
+        if matched.exists():
+            matched.unlink(missing_ok=True)
+
+        return jsonify(success=True, message="Đã xóa ảnh chân dung thành công", deleted=relative)
 
     @bp.post("/api/portraits/employee/delete")
     def archive_employee():
@@ -312,8 +372,11 @@ def register_identity_routes(app, registry_provider, input_root):
         source=r.get_project(data.get("source_project_id") or data.get("source_project"))
         target=r.get_project(data.get("target_project_id") or data.get("target_project"))
         e=employee(data,source)
+        current = e["memberships"][0] if e.get("memberships") else {}
         r.transfer_employee(source["project_id"],target["project_id"],e["employee_id"],
-                            data.get("effective_date"),data.get("payroll_code"),data.get("reviewer"))
+                            data.get("effective_date") or date.today().isoformat(),
+                            data.get("payroll_code", current.get("payroll_code", "")),
+                            data.get("reviewer") or "system")
         return jsonify(success=True,employee_id=e["employee_id"],message="Đã chuyển dự án, giữ lịch sử và ảnh gốc")
 
     app.register_blueprint(bp)

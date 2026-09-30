@@ -101,3 +101,98 @@ def test_create_employee_assigns_internal_code(tmp_path):
     emp = next(e for e in portraits["employees"] if e["employee_id"] == data["employee_id"])
     assert emp["internal_code"] == data["internal_code"]
 
+
+def test_create_multiple_employees_without_payroll_codes_and_upload_without_reviewer(tmp_path):
+    c, r = client(tmp_path)
+    project = c.post("/api/projects/create", json={"name": "Site"}).json
+
+    employees = []
+    for name in ("Nguyen Van A", "Tran Van B"):
+        response = c.post("/api/portraits/employee/create", json={
+            "project_id": project["project_id"],
+            "name": name,
+            "payroll_code": ""
+        })
+        assert response.status_code == 200
+        employees.append(response.json["employee_id"])
+
+    listed = c.get("/api/portraits", query_string={"project_id": project["project_id"]}).json["employees"]
+    assert {employee["employee_id"] for employee in listed} == set(employees)
+    assert all(employee["payroll_code"] == "" for employee in listed)
+
+    uploaded = c.post("/api/portraits/employee/upload", data={
+        "project_id": project["project_id"],
+        "employee_id": employees[0],
+        "files": (photo(), "portrait.png")
+    })
+    assert uploaded.status_code == 200
+    assert len(r.portrait_paths(project["project_id"], employees[0], date.today())) == 1
+
+def test_delete_employee_photo_physically_removes_file_and_excludes(tmp_path):
+    c, r = client(tmp_path)
+    project = c.post("/api/projects/create", json={"name": "Site"}).json
+    emp = c.post("/api/portraits/employee/create", json={
+        "project_id": project["project_id"],
+        "name": "Le Van C"
+    }).json
+    eid = emp["employee_id"]
+
+    c.post("/api/portraits/employee/upload", data={
+        "project_id": project["project_id"],
+        "employee_id": eid,
+        "files": (photo(), "test_face.png")
+    })
+    portraits = c.get("/api/portraits", query_string={"project_id": project["project_id"]}).json
+    emp_data = next(e for e in portraits["employees"] if e["employee_id"] == eid)
+    assert len(emp_data["images"]) == 1
+    image_name = emp_data["images"][0]
+
+    # Verify physical file exists on disk
+    photo_file = r.portrait_root / "Site" / image_name
+    assert photo_file.exists()
+
+    # Call delete-photo
+    del_res = c.post("/api/portraits/employee/delete-photo", json={
+        "project_id": project["project_id"],
+        "employee_id": eid,
+        "filename": image_name
+    })
+    assert del_res.status_code == 200
+    assert del_res.json["success"] is True
+
+    # Physical file must be removed
+    assert not photo_file.exists()
+
+    # Should no longer be returned in portraits listing
+    portraits_after = c.get("/api/portraits", query_string={"project_id": project["project_id"]}).json
+    emp_after = next(e for e in portraits_after["employees"] if e["employee_id"] == eid)
+    assert len(emp_after["images"]) == 0
+
+def test_open_portrait_folder_endpoint(tmp_path, monkeypatch):
+    c, r = client(tmp_path)
+    opened = []
+    import sys
+    if sys.platform == "win32":
+        monkeypatch.setattr("os.startfile", lambda p: opened.append(p))
+    project = c.post("/api/projects/create", json={"name": "Site"}).json
+
+    # Project folder
+    res1 = c.post("/api/portraits/open-folder", json={"project_id": project["project_id"]})
+    assert res1.status_code == 200
+    assert res1.json["success"] is True
+    assert (r.portrait_root / "Site").exists()
+
+    # Specific employee folder
+    emp = c.post("/api/portraits/employee/create", json={
+        "project_id": project["project_id"],
+        "name": "Dang Van D"
+    }).json
+    res2 = c.post("/api/portraits/open-folder", json={
+        "project_id": project["project_id"],
+        "employee_id": emp["employee_id"]
+    })
+    assert res2.status_code == 200
+    assert res2.json["success"] is True
+    assert (r.portrait_root / "Site" / emp["employee_id"]).exists()
+
+

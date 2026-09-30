@@ -1982,6 +1982,36 @@ def zalo_restart():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/zalo/sync/config', methods=['GET', 'POST'])
+def zalo_sync_config():
+    """Lấy hoặc lưu cấu hình tự động quét ảnh Zalo"""
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        result, status = _proxy_zalo('/api/sync/config', method='POST', data=data)
+    else:
+        result, status = _proxy_zalo('/api/sync/config')
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/sync/gaps', methods=['GET'])
+def zalo_sync_gaps():
+    """Kiểm tra ngày thiếu ảnh trong N ngày gần nhất của một dự án"""
+    project_name = request.args.get('projectName', '')
+    lookback = request.args.get('lookbackDays', '10')
+    import urllib.parse
+    encoded_proj = urllib.parse.quote(project_name)
+    result, status = _proxy_zalo(f'/api/sync/gaps?projectName={encoded_proj}&lookbackDays={lookback}')
+    return jsonify(result), status
+
+
+@app.route('/api/zalo/sync/run', methods=['POST'])
+def zalo_sync_run():
+    """Kích hoạt quét & tải bù ảnh ngay lập tức"""
+    data = request.get_json(silent=True) or {}
+    result, status = _proxy_zalo('/api/sync/run', method='POST', data=data)
+    return jsonify(result), status
+
+
 @app.route('/api/open/folder', methods=['POST'])
 def open_system_folder():
     """Mở thư mục trong File Explorer (Windows)"""
@@ -1995,6 +2025,8 @@ def open_system_folder():
         root_folder = RESULTS_DIR
     elif target_type == 'excel_output':
         root_folder = EXCEL_OUTPUT_DIR
+    elif target_type in ('portraits', 'portraits_root'):
+        root_folder = PORTRAIT_DIR
     else:
         return jsonify({'success': False, 'error': 'Loại thư mục không hợp lệ'}), 400
 
