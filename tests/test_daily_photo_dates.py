@@ -92,3 +92,23 @@ def test_delete_all_days_entire_project(tmp_path):
     assert not (tmp_path / "Site" / "2026-08-15" / "aug.png").exists()
     assert not (tmp_path / "Site" / "2026-09-01" / "sep1.png").exists()
 
+
+
+def test_listing_exposes_shift_without_losing_legacy_or_bad_metadata(tmp_path):
+    import json
+    c = make_client(tmp_path)
+    folder = tmp_path / "Site" / "2026-10-01"
+    folder.mkdir(parents=True)
+    for name in ("morning.png", "afternoon.png", "legacy.png", "broken.png"):
+        (folder / name).write_bytes(photo().getvalue())
+    for shift, time in (("morning", "05:00:00"), ("afternoon", "16:00:00")):
+        (folder / (shift + ".png.json")).write_text(json.dumps({"shift": shift, "send_time": time}), encoding="utf-8")
+    (folder / "broken.png.json").write_text("broken", encoding="utf-8")
+    response = c.get("/api/photos/daily/2026-10-01?project=Site")
+    assert response.status_code == 200
+    photos = {p["filename"]: p for p in response.json["photos"]}
+    assert len(photos) == 4
+    assert photos["morning.png"]["shift"] == "morning"
+    assert photos["afternoon.png"]["send_time"] == "16:00:00"
+    assert photos["legacy.png"]["shift"] == "unknown"
+    assert photos["broken.png"]["shift"] == "unknown"

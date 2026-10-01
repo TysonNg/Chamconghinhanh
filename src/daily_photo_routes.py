@@ -88,11 +88,22 @@ def register_daily_photo_routes(app, input_root, project_resolver=None):
         legacy = [p.name for p in root.iterdir() if p.is_dir() and re.fullmatch(r"\d{1,2}", p.name)] if root.exists() else []
         return jsonify(success=True, project=project, period=period, days=days, legacy_folders=sorted(legacy))
 
+    def shift_info(photo):
+        try:
+            metadata = json.loads(Path(str(photo) + ".json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"shift": "unknown", "send_time": None}
+        if not isinstance(metadata, dict):
+            return {"shift": "unknown", "send_time": None}
+        shift = metadata.get("shift", "unknown")
+        return {"shift": shift if shift in ("morning", "afternoon", "outside", "unknown") else "unknown",
+                "send_time": metadata.get("send_time")}
+
     @bp.get("/api/photos/daily/<day>")
     def listing(day):
         target = requested_day(request.args, day)
         project, folder = folder_for(request.args, target)
-        photos = [{"filename": p.name, "size_kb": round(p.stat().st_size / 1024, 1),
+        photos = [{**shift_info(p), "filename": p.name, "size_kb": round(p.stat().st_size / 1024, 1),
                    "url": "/api/photos/view/daily?" + urlencode({"project": project, "date": target.isoformat(), "filename": p.name})}
                   for p in images(folder)]
         return jsonify(success=True, project=project, date=target.isoformat(), day=f"{target.day:02}",

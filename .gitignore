@@ -84,3 +84,6 @@ supplement_data/supplement_staging_raw/
 supplement_temp/
 supplement_temp_diff.jpg
 test_exif.jpg
+
+# Persistent local Zalo browser sessions
+zalo-service/zalo-browser-profile*/

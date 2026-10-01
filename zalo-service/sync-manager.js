@@ -338,7 +338,7 @@ class SyncManager {
                         toDate: toDate,
                         folderFormat: "YYYY-MM-DD",
                         headless: true,
-                        maxImages: 1500
+                        maxImages: 0
                     });
 
                     results.push({

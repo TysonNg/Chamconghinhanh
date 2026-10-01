@@ -81,3 +81,19 @@ test('viewer native download supplies full bytes and a send date for an undated 
     assert.equal(normalizeSendDate(resolved), '2026-09-12');
     assert.equal(await page.$('[role="dialog"]'), null);
 });
+test('expired QR refresh clicks the action inside the overlay and returns a new image', async () => {
+    await page.setContent(`<div class="qrcode"><div class="qr-container"><svg width="236" height="236" xmlns="http://www.w3.org/2000/svg"><rect width="236" height="236" fill="white"/><rect x="10" y="10" width="40" height="40"/></svg></div><div class="qrcode-expired"><p>Expired</p><a class="btn" href="#">Refresh</a></div></div>`);
+    await page.evaluate(() => {
+        document.querySelector('.qrcode-expired a').onclick = event => {
+            event.preventDefault();
+            document.querySelector('.qrcode-expired').style.display = 'none';
+        };
+    });
+    const d = new Downloader();
+    d.page = page;
+    d.progress.status = 'waiting_qr';
+    d._log = () => {};
+    const image = await d.refreshQrCode();
+    assert.ok(image?.startsWith('data:image/png;base64,'), 'Refresh must activate the action and capture the QR');
+    assert.equal(d.currentQrBase64, image);
+});

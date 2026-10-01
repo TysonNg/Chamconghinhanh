@@ -1,9 +1,10 @@
 const fs = require("fs");
 const path = require("path");
 const puppeteer = require("puppeteer-core");
-const {validDate, normalizeSendDate, mergePhotos, collectVisiblePhotos} = require("./photo-metadata");
+const {validDate, normalizeSendDate, mergePhotos, collectVisiblePhotos, classifySendShift} = require("./photo-metadata");
 const {readImage, resolvePhoto} = require("./photo-viewer");
 const {extractExifDate} = require("./exif-extractor");
+const {collectVisibleGroups, scrollList, clickNavigation, clickConversation, clickSearchGroupTab, debugSearchDom} = require("./browser-lists");
 
 function getBrowserExecutablePath() {
     const candidatePaths = [
@@ -22,7 +23,7 @@ class ZaloBrowserDownloader {
     constructor(projectRootDir) {
         this.projectRootDir = projectRootDir || path.resolve(__dirname, "..");
         this.inputImagesDir = path.join(this.projectRootDir, "input_images");
-        this.profileDir = path.join(__dirname, "zalo-browser-profile");
+        this.profileDir = process.env.ZALO_BROWSER_PROFILE_DIR || path.join(__dirname, "zalo-browser-profile-clean");
         
         if (!fs.existsSync(this.profileDir)) {
             fs.mkdirSync(this.profileDir, { recursive: true });
@@ -34,6 +35,9 @@ class ZaloBrowserDownloader {
         this.isDownloading = false;
         this.currentQrBase64 = null;
         this.scanDelayMs = 2000;
+        this.loginPromise = null;
+        this.loginError = null;
+        this.loginTimeoutMs = 600000;
 
         this.progress = {
             status: "idle", // idle | waiting_qr | opening_group | scanning_media | downloading | done | error
@@ -71,6 +75,133 @@ class ZaloBrowserDownloader {
             currentQrBase64: this.currentQrBase64,
             progress: this.progress
         };
+    }
+
+    async getConnectionStatus() {
+        let ready = false;
+        try {
+            if (this.browser?.connected && this.page && !this.page.isClosed() &&
+                new URL(this.page.url()).hostname === "chat.zalo.me") {
+                ready = !!(await this.page.$("#contact-search-input, .conv-item, #main-tab"));
+            }
+        } catch {}
+        this.isLoggedIn = ready;
+        if (ready || !this.browser?.connected || !this.page || this.page.isClosed()) {
+            this.currentQrBase64 = null;
+            this.progress.qrImage = null;
+            this.progress.qrExpiresAt = null;
+        }
+        return {
+            isLoggedIn: ready,
+            loginInProgress: !!this.loginPromise,
+            qrStatus: ready ? "logged_in" : this.loginError ? "error" : this.loginPromise ? "waiting_scan" : "idle",
+            qrUserInfo: null,
+            hasQrImage: !!this.currentQrBase64,
+            error: this.loginError,
+        };
+    }
+
+    startLogin() {
+        if (!this.loginPromise) {
+            this.loginError = null;
+            this.loginPromise = (this.restorePromise
+                ? this.restorePromise.catch(() => {}).then(() => this.ensureLoggedIn(true))
+                : this.ensureLoggedIn(true)).catch(error => {
+                this.loginError = error.message;
+                this.currentQrBase64 = null;
+                this.progress.qrImage = null;
+                this.progress.qrExpiresAt = null;
+                this.progress.status = "error";
+                this.progress.error = error.message;
+                throw error;
+            }).finally(() => { this.loginPromise = null; });
+        }
+        return this.loginPromise;
+    }
+
+    async restoreSession() {
+        await this.getOrLaunchBrowser(true);
+        await this.page.goto("https://chat.zalo.me", {waitUntil: "domcontentloaded", timeout: 30000});
+        await this.page.waitForSelector("#contact-search-input, .conv-item, #main-tab", {timeout: 10000}).catch(() => {});
+        return (await this.getConnectionStatus()).isLoggedIn;
+    }
+
+    async logout() {
+        if (this.isDownloading) throw new Error("Vui lòng hủy tải ảnh trước khi đăng xuất.");
+        if (this.restorePromise) await this.restorePromise.catch(() => {});
+        this.abortLogin = true;
+        if (this.loginPromise) await this.loginPromise.catch(() => {});
+        await this.getOrLaunchBrowser(true);
+        if (this.page && !this.page.isClosed()) {
+            const context = this.page.browserContext();
+            const cookies = await context.cookies();
+            if (cookies.length) await context.deleteCookie(...cookies);
+            const session = await this.page.createCDPSession();
+            try {
+                for (const origin of ["https://chat.zalo.me", "https://id.zalo.me"]) {
+                    await session.send("Storage.clearDataForOrigin", {origin, storageTypes: "all"});
+                }
+            } finally { await session.detach(); }
+        }
+        await this.close();
+        this.isLoggedIn = false;
+        this.currentQrBase64 = null;
+        this.progress.qrImage = null;
+        this.progress.qrExpiresAt = null;
+        this.progress.status = "idle";
+        this.loginError = null;
+    }
+
+    async getGroups() {
+        if (!(await this.getConnectionStatus()).isLoggedIn) throw new Error("Chưa đăng nhập Zalo Web.");
+        if (this.isDownloading) throw new Error("Vui lòng chờ tải ảnh hoàn tất trước khi cập nhật nhóm.");
+        if (this.groupsPromise) return this.groupsPromise;
+        this.groupsPromise = this._getAllGroups().finally(() => { this.groupsPromise = null; });
+        return this.groupsPromise;
+    }
+
+    async _getAllGroups() {
+        const wait = () => new Promise(resolve => setTimeout(resolve, this.scanDelayMs));
+        const contacts = await this.page.evaluate(clickNavigation, ['Danh bạ', 'Contacts']);
+        if (!contacts) throw new Error("Không mở được Danh bạ Zalo để lấy đầy đủ nhóm.");
+        try {
+            let opened = false;
+            for (let attempt = 0; attempt < 15 && !opened; attempt++) {
+                opened = await this.page.evaluate(clickNavigation, ['Danh sách nhóm và cộng đồng', 'Danh sách nhóm', 'Nhóm', 'Groups', 'Group list']);
+                if (!opened) await wait();
+            }
+            if (!opened) throw new Error("Không tìm thấy Danh sách nhóm trên Zalo Web.");
+            await wait();
+            await this.page.evaluate(scrollList, 'groups', 'start');
+            await wait();
+            const groups = new Map();
+            let previous = '', stable = 0, stuck = 0;
+            while (true) {
+                const rows = await this.page.evaluate(collectVisibleGroups);
+                for (const row of rows) groups.set(row.id, row);
+                const state = await this.page.evaluate(scrollList, 'groups');
+                const key = JSON.stringify([rows.map(row => row.id), state.top, state.height, groups.size]);
+                stable = key === previous && state.atEnd && !state.loading ? stable + 1 : 0;
+                stuck = key === previous ? stuck + 1 : 0;
+                previous = key;
+                if (stable >= 6) {
+                    if (!groups.size && !state.empty && state.expectedCount !== 0) {
+                        throw new Error("Chưa đọc được danh sách nhóm Zalo; vui lòng chờ đồng bộ rồi thử lại.");
+                    }
+                    if (state.expectedCount !== null && groups.size !== state.expectedCount) {
+                        throw new Error(`Mới đọc được ${groups.size}/${state.expectedCount} nhóm Zalo; vui lòng cập nhật lại danh sách.`);
+                    }
+                    break;
+                }
+                if (stuck >= 30) throw new Error("Danh sách nhóm chưa tải xong hoặc không cuộn được. Vui lòng thử lại.");
+                await this.page.evaluate(scrollList, 'groups', true);
+                await wait();
+            }
+            this._log(`Đã quét hết danh sách nhóm có sẵn trên Zalo Web: ${groups.size} nhóm.`);
+            return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+        } finally {
+            await this.page.evaluate(clickNavigation, ['Tin nhắn', 'Messages']).catch(() => {});
+        }
     }
 
     _cleanupStaleLocks() {
@@ -170,6 +301,9 @@ class ZaloBrowserDownloader {
             this._log("Trình duyệt đã đóng.");
             this.browser = null;
             this.page = null;
+            this.isLoggedIn = false;
+            this.currentQrBase64 = null;
+            this.progress.qrImage = null;
         });
 
         const pages = await this.browser.pages();
@@ -208,7 +342,7 @@ class ZaloBrowserDownloader {
             }).filter(c => c.name && c.value);
 
             if (puppeteerCookies.length > 0) {
-                await this.page.setCookie(...puppeteerCookies);
+                await this.page.browserContext().setCookie(...puppeteerCookies);
                 this._log(`Đã nạp ${puppeteerCookies.length} cookies vào trình duyệt.`);
 
                 // Mở thử trang chat.zalo.me để kích hoạt session
@@ -293,15 +427,15 @@ class ZaloBrowserDownloader {
                 break;
             }
 
-            const isQrVisible = await this.page.$(".qr-container, .qrcode, canvas").catch(() => null);
-            if (isQrVisible) {
-                state = "needs_login";
+            const isChatReady = new URL(url).hostname === "chat.zalo.me" && await this.page.$("#contact-search-input, .conv-item, #main-tab").catch(() => null);
+            if (isChatReady) {
+                state = "logged_in";
                 break;
             }
 
-            const isChatReady = await this.page.$("#contact-search-input, .conv-item, #main-tab").catch(() => null);
-            if (isChatReady) {
-                state = "logged_in";
+            const isQrVisible = await this.page.$(".qr-container, .qrcode").catch(() => null);
+            if (isQrVisible) {
+                state = "needs_login";
                 break;
             }
 
@@ -350,7 +484,7 @@ class ZaloBrowserDownloader {
         const startWait = Date.now();
         let lastCaptureTime = Date.now();
 
-        while (Date.now() - startWait < 120000) {
+        while (Date.now() - startWait < (this.loginTimeoutMs || 600000)) {
             if (this.abortLogin) {
                 throw new Error("Đã hủy quá trình chờ quét mã QR.");
             }
@@ -371,7 +505,7 @@ class ZaloBrowserDownloader {
 
             if (isOnChatDomain) {
                 await this._checkAndClickSyncPrompt();
-                const isChatReady = await this.page.$("#contact-search-input, .conv-item, #main-tab, .chat-message, .zl-avatar").catch(() => null);
+                const isChatReady = (await this.getConnectionStatus()).isLoggedIn;
                 if (isChatReady) {
                     this.isLoggedIn = true;
                     this.currentQrBase64 = null;
@@ -384,7 +518,7 @@ class ZaloBrowserDownloader {
                     return true;
                 }
             } else {
-                const isChatReady = await this.page.$("#contact-search-input, .conv-item, #main-tab").catch(() => null);
+                const isChatReady = (await this.getConnectionStatus()).isLoggedIn;
                 if (isChatReady) {
                     this.isLoggedIn = true;
                     this.currentQrBase64 = null;
@@ -411,7 +545,7 @@ class ZaloBrowserDownloader {
                         const el = document.querySelector(sel);
                         if (!el) continue;
                         const style = window.getComputedStyle(el);
-                        if (style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0") return sel;
+                        if (el.getClientRects().length && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0") return sel;
                     }
                     return false;
                 }).catch(() => false);
@@ -426,7 +560,11 @@ class ZaloBrowserDownloader {
                         ];
                         for (const sel of refreshSelectors) {
                             const el = document.querySelector(sel);
-                            if (el && el.getClientRects().length) { el.click(); return; }
+                            if (el && el.getClientRects().length) {
+                                const action = el.querySelector("a, button, [role='button']") || el;
+                                action.click();
+                                return;
+                            }
                         }
                     }).catch(() => {});
                     await new Promise(r => setTimeout(r, 2000));
@@ -445,7 +583,7 @@ class ZaloBrowserDownloader {
             await new Promise(r => setTimeout(r, 1200));
         }
 
-        throw new Error("Hết thời gian chờ quét mã QR đăng nhập (2 phút). Vui lòng bấm Lấy Mã QR Mới hoặc bấm 'Hiện Cửa Sổ Chrome'.");
+        throw new Error("Hết thời gian chờ quét mã QR đăng nhập (10 phút). Vui lòng bấm Lấy Mã QR Mới hoặc bấm 'Hiện Cửa Sổ Chrome'.");
     }
 
     /**
@@ -580,7 +718,7 @@ class ZaloBrowserDownloader {
                 const expEl = document.querySelector(".qrcode-expired, .qr-expired, [class*='expired']");
                 if (expEl) {
                     const style = window.getComputedStyle(expEl);
-                    if (style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0") {
+                    if (expEl.getClientRects().length && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0") {
                         return true;
                     }
                 }
@@ -660,7 +798,8 @@ class ZaloBrowserDownloader {
                 for (const sel of refreshSelectors) {
                     const el = document.querySelector(sel);
                     if (el && el.getClientRects().length) {
-                        el.click();
+                        const action = el.querySelector("a, button, [role='button']") || el;
+                        action.click();
                         return true;
                     }
                 }
@@ -674,6 +813,7 @@ class ZaloBrowserDownloader {
         }
         await new Promise(r => setTimeout(r, 2000));
         const newQr = await this._captureQrImage();
+        if (!newQr) throw new Error("Không lấy được mã QR mới từ Zalo Web. Vui lòng thử lại.");
         this.progress.qrExpiresAt = Date.now() + 60000;
         this._log("Đã cập nhật mã QR mới thành công.");
         return newQr;
@@ -704,12 +844,14 @@ class ZaloBrowserDownloader {
             toDate,
             folderFormat = "YYYY-MM-DD",
             headless = true,
-            maxImages = 1000
+            maxImages = 0
         } = options;
 
         if (this.isDownloading) {
             throw new Error("Tiến trình tải ảnh khác đang chạy, vui lòng chờ.");
         }
+        if (this.groupsPromise) await this.groupsPromise;
+        if (this.isDownloading) throw new Error("Tiến trình tải ảnh khác đang chạy, vui lòng chờ.");
 
         if ((fromDate && !validDate(fromDate)) || (toDate && !validDate(toDate)) || (fromDate && toDate && fromDate > toDate)) {
             throw new Error("Khoảng ngày tải ảnh không hợp lệ.");
@@ -741,11 +883,13 @@ class ZaloBrowserDownloader {
 
         try {
             // Step 1: Ensure logged in
-            await this.ensureLoggedIn(headless);
+            if (this.restorePromise) await this.restorePromise.catch(() => {});
+            if (this.loginPromise) await this.loginPromise;
+            else await this.ensureLoggedIn(this.browser?.connected ? this.currentHeadless : headless);
 
             // Step 2: Search and open group
             this.progress.status = "opening_group";
-            await this._openGroup(groupName);
+            await this._openGroup(groupName, groupId);
             await this._checkAndClickSyncPrompt();
 
             // Tự động làm mới danh sách tin nhắn & ảnh mới nhất trong nhóm, tránh cache DOM cũ
@@ -778,19 +922,17 @@ class ZaloBrowserDownloader {
 
     /**
      * Search and click on the group in the conversation list
+     * Includes retry logic, search tab switching, and debug screenshot on failure.
      */
-    async _openGroup(groupName) {
+    async _openGroup(groupName, groupId) {
         this._log(`Đang tìm kiếm và mở nhóm "${groupName}"...`);
         const page = this.page;
 
         // Check if group is already currently open
-        const isCurrentChat = await page.evaluate((gName) => {
-            const header = document.querySelector(".header-title, .chat-title, .title-text, .header-name");
-            if (header && header.textContent && header.textContent.toLowerCase().includes(gName.toLowerCase())) {
-                return true;
-            }
-            return false;
-        }, groupName);
+        const isCurrentChat = groupId && await page.evaluate(id => {
+            const header = document.querySelector('.header-title, .chat-title, .header-name');
+            return header?.closest('[data-group-id]')?.getAttribute('data-group-id') === id;
+        }, groupId);
 
         if (isCurrentChat) {
             this._log(`Đang ở sẵn trong cuộc trò chuyện nhóm "${groupName}".`);
@@ -798,16 +940,7 @@ class ZaloBrowserDownloader {
         }
 
         // Try direct click if already visible in recent list
-        const clicked = await page.evaluate((gName) => {
-            const items = document.querySelectorAll(".conv-item, .conv-item-title__name, .truncate");
-            for (const el of items) {
-                if (el.textContent && el.textContent.trim().toLowerCase() === gName.trim().toLowerCase()) {
-                    el.closest(".conv-item")?.click() || el.click();
-                    return true;
-                }
-            }
-            return false;
-        }, groupName);
+        const clicked = await page.evaluate(clickConversation, groupName, groupId);
 
         if (clicked) {
             this._log(`Đã chọn nhóm "${groupName}" từ danh sách gần đây.`);
@@ -815,9 +948,10 @@ class ZaloBrowserDownloader {
             return;
         }
 
-        // If not in view, use the search box
+        // If not in view, use the search box with retry logic
         const searchInput = await page.$("#contact-search-input, input[placeholder*='Tìm kiếm']");
         if (searchInput) {
+            // Clear previous search
             await searchInput.click();
             await page.keyboard.down("Control");
             await page.keyboard.press("A");
@@ -826,32 +960,63 @@ class ZaloBrowserDownloader {
 
             await searchInput.type(groupName, { delay: 50 });
             this._log(`Đã gõ từ khóa tìm kiếm: "${groupName}"`);
-            await new Promise(r => setTimeout(r, 2000));
 
-            // Click the first matching result
-            const resultClicked = await page.evaluate((gName) => {
-                const results = document.querySelectorAll(".conv-item, .search-item, [data-id*='conv_item']");
-                for (const item of results) {
-                    if (item.textContent && item.textContent.toLowerCase().includes(gName.toLowerCase())) {
-                        item.click();
-                        return true;
+            // Retry clicking search results with increasing wait times
+            for (let attempt = 0; attempt < 3; attempt++) {
+                // Wait for search results to render (increase wait each attempt)
+                await new Promise(r => setTimeout(r, 1500 + attempt * 1500));
+
+                // Try clicking the matching result first on current tab
+                let resultClicked = await page.evaluate(clickConversation, groupName, groupId);
+                if (resultClicked) {
+                    this._log(`Đã mở cuộc trò chuyện nhóm "${groupName}" (lần thử ${attempt + 1}).`);
+                    await new Promise(r => setTimeout(r, 2500));
+                    return;
+                }
+
+                // If not found and attempt >= 1, try switching to filter tab ("Liên hệ" / "Nhóm")
+                if (attempt >= 1) {
+                    const tabClicked = await page.evaluate(clickSearchGroupTab);
+                    if (tabClicked) {
+                        this._log(`Đã chuyển sang tab lọc kết quả tìm kiếm (lần thử ${attempt + 1}).`);
+                        await new Promise(r => setTimeout(r, 1500));
+                        resultClicked = await page.evaluate(clickConversation, groupName, groupId);
+                        if (resultClicked) {
+                            this._log(`Đã mở cuộc trò chuyện nhóm "${groupName}" sau khi lọc kết quả.`);
+                            await new Promise(r => setTimeout(r, 2500));
+                            return;
+                        }
                     }
                 }
-                if (results.length > 0) {
-                    results[0].click();
-                    return true;
-                }
-                return false;
-            }, groupName);
 
-            if (resultClicked) {
-                this._log(`Đã mở cuộc trò chuyện nhóm "${groupName}".`);
-                await new Promise(r => setTimeout(r, 2500));
-                return;
+                if (attempt < 2) {
+                    this._log(`Lần thử ${attempt + 1}: chưa tìm thấy nhóm trong kết quả tìm kiếm, đang thử lại...`);
+                }
             }
+
+            // All retries failed - capture debug info
+            try {
+                const debugInfo = await page.evaluate(debugSearchDom, groupName);
+                this._log(`[Debug] Thông tin tìm kiếm thất bại: ${JSON.stringify(debugInfo)}`);
+                const screenshotPath = path.join(__dirname, "debug_search_failed.png");
+                await page.screenshot({ path: screenshotPath });
+                this._log(`[Debug] Đã chụp ảnh màn hình debug: ${screenshotPath}`);
+            } catch (debugErr) {
+                this._log(`[Debug] Không thể chụp debug: ${debugErr.message}`);
+            }
+
+            // Clear the search box before throwing
+            try {
+                await searchInput.click();
+                await page.keyboard.down("Control");
+                await page.keyboard.press("A");
+                await page.keyboard.up("Control");
+                await page.keyboard.press("Backspace");
+                await page.keyboard.press("Escape");
+            } catch {}
         }
 
-        throw new Error(`Không tìm thấy nhóm "${groupName}" trên Zalo Web. Vui lòng đảm bảo tài khoản đã tham gia nhóm này.`);
+        throw new Error(`Không tìm thấy nhóm "${groupName}" trên Zalo Web. Vui lòng đảm bảo tài khoản đã tham gia nhóm này. Xem file debug_search_failed.png để biết thêm chi tiết.`);
     }
 
     /**
@@ -863,56 +1028,68 @@ class ZaloBrowserDownloader {
 
         // Ensure right sidebar is open
         await page.evaluate(() => {
+            if (document.querySelector('#innerScrollContainer')?.getClientRects().length) return;
             const btn = document.querySelector("div[title='Thông tin hội thoại'], div[title='Thông tin nhóm']");
             if (btn && !btn.className.includes("focused")) {
                 btn.click();
             }
         });
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, this.scanDelayMs));
 
-        // Click "Xem tất cả" inside the "Ảnh/Video" section of the sidebar
+        // Only activate the photo section, never the unrelated files/links section.
         const openedKho = await page.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll("*")).filter(el => {
-                const txt = el.textContent ? el.textContent.trim() : "";
-                return (txt === "Xem tất cả" || txt === "Xem tất cả >") && el.children.length === 0;
-            });
-            if (btns.length > 0) {
-                btns[0].click();
-                return true;
+            const sidebar = document.querySelector('#chatInfo, .chat-right-menu, .conversation-info, [data-id*="RightMenu"]');
+            if (!sidebar) return false;
+            const headings = Array.from(sidebar.querySelectorAll('*')).filter(el => el.children.length === 0 &&
+                /^(ảnh\s*[/&]\s*video|ảnh và video|photos?\s*[/&]\s*videos?)(\s*\(\d+\))?$/i.test((el.textContent || '').trim()));
+            for (const heading of headings) {
+                for (let section = heading.parentElement; section && section !== sidebar; section = section.parentElement) {
+                    const buttons = Array.from(section.querySelectorAll('*')).filter(el => el.children.length === 0 &&
+                        /^(xem tất cả|see all|view all)\s*>?$/i.test((el.textContent || '').trim()) && el.getClientRects().length);
+                    if (buttons.length === 1) { buttons[0].click(); return true; }
+                    if (buttons.length > 1) break;
+                }
             }
             return false;
         });
 
-        if (openedKho) {
-            this._log("Đã mở Kho lưu trữ Ảnh/Video đầy đủ của nhóm.");
-        } else {
-            this._log("Đang quét ảnh trực tiếp từ Kho lưu trữ & Cuộc trò chuyện...");
+        if (!openedKho && !(await page.$('#innerScrollContainer'))) {
+            throw new Error("Không mở được kho Ảnh/Video của nhóm; chưa thể lấy đầy đủ ảnh.");
         }
-
-        await new Promise(r => setTimeout(r, 2500));
+        await page.waitForSelector('#innerScrollContainer', {visible: true, timeout: 30000});
+        this._log("Đã mở Kho lưu trữ Ảnh/Video của nhóm.");
+        await new Promise(r => setTimeout(r, this.scanDelayMs));
     }
 
     /**
      * Collect photos by scrolling the media store and chat view
      */
-    async _collectPhotos(fromDateStr, toDateStr, maxPhotos = 1000, onBatch = null) {
+    async _collectPhotos(fromDateStr, toDateStr, maxPhotos = 0, onBatch = null) {
         this._log("Đang quét danh sách ảnh trong nhóm...");
-        const limit = Math.max(1, Number(maxPhotos) || 1000);
+        const requestedLimit = Number(maxPhotos);
+        const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.floor(requestedLimit) : Infinity;
         const collected = [];
         const seenIds = new Set();
         const seenUrls = new Map();
-        const maxScrolls = fromDateStr ? 120 : 8;
         let stagnantScans = 0;
         let previousVisibleKey = "";
-        for (let scroll = 0; scroll < maxScrolls && collected.length < limit; scroll++) {
+        let stuckScans = 0;
+        this.progress.scanComplete = false;
+        this.progress.scanStopReason = null;
+        this.progress.historyNotice = '';
+        await this.page.evaluate(scrollList, 'photos', 'start');
+        await new Promise(r => setTimeout(r, this.scanDelayMs));
+        for (let scroll = 0; collected.length < limit; scroll++) {
             const raw = await this.page.evaluate(collectVisiblePhotos);
             const normalized = mergePhotos(raw.map(photo => {
                 const date = normalizeSendDate(photo);
                 return {...photo, date, dateSource: photo.timestamp && date ? "message" : photo.dateSource};
             }));
-            const visibleDates = normalized.map(photo => photo.date).filter(validDate).sort();
-            const visibleKey = normalized.map(photo => `${photo.id}:${photo.date}`).sort().join("|");
-            stagnantScans = visibleKey && visibleKey === previousVisibleKey ? stagnantScans + 1 : 0;
+            const state = await this.page.evaluate(scrollList, 'photos');
+            if (state?.modeValid === false) throw new Error("Kho Ảnh/Video đã đóng hoặc chưa sẵn sàng; chưa thể xác nhận đã lấy đủ ảnh.");
+            const visibleKey = JSON.stringify([normalized.map(photo => `${photo.id}:${photo.date}`).sort(), state?.top, state?.height]);
+            stagnantScans = visibleKey === previousVisibleKey && state?.atEnd && !state.loading ? stagnantScans + 1 : 0;
+            stuckScans = visibleKey === previousVisibleKey ? stuckScans + 1 : 0;
             previousVisibleKey = visibleKey;
             const batch = normalized.filter(photo => {
                 if (photo.date && ((fromDateStr && photo.date < fromDateStr) || (toDateStr && photo.date > toDateStr))) return false;
@@ -928,55 +1105,24 @@ class ZaloBrowserDownloader {
             this.progress.total = collected.length;
             if (batch.length && onBatch) await onBatch(batch);
             this._log(`Lần quét #${scroll + 1}: Tìm thấy ${collected.length} ảnh...`);
-            if (collected.length >= limit) break;
-            if (fromDateStr && visibleDates.length && visibleDates[0] < fromDateStr) break;
-            const maxStagnant = fromDateStr ? 6 : 3;
-            if (stagnantScans >= maxStagnant) {
-                const footerNotice = await this.page.evaluate(() => {
-                    const el = document.querySelector("#footer, .tds-media-list__footer-wrapper, .tds-media-list__footer-content");
-                    return el ? (el.textContent || "").trim() : "";
-                });
-                if (footerNotice) {
-                    this._log(`[Giới hạn Zalo] ${footerNotice}`);
+            if (collected.length >= limit) {
+                this.progress.scanStopReason = 'limit';
+                this._log(`[Cảnh báo] Đã đạt giới hạn ${limit} ảnh được chọn; kho ảnh chưa được quét hết.`);
+                break;
+            }
+            if (stagnantScans >= 6) {
+                this.progress.scanComplete = true;
+                this.progress.scanStopReason = 'end';
+                this.progress.historyNotice = state.notice || '';
+                if (state.notice) {
+                    this._log(`[Thông báo Zalo] ${state.notice}`);
                 } else {
                     this._log("Đã quét và cuộn đến cuối lịch sử ảnh có sẵn trên Zalo Web.");
                 }
                 break;
             }
-            await this.page.evaluate(() => {
-                const isc = document.querySelector("#innerScrollContainer");
-                if (isc) {
-                    let scrollEl = isc;
-                    while (scrollEl && scrollEl !== document.body) {
-                        const style = window.getComputedStyle(scrollEl);
-                        if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
-                            break;
-                        }
-                        scrollEl = scrollEl.parentElement;
-                    }
-                    if (scrollEl && scrollEl !== document.body) {
-                        scrollEl.scrollTop += 800;
-                        scrollEl.dispatchEvent(new Event('scroll', { bubbles: true }));
-                    }
-                }
-                const chatScroll = document.querySelector("#messageViewContainer, .chat-message-list, #chatViewContainer, .chat-content");
-                if (chatScroll) {
-                    chatScroll.scrollTop -= 600;
-                    chatScroll.dispatchEvent(new Event('scroll', { bubbles: true }));
-                }
-            });
-            try {
-                const mediaHandle = await this.page.$("#innerScrollContainer, .media-store-view, .chat-right-menu");
-                if (mediaHandle) {
-                    const box = await mediaHandle.boundingBox();
-                    if (box && box.width > 0 && box.height > 0) {
-                        const targetX = Math.min(Math.max(box.x + box.width / 2, 10), 1200);
-                        const targetY = Math.min(Math.max(box.y + 200, 50), 700);
-                        await this.page.mouse.move(targetX, targetY);
-                        await this.page.mouse.wheel({ deltaY: 800 });
-                    }
-                }
-            } catch {}
+            if (stuckScans >= 30) throw new Error("Kho ảnh chưa tải xong hoặc không cuộn được; chưa thể xác nhận đã lấy đủ ảnh.");
+            await this.page.evaluate(scrollList, 'photos', true);
             await new Promise(r => setTimeout(r, this.scanDelayMs));
         }
         return collected;
@@ -987,7 +1133,13 @@ class ZaloBrowserDownloader {
     }
 
     async _fetchImage(url) {
-        return readImage(this.page, {url});
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try { return await readImage(this.page, {url}); }
+            catch (error) {
+                if (attempt === 2 || !/HTTP (?:408|429|5\d\d)|Failed to fetch|network|timeout|timed out/i.test(error.message)) throw error;
+                await new Promise(resolve => setTimeout(resolve, this.scanDelayMs * (attempt + 1)));
+            }
+        }
     }
 
     async _downloadPhotos(photos, projectName, folderFormat = "YYYY-MM-DD", fromDate, toDate) {
@@ -1068,7 +1220,8 @@ class ZaloBrowserDownloader {
                     }
                 }
                 fs.writeFileSync(filePath + ".json", JSON.stringify({
-                    date_source: "message", send_date: date, message_id: photo.messageId || photo.id || "",
+                    date_source: photo.dateSource || "message", send_date: date, message_id: photo.messageId || photo.id || "",
+                    timestamp: photo.timestamp || null, ...classifySendShift(photo),
                     derived: false
                 }), "utf8");
                 this.progress.currentFile = filename;
@@ -1092,6 +1245,9 @@ class ZaloBrowserDownloader {
             } catch (e) {}
             this.browser = null;
             this.page = null;
+            this.isLoggedIn = false;
+            this.currentQrBase64 = null;
+            this.progress.qrImage = null;
         }
     }
 }

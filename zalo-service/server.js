@@ -17,7 +17,6 @@ process.on("unhandledRejection", (reason) => {
     console.error("[Zalo Service] Unhandled Rejection:", reason);
 });
 
-const ZaloClient = require("./zalo-client");
 const ImageDownloader = require("./image-downloader");
 
 const app = express();
@@ -27,7 +26,6 @@ app.use(cors());
 app.use(express.json());
 
 // Singleton instances
-const zaloClient = new ZaloClient();
 const imageDownloader = new ImageDownloader();
 const ZaloBrowserDownloader = require("./zalo-browser-downloader");
 const browserDownloader = new ZaloBrowserDownloader(path.resolve(__dirname, ".."));
@@ -65,162 +63,46 @@ setInterval(() => {
  * GET /api/status
  * Check Zalo connection status
  */
-app.get("/api/status", (req, res) => {
-    res.json({
-        success: true,
-        data: zaloClient.getStatus(),
-    });
+app.get("/api/status", async (req, res) => {
+    res.json({success: true, data: await browserDownloader.getConnectionStatus()});
 });
 
-/**
- * POST /api/login/qr
- * Start QR code login
- */
 app.post("/api/login/qr", async (req, res) => {
     try {
-        const { force } = req.body || {};
-        if (force) {
-            console.log("[Server] Force refreshing QR login...");
-            await zaloClient.logout();
+        const status = await browserDownloader.getConnectionStatus();
+        if (status.isLoggedIn) return res.json({success: true, data: status});
+        if (req.body?.force && browserDownloader.loginPromise) {
+            await browserDownloader.refreshQrCode();
+        } else {
+            browserDownloader.startLogin().catch(err => console.error("[Server] QR login:", err.message));
         }
-
-        if (zaloClient.isLoggedIn && !force) {
-            return res.json({
-                success: true,
-                message: "Already logged in",
-                data: zaloClient.getStatus(),
-            });
-        }
-
-        if (zaloClient.loginInProgress && !force) {
-            return res.json({
-                success: true,
-                message: "Login already in progress",
-                data: zaloClient.getStatus(),
-            });
-        }
-
-        // Start QR login in background (non-blocking)
-        zaloClient.loginWithQR().then(async () => {
-            console.log("[Server] QR login succeeded, syncing session to browser...");
-            if (zaloClient.credentials) {
-                await browserDownloader.syncSessionFromCredentials(zaloClient.credentials).catch((e) => {
-                    console.warn("[Server] Browser session sync error:", e.message);
-                });
-            }
-        }).catch((err) => {
-            console.error("[Server] QR login error:", err.message);
-        });
-
-        // Wait a moment for QR to be generated
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-
-        res.json({
-            success: true,
-            message: "QR login started",
-            data: zaloClient.getStatus(),
-        });
-    } catch (err) {
-        res.status(500).json({
-            success: false,
-            error: err.message,
-        });
-    }
+        res.json({success: true, data: await browserDownloader.getConnectionStatus()});
+    } catch (err) { res.status(500).json({success: false, error: err.message}); }
 });
 
-/**
- * GET /api/login/qr/image
- * Get the current QR code image
- */
-app.get("/api/login/qr/image", (req, res) => {
-    let imgData = null;
-    const qrPath = path.join(__dirname, "qr.png");
-    if (fs.existsSync(qrPath)) {
-        try {
-            const fileBuf = fs.readFileSync(qrPath);
-            imgData = fileBuf.toString("base64");
-        } catch {}
-    }
-
-    if (!imgData && zaloClient.qrImageBase64) {
-        imgData = zaloClient.qrImageBase64;
-    }
-
-    if (imgData) {
-        if (!imgData.startsWith("data:image/")) {
-            imgData = "data:image/png;base64," + imgData;
-        }
-        return res.json({
-            success: true,
-            data: {
-                image: imgData,
-                status: zaloClient.qrStatus,
-                userInfo: zaloClient.qrUserInfo,
-            },
-        });
-    }
-
-    res.json({
-        success: false,
-        error: "No QR code available",
-        data: { status: zaloClient.qrStatus },
-    });
+app.get("/api/login/qr/image", async (req, res) => {
+    const status = await browserDownloader.getConnectionStatus();
+    const image = browserDownloader.currentQrBase64;
+    res.json({success: !!image, data: {image, status: status.qrStatus, userInfo: null}});
 });
 
-/**
- * GET /api/login/qr/raw
- * Serve the QR image directly as binary PNG
- */
 app.get("/api/login/qr/raw", (req, res) => {
-    const qrPath = path.join(__dirname, "qr.png");
-    if (fs.existsSync(qrPath)) {
-        return res.sendFile(qrPath);
-    }
-    if (zaloClient.qrImageBase64) {
-        let b64 = zaloClient.qrImageBase64;
-        if (b64.startsWith("data:image/")) {
-            b64 = b64.split(",")[1];
-        }
-        const buf = Buffer.from(b64, "base64");
-        res.setHeader("Content-Type", "image/png");
-        return res.send(buf);
-    }
-    res.status(404).send("No QR code available");
+    const image = browserDownloader.currentQrBase64;
+    res.setHeader("Cache-Control", "no-store");
+    if (!image) return res.status(404).send("No QR code available");
+    res.type("png").send(Buffer.from(image.split(",")[1], "base64"));
 });
 
-/**
- * GET /api/login/qr/status
- * Poll for QR login status
- */
-app.get("/api/login/qr/status", (req, res) => {
-    res.json({
-        success: true,
-        data: {
-            status: zaloClient.qrStatus,
-            isLoggedIn: zaloClient.isLoggedIn,
-            loginInProgress: zaloClient.loginInProgress,
-            userInfo: zaloClient.qrUserInfo,
-        },
-    });
+app.get("/api/login/qr/status", async (req, res) => {
+    const status = await browserDownloader.getConnectionStatus();
+    res.json({success: true, data: {...status, status: status.qrStatus, userInfo: null}});
 });
 
-/**
- * POST /api/logout
- * Logout from Zalo
- */
 app.post("/api/logout", async (req, res) => {
     try {
-        await zaloClient.logout();
-        res.json({
-            success: true,
-            message: "Logged out successfully",
-        });
-    } catch (err) {
-        res.status(500).json({
-            success: false,
-            error: err.message,
-        });
-    }
+        await browserDownloader.logout();
+        res.json({success: true, message: "Logged out successfully"});
+    } catch (err) { res.status(500).json({success: false, error: err.message}); }
 });
 
 /**
@@ -229,7 +111,7 @@ app.post("/api/logout", async (req, res) => {
  */
 app.get("/api/groups", async (req, res) => {
     try {
-        const groups = await zaloClient.getGroups();
+        const groups = await browserDownloader.getGroups();
         res.json({
             success: true,
             data: groups,
@@ -250,7 +132,7 @@ app.get("/api/groups", async (req, res) => {
 app.post("/api/groups/:groupId/download", async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { groupName, projectName, dateFrom, dateTo, count = 1000, folderFormat = "YYYY-MM-DD", headless = true } = req.body;
+        const { groupName, projectName, dateFrom, dateTo, count = 0, folderFormat = "YYYY-MM-DD", headless = true } = req.body;
 
         if (!groupName) {
             return res.status(400).json({
@@ -678,7 +560,7 @@ app.get("/api/health", (req, res) => {
 async function start() {
     app.listen(PORT, "0.0.0.0", () => {
         console.log(`\n[Zalo Service] Running on http://127.0.0.1:${PORT}`);
-        console.log(`[Zalo Service] Status: ${zaloClient.isLoggedIn ? "Logged in" : "Not logged in"}`);
+        console.log(`[Zalo Service] Status: ${browserDownloader.isLoggedIn ? "Logged in" : "Not logged in"}`);
         console.log(`[Zalo Service] API endpoints:`);
         console.log(`  GET  /api/health`);
         console.log(`  GET  /api/status`);
@@ -699,19 +581,10 @@ async function start() {
     // Khởi động bộ lập lịch tự động
     syncManager.startScheduler();
 
-    // Try auto-login with saved credentials in background without blocking server listen
-    zaloClient.tryAutoLogin()
-        .then(async (success) => {
-            if (success) {
-                console.log("[Server] Auto-login completed successfully");
-                if (zaloClient.credentials) {
-                    await browserDownloader.syncSessionFromCredentials(zaloClient.credentials).catch(() => {});
-                }
-            }
-        })
-        .catch((err) => {
-            console.log("[Server] Auto-login skipped/failed:", err.message);
-        });
+    // Reuse Chrome's persisted Zalo Web profile without starting another login flow.
+    browserDownloader.restorePromise = browserDownloader.restoreSession().catch(err => {
+        console.log("[Server] Browser session restore:", err.message);
+    });
 }
 
 start();

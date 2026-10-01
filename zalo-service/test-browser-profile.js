@@ -17,7 +17,7 @@ function getChromePath() {
 
 async function run() {
     const chromePath = getChromePath();
-    const profileDir = path.join(__dirname, "zalo-browser-profile");
+    const profileDir = process.env.ZALO_BROWSER_PROFILE_DIR || path.join(__dirname, "zalo-browser-profile-clean");
     if (!fs.existsSync(profileDir)) {
         fs.mkdirSync(profileDir, { recursive: true });
     }

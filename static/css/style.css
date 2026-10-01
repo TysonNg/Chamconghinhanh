@@ -1858,6 +1858,14 @@ input[type="number"]:focus {
     flex-shrink: 0;
 }
 
+.zalo-item-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
 .zalo-item-count {
     font-size: 11px;
     color: #64748b;

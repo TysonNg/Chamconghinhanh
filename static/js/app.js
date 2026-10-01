@@ -2039,14 +2039,23 @@ async function loadSelectedDayPhotos(day) {
                 return;
             }
 
-            gallery.innerHTML = res.photos.map(p => `
+            const shiftGroups = [
+                ['morning', 'Ca sáng · 05:00–15:00'],
+                ['afternoon', 'Ca chiều · 16:00–24:00'],
+                ['outside', 'Ngoài ca · trước 05:00 hoặc sau 15:00 đến trước 16:00'],
+                ['unknown', 'Chưa rõ giờ gửi'],
+            ];
+            gallery.innerHTML = shiftGroups.map(([shift, label]) => {
+                const photos = res.photos.filter(p => (p.shift || 'unknown') === shift);
+                if (!photos.length) return '';
+                return `<div style="grid-column:1 / -1; font-weight:600; padding-top:12px">${label} (${photos.length} ảnh)</div>` + photos.map(p => `
                 <div class="thumb-card">
                     <div class="thumb-img-wrap" onclick="openLightbox('${p.url}', 'Ảnh camera ngày ${day} - ${p.filename}')">
                         <img src="${p.url}" alt="${p.filename}" loading="lazy">
                     </div>
                     <div class="thumb-info">
                         <div class="thumb-name" title="${p.filename}">${p.filename}</div>
-                        <div class="thumb-size">${p.size_kb} KB</div>
+                        <div class="thumb-size">${p.size_kb} KB${p.send_time ? ` · ${escapeHtml(p.send_time)}` : ''}</div>
                     </div>
                     <div class="thumb-actions">
                         <button class="btn btn-icon-danger btn-sm" onclick="deleteDailyPhoto('${p.filename}')" title="Xóa ảnh này">
@@ -2055,6 +2064,7 @@ async function loadSelectedDayPhotos(day) {
                     </div>
                 </div>
             `).join('');
+            }).join('');
         }
     } catch (err) {
         console.error('Lỗi nạp ảnh ngày:', err);
@@ -2980,8 +2990,63 @@ async function checkZaloStatus(showToastMsg = false) {
             badge.textContent = 'Dịch vụ Zalo Chưa Bật';
         }
         if (sideBadge) sideBadge.className = 'zalo-nav-badge';
-        if (subtitle) subtitle.textContent = 'Dịch vụ Zalo Service chưa phản hồi. Vui lòng kiểm tra lại dịch vụ.';
+        if (subtitle) subtitle.textContent = 'Dịch vụ Zalo Service chưa phản hồi. Nhấn "Khởi Động Lại Service" để bật lại.';
         if (showToastMsg) showToast('Lỗi kết nối Zalo Service: ' + err.message, 'error');
+    }
+}
+
+// Khởi động lại riêng Zalo Service (Port 3001)
+async function restartZaloServiceUi() {
+    const btn = document.getElementById('btn-zalo-restart');
+    const badge = document.getElementById('zalo-conn-status-badge');
+    const subtitle = document.getElementById('zalo-conn-subtitle');
+    const qrCard = document.getElementById('zalo-qr-card');
+
+    if (btn && btn.classList.contains('is-loading')) return;
+
+    if (btn) {
+        btn.classList.add('is-loading');
+        btn.disabled = true;
+    }
+    if (badge) {
+        badge.className = 'zalo-badge waiting';
+        badge.textContent = 'Đang khởi động lại...';
+    }
+    if (subtitle) {
+        subtitle.textContent = 'Đang dọn dẹp port 3001 và khởi động lại Zalo Service (Node.js)...';
+    }
+    if (qrCard) {
+        qrCard.style.display = 'none';
+    }
+    appendZaloLog('[Hệ thống] Đang yêu cầu khởi động lại Zalo Service...', 'info');
+    showToast('Đang khởi động lại Zalo Service (Port 3001)...', 'info');
+
+    try {
+        const res = await fetch('/api/zalo/restart', { method: 'POST' });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+            showToast('✓ ' + (data.message || 'Zalo Service đã khởi động lại thành công!'), 'success');
+            appendZaloLog('[Hệ thống] ✓ Zalo Service đã khởi động lại và sẵn sàng!', 'success');
+            await checkZaloStatus(false);
+        } else {
+            throw new Error(data.error || 'Khởi động lại Zalo Service thất bại');
+        }
+    } catch (err) {
+        showToast('✗ Lỗi khởi động lại: ' + err.message, 'error');
+        appendZaloLog('[Lỗi] Không thể khởi động lại Zalo Service: ' + err.message, 'error');
+        if (badge) {
+            badge.className = 'zalo-badge offline';
+            badge.textContent = 'Khởi Động Thất Bại';
+        }
+        if (subtitle) {
+            subtitle.textContent = 'Không thể khởi động lại Zalo Service. Vui lòng kiểm tra Node.js hoặc xem zalo_service.log.';
+        }
+    } finally {
+        if (btn) {
+            btn.classList.remove('is-loading');
+            btn.disabled = false;
+        }
     }
 }
 
@@ -3137,6 +3202,12 @@ async function pollZaloQr() {
                     clearInterval(zaloPollTimer);
                     zaloPollTimer = null;
                 }
+            } else if (st.status === 'error') {
+                if (qrMsg) qrMsg.textContent = st.error || 'Đăng nhập Zalo Web không thành công';
+                if (qrImg) qrImg.style.display = 'none';
+                if (qrLoading) qrLoading.style.display = 'none';
+                if (zaloPollTimer) clearInterval(zaloPollTimer);
+                zaloPollTimer = null;
             } else if (st.status === 'expired') {
                 if (qrMsg) qrMsg.innerHTML = '<span class="status-indicator-dot warning"></span> Mã QR đã hết hạn, đang tạo lại...';
                 if (qrImg) qrImg.style.display = 'none';
@@ -3266,13 +3337,18 @@ function renderZaloGroupItems(groups) {
         item.className = `zalo-group-item ${isSelected ? 'selected' : ''}`;
         
         const firstLetter = (g.name || 'Z').trim().charAt(0).toUpperCase();
+        const avatarHtml = g.avatar
+            ? `<img src="${escapeHtml(g.avatar)}" class="zalo-item-avatar" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+              + `<span class="zalo-item-icon" style="display:none">${escapeHtml(firstLetter)}</span>`
+            : `<span class="zalo-item-icon">${escapeHtml(firstLetter)}</span>`;
+        const memberText = g.totalMember ? `${g.totalMember} thành viên` : '';
 
         item.innerHTML = `
             <div class="zalo-item-name">
-                <span class="zalo-item-icon">${escapeHtml(firstLetter)}</span>
+                ${avatarHtml}
                 <span>${escapeHtml(g.name)}</span>
             </div>
-            <span class="zalo-item-count">${g.totalMember || 0} thành viên</span>
+            <span class="zalo-item-count">${memberText}</span>
         `;
 
         item.onclick = () => {
@@ -3473,7 +3549,7 @@ async function startZaloDownload() {
     const dateFrom = document.getElementById('zalo-date-from')?.value || null;
     const dateTo = document.getElementById('zalo-date-to')?.value || null;
     const folderFormat = document.getElementById('zalo-folder-format')?.value || 'date';
-    const msgLimit = parseInt(document.getElementById('zalo-msg-limit')?.value || '1000', 10);
+    const msgLimit = parseInt(document.getElementById('zalo-msg-limit')?.value || '0', 10);
 
     const btn = document.getElementById('btn-start-zalo-download');
     if (btn) {
@@ -3711,8 +3787,10 @@ function listenZaloProgress() {
 
                 if (p.status === 'done') {
                     const actualDownloaded = p.counterVersion === 2 ? (p.downloaded || 0) : Math.max(0, (p.downloaded || 0) - (p.skipped || 0));
-                    const warningText = `Ảnh xem trước: ${p.lowQuality || 0}; không rõ ngày gửi (đã lưu vào thư mục unknown-date): ${p.unknownDate || 0}; lỗi tải: ${p.failed || 0}.`;
-                    const hasWarnings = (p.lowQuality || 0) + (p.unknownDate || 0) + (p.failed || 0) > 0;
+                    const scanWarning = p.scanStopReason === 'limit' ? ' Chưa quét hết kho ảnh vì đã đạt giới hạn đã chọn.' : '';
+                    const historyWarning = p.historyNotice ? ` Thông báo Zalo: ${p.historyNotice}` : '';
+                    const warningText = `Ảnh xem trước: ${p.lowQuality || 0}; không rõ ngày gửi (đã lưu vào thư mục unknown-date): ${p.unknownDate || 0}; lỗi tải: ${p.failed || 0}.${scanWarning}${historyWarning}`;
+                    const hasWarnings = (p.lowQuality || 0) + (p.unknownDate || 0) + (p.failed || 0) > 0 || !!scanWarning || !!historyWarning;
                     appendZaloLog(`[Hoàn thành] Đã lưu ${actualDownloaded} ảnh mới. ${warningText}`, hasWarnings ? 'warning' : 'success');
                     showToast(`Đã xử lý xong: ${actualDownloaded} ảnh mới.${hasWarnings ? ' Có cảnh báo, xem kết quả tải.' : ''}`, hasWarnings ? 'warning' : 'success');
                     

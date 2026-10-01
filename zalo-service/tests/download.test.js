@@ -86,3 +86,17 @@ test('date recovered from viewer is filtered before writing and YYYY-MM-DD is su
     await downloader._downloadPhotos([{id: 'new', url: 'preview'}], 'Project', 'YYYY-MM-DD', '2026-09-13', '2026-09-13');
     assert.equal(fs.existsSync(path.join(root, 'input_images', 'Project', '2026-09-13', 'zalo_2026-09-13_001.jpg')), true);
 });
+
+
+test('saved metadata preserves Vietnam shift and exact send timestamp', async t => {
+    const {downloader, root} = fixture(t);
+    const timestamp = '2026-10-01T09:00:00Z';
+    await downloader._downloadPhotos([{id:'shift-photo', url:'preview', timestamp}], 'Project', 'YYYY-MM-DD');
+    const dir = path.join(root, 'input_images', 'Project', '2026-10-01');
+    const sidecar = fs.readdirSync(dir).find(name => name.endsWith('.json'));
+    const metadata = JSON.parse(fs.readFileSync(path.join(dir, sidecar), 'utf8'));
+    assert.equal(metadata.timestamp, timestamp);
+    assert.equal(metadata.send_date, '2026-10-01');
+    assert.equal(metadata.shift, 'afternoon');
+    assert.equal(metadata.send_time, '16:00:00');
+});

@@ -32,6 +32,26 @@ function normalizeSendDate(photo) {
     return '';
 }
 
+// Classify only a verified message timestamp; a day header has no shift time.
+function classifySendShift(photo) {
+    let value = photo.timestamp;
+    if (typeof value === 'string' && /^\d+(\.\d+)?$/.test(value)) value = Number(value);
+    let date;
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+        date = new Date(value < 1e11 ? value * 1000 : value);
+    } else if (typeof value === 'string' && /T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) {
+        date = new Date(value);
+    }
+    if (!date || !Number.isFinite(date.getTime())) return {shift: 'unknown', send_time: null};
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(date).map(p => [p.type, p.value]));
+    const seconds = Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second);
+    const shift = seconds >= 5 * 3600 && seconds <= 15 * 3600 ? 'morning'
+        : seconds >= 16 * 3600 ? 'afternoon' : 'outside';
+    return {shift, send_time: `${parts.hour}:${parts.minute}:${parts.second}`};
+}
+
 function mergePhotos(photos) {
     const result = [];
     for (const photo of photos) {
@@ -60,7 +80,7 @@ function collectVisiblePhotos() {
     const mediaImgs = media ? Array.from(media.querySelectorAll('img')) : [];
     // Khi Kho Media Store mở và có ảnh, chỉ quét ảnh trong Media Store để tránh ảnh chat nền
     // không có header ngày làm nhiễu danh sách.
-    const nodes = (media && mediaImgs.length > 0)
+    const nodes = media
         ? new Set(mediaImgs)
         : new Set([
             ...(media ? mediaImgs : []),
@@ -153,4 +173,4 @@ function collectVisiblePhotos() {
     });
 }
 
-module.exports = {validDate, normalizeMessageTimestamp, normalizeSendDate, mergePhotos, collectVisiblePhotos};
+module.exports = {classifySendShift, validDate, normalizeMessageTimestamp, normalizeSendDate, mergePhotos, collectVisiblePhotos};
