@@ -85,3 +85,46 @@ def test_referenced_project_is_archived_not_deleted(registry):
     registry.archive_project(p["project_id"])
     assert not registry.get_project(p["project_id"])["active"]
     assert registry.resolve_employee(p["project_id"],"001",date(2026,9,1)).employee_id == e["employee_id"]
+
+def test_transfer_legacy_employee_without_membership(registry):
+    pa = registry.register_project("ProjectA")
+    pb = registry.register_project("ProjectB")
+    folder = registry.project_portrait_dir(pa["project_id"]) / "Legacy Emp"
+    folder.mkdir(parents=True)
+    (folder / "portrait.jpg").write_bytes(b"legacy portrait")
+    
+    # Import legacy creates employee in legacy_sources with no membership
+    registry.import_legacy(pa["project_id"])
+    emps = registry.list_employees(pa["project_id"])
+    assert len(emps) == 1
+    assert emps[0]["status"] == "needs_confirmation"
+    assert len(emps[0]["memberships"]) == 0
+    eid = emps[0]["employee_id"]
+
+    # Transfer to ProjectB
+    registry.transfer_employee(pa["project_id"], pb["project_id"], eid, "2026-10-02", "PB01", "Admin")
+
+    # In ProjectB: should be resolved and have portrait copied
+    assert registry.resolve_employee(pb["project_id"], "PB01", date(2026, 10, 2)).employee_id == eid
+    pb_portraits = registry.portrait_paths(pb["project_id"], eid, date(2026, 10, 2))
+    assert len(pb_portraits) == 1
+    assert pb_portraits[0].read_bytes() == b"legacy portrait"
+
+    # In ProjectA: legacy source removed, and running import_legacy again should not recreate
+    registry.import_legacy(pa["project_id"])
+    pa_emps = registry.list_employees(pa["project_id"])
+    assert len(pa_emps) == 1
+    assert pa_emps[0]["status"] == "confirmed"
+    assert len(pa_emps[0]["memberships"]) == 1
+    assert pa_emps[0]["memberships"][0]["valid_to"] == "2026-10-02"
+
+def test_transfer_same_day_membership(registry):
+    pa = registry.register_project("ProjectA")
+    pb = registry.register_project("ProjectB")
+    e = registry.create_employee("Same Day Emp")
+    registry.assign_employee(pa["project_id"], e["employee_id"], "A01", "2026-10-02")
+
+    # Transfer on the very same day
+    registry.transfer_employee(pa["project_id"], pb["project_id"], e["employee_id"], "2026-10-02", "B01", "Admin")
+    assert registry.resolve_employee(pb["project_id"], "B01", date(2026, 10, 2)).employee_id == e["employee_id"]
+

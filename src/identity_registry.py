@@ -341,17 +341,80 @@ class IdentityRegistry:
         from datetime import timedelta
         previous=date.fromisoformat(effective)-timedelta(days=1)
         portraits=self.portrait_paths(source_id,employee_id,previous)
+        if not portraits:
+            # Fallback: tìm ảnh từ portrait_bindings hoặc legacy_sources của nhân viên trong dự án nguồn
+            with self._connect() as c:
+                rows = c.execute("""SELECT relative_path FROM portrait_bindings WHERE project_id=? AND employee_id=?
+                    UNION SELECT relative_path FROM legacy_sources WHERE project_id=? AND employee_id=?""",
+                    (source_id, employee_id, source_id, employee_id)).fetchall()
+                excluded = {row[0] for row in c.execute(
+                    "SELECT relative_path FROM portrait_exclusions WHERE project_id=? AND employee_id=? AND valid_from<=?",
+                    (source_id, employee_id, effective))}
+            root = self.project_portrait_dir(source_id)
+            result = []
+            for r in rows:
+                try:
+                    bound = self._bound_path(source_id, r["relative_path"])
+                    candidates = sorted(bound.rglob("*")) if bound.is_dir() else [bound]
+                    for p in candidates:
+                        if (p.is_file() and not p.is_symlink()
+                                and p.resolve().is_relative_to(root.resolve())
+                                and p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+                                and p.relative_to(root).as_posix() not in excluded):
+                            result.append(p)
+                except ValueError:
+                    continue
+            portraits = sorted(set(result))
+
         target=self.project_portrait_dir(target_id)/employee_id/("transfer_"+uuid.uuid4().hex)
         with self._connect() as c:
             c.execute("BEGIN IMMEDIATE")
-            current=c.execute("""SELECT * FROM memberships WHERE project_id=? AND employee_id=? AND valid_from<?
-                AND (valid_to IS NULL OR valid_to>?)""",(source_id,employee_id,effective,effective)).fetchall()
-            if len(current)!=1:
-                raise ValueError("Không xác định được lịch sử dự án nguồn tại ngày chuyển")
+            current=c.execute("""SELECT * FROM memberships WHERE project_id=? AND employee_id=?
+                AND (valid_to IS NULL OR valid_to>=?) ORDER BY valid_from DESC""",
+                (source_id,employee_id,effective)).fetchall()
+            
+            if current:
+                cur = current[0]
+                if cur["valid_from"] >= effective:
+                    c.execute("UPDATE memberships SET valid_from=?, valid_to=? WHERE membership_id=?",
+                              (previous.isoformat(), effective, cur["membership_id"]))
+                else:
+                    c.execute("UPDATE memberships SET valid_to=? WHERE membership_id=?",
+                              (effective, cur["membership_id"]))
+            else:
+                legacy_rows = c.execute("SELECT relative_path FROM legacy_sources WHERE project_id=? AND employee_id=?",
+                                        (source_id, employee_id)).fetchall()
+                bound_rows = c.execute("SELECT relative_path FROM portrait_bindings WHERE project_id=? AND employee_id=?",
+                                       (source_id, employee_id)).fetchall()
+                any_hist = c.execute("SELECT * FROM memberships WHERE project_id=? AND employee_id=? ORDER BY valid_from DESC",
+                                     (source_id, employee_id)).fetchone()
+
+                if not legacy_rows and not bound_rows and not any_hist:
+                    raise ValueError("Không xác định được lịch sử dự án nguồn tại ngày chuyển")
+
+                if any_hist:
+                    if any_hist["valid_from"] >= effective:
+                        c.execute("UPDATE memberships SET valid_from=?, valid_to=? WHERE membership_id=?",
+                                  (previous.isoformat(), effective, any_hist["membership_id"]))
+                    else:
+                        c.execute("UPDATE memberships SET valid_to=? WHERE membership_id=?",
+                                  (effective, any_hist["membership_id"]))
+                else:
+                    start_date = "2000-01-01"
+                    if start_date >= effective:
+                        start_date = previous.isoformat()
+                    c.execute("INSERT INTO memberships VALUES(?,?,?,?,?,?)",
+                              (uuid.uuid4().hex, source_id, employee_id, payroll_code or "", start_date, effective))
+
+                for r in legacy_rows:
+                    self._bind(c, source_id, employee_id, r["relative_path"], reviewer)
+                c.execute("DELETE FROM legacy_sources WHERE project_id=? AND employee_id=?",
+                          (source_id, employee_id))
+
             self._assign(c,target_id,employee_id,payroll_code,effective,None)
             # Source remains untouched. Unique target directory avoids name collisions.
             if portraits:
-                target.mkdir(parents=True,exist_ok=False)
+                target.mkdir(parents=True,exist_ok=True)
                 for index,source in enumerate(portraits):
                     dest=target/(f"{index:03}_"+source.name)
                     shutil.copy2(source,dest)
@@ -359,7 +422,6 @@ class IdentityRegistry:
                         raise OSError("Bản sao chân dung không khớp nguồn")
                 rel=target.relative_to(self.project_portrait_dir(target_id)).as_posix()
                 self._bind(c,target_id,employee_id,rel,reviewer)
-            c.execute("UPDATE memberships SET valid_to=? WHERE membership_id=?",(effective,current[0]["membership_id"]))
 
     def archive_employee(self,employee_id):
         with self._connect() as c:

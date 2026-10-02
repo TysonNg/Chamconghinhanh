@@ -195,4 +195,46 @@ def test_open_portrait_folder_endpoint(tmp_path, monkeypatch):
     assert res2.json["success"] is True
     assert (r.portrait_root / "Site" / emp["employee_id"]).exists()
 
+def test_api_transfer_employee_endpoint(tmp_path):
+    c, r = client(tmp_path)
+    p1 = c.post("/api/projects/create", json={"name": "Site1"}).json
+    p2 = c.post("/api/projects/create", json={"name": "Site2"}).json
+    
+    # Create employee in Site1
+    emp = c.post("/api/portraits/employee/create", json={
+        "project_id": p1["project_id"],
+        "name": "Hoang Van E",
+        "payroll_code": "E001"
+    }).json
+    eid = emp["employee_id"]
+
+    # Upload photo
+    c.post("/api/portraits/employee/upload", data={
+        "project_id": p1["project_id"],
+        "employee_id": eid,
+        "files": (photo(), "e_face.png")
+    })
+
+    # Transfer to Site2
+    transfer_res = c.post("/api/portraits/employee/transfer", json={
+        "source_project_id": p1["project_id"],
+        "target_project_id": p2["project_id"],
+        "employee_id": eid
+    })
+    assert transfer_res.status_code == 200
+    assert transfer_res.json["success"] is True
+
+    # Employee should now appear in Site2 with photos
+    portraits_p2 = c.get("/api/portraits", query_string={"project_id": p2["project_id"]}).json
+    p2_emp = next((e for e in portraits_p2["employees"] if e["employee_id"] == eid), None)
+    assert p2_emp is not None
+    assert p2_emp["payroll_code"] == "E001"
+    assert len(p2_emp["images"]) == 1
+
+    # Employee should no longer be listed in Site1's active portraits
+    portraits_p1 = c.get("/api/portraits", query_string={"project_id": p1["project_id"]}).json
+    p1_emp = next((e for e in portraits_p1["employees"] if e["employee_id"] == eid), None)
+    assert p1_emp is None
+
+
 

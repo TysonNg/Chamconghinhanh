@@ -81,11 +81,20 @@ def register_identity_routes(app, registry_provider, input_root):
     def projects():
         r=discover_projects()
         items=[]
+        today_str = date.today().isoformat()
         for p in r.list_projects():
             r.import_legacy(p["project_id"])
             camera=Path(input_root())/p["storage_dir"]
             photos=[x for x in camera.rglob("*") if x.is_file() and x.suffix.lower() in _EXT] if camera.exists() else []
-            items.append({**p,"name":p["storage_dir"],"employee_count":len([e for e in r.list_employees(p["project_id"]) if e["active"]]),
+            active_emps = [
+                e for e in r.list_employees(p["project_id"])
+                if e["active"] and (
+                    e["source_paths"] or not e["memberships"]
+                    or not e["memberships"][0].get("valid_to")
+                    or e["memberships"][0]["valid_to"] > today_str
+                )
+            ]
+            items.append({**p,"name":p["storage_dir"],"employee_count":len(active_emps),
                           "camera_days_count":len({x.parent.name for x in photos}),"camera_total_images":len(photos)})
         return jsonify(success=True,projects=items,default_project=items[0]["name"] if items else "")
 
@@ -118,9 +127,15 @@ def register_identity_routes(app, registry_provider, input_root):
         r.generate_internal_codes()
         items=[]
         search=request.args.get("search","").casefold()
+        today_str = date.today().isoformat()
         for e in r.list_employees(p["project_id"]):
             if not e["active"]:
                 continue
+            # Bỏ qua nhân viên đã chuyển khỏi dự án này (membership đã kết thúc và không còn trong legacy_sources)
+            if e["memberships"] and not e["source_paths"]:
+                latest = e["memberships"][0]
+                if latest.get("valid_to") and latest["valid_to"] <= today_str:
+                    continue
             code=e["memberships"][0]["payroll_code"] if e["memberships"] else ""
             if search and search not in e["display_name"].casefold() and search not in code.casefold():
                 continue
@@ -372,10 +387,16 @@ def register_identity_routes(app, registry_provider, input_root):
         source=r.get_project(data.get("source_project_id") or data.get("source_project"))
         target=r.get_project(data.get("target_project_id") or data.get("target_project"))
         e=employee(data,source)
-        current = e["memberships"][0] if e.get("memberships") else {}
+        payroll_code = str(data.get("payroll_code") or "").strip()
+        if not payroll_code:
+            with r._connect() as c:
+                row = c.execute("SELECT payroll_code FROM memberships WHERE project_id=? AND employee_id=? AND payroll_code<>'' ORDER BY valid_from DESC",
+                                (source["project_id"], e["employee_id"])).fetchone()
+                if row:
+                    payroll_code = row[0]
         r.transfer_employee(source["project_id"],target["project_id"],e["employee_id"],
                             data.get("effective_date") or date.today().isoformat(),
-                            data.get("payroll_code", current.get("payroll_code", "")),
+                            payroll_code,
                             data.get("reviewer") or "system")
         return jsonify(success=True,employee_id=e["employee_id"],message="Đã chuyển dự án, giữ lịch sử và ảnh gốc")
 
