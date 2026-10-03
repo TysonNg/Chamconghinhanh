@@ -42,7 +42,8 @@ async function withLoading(btn, asyncFn) {
 async function parseJsonResponse(response) {
     const text = await response.text();
     try {
-        return JSON.parse(text);
+        const data = JSON.parse(text);
+        return response.ok ? data : {...data, success: false, error: data.error || `HTTP ${response.status}`};
     } catch (_) {
         if (!response.ok) {
             return {
@@ -340,6 +341,7 @@ function switchTab(tabId, targetSubtab = null, pushHistory = true) {
         try {
             if (typeof supplementLoadRecords === 'function') {
                 supplementLoadRecords();
+                supplementLoadEmployees();
             }
         } catch (e) {
             console.error('[TabNav] Lỗi supplementLoadRecords:', e);
@@ -1438,7 +1440,7 @@ async function cancelPdfFaceTask() {
 }
 
 async function confirmClearFaceCache() {
-    if (!confirm('Bạn có chắc chắn muốn xóa và làm mới toàn bộ bộ nhớ đệm vector khuôn mặt SQLite không?\n\nLưu ý: Các đợt quét tiếp theo sẽ tính toán lại vector cho ảnh camera và ảnh chân dung.')) {
+    if (!await confirmAction('Bạn có chắc chắn muốn xóa và làm mới toàn bộ bộ nhớ đệm vector khuôn mặt SQLite không?\n\nLưu ý: Các đợt quét tiếp theo sẽ tính toán lại vector cho ảnh camera và ảnh chân dung.')) {
         return;
     }
     try {
@@ -1523,7 +1525,7 @@ async function loadExcelFaceFiles(btn) {
 // ==================== DELETE ACTIONS ====================
 
 async function deleteExcelUpload(filename) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa file "${filename}"?\nHành động này không thể hoàn tác.`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa file "${filename}"?\nHành động này không thể hoàn tác.`)) return;
     try {
         const res = await apiPost('/api/excel/delete-upload', { filename });
         if (res.success) {
@@ -1538,7 +1540,7 @@ async function deleteExcelUpload(filename) {
 }
 
 async function deleteExcelExtractedFolder(folder) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa toàn bộ đợt "${folder}"?\nTất cả file Word trong đợt này sẽ bị xóa.`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa toàn bộ đợt "${folder}"?\nTất cả file Word trong đợt này sẽ bị xóa.`)) return;
     try {
         const res = await apiPost('/api/excel/delete-folder', { folder });
         if (res.success) {
@@ -1553,7 +1555,7 @@ async function deleteExcelExtractedFolder(folder) {
 }
 
 async function deleteExcelExtractedFile(folder, filename) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa file "${filename}"?`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa file "${filename}"?`)) return;
     try {
         const res = await apiPost('/api/excel/delete-file', { folder, filename });
         if (res.success) {
@@ -1568,7 +1570,7 @@ async function deleteExcelExtractedFile(folder, filename) {
 }
 
 async function deleteExcelFaceFolder(folder) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa toàn bộ kết quả quét mặt "${folder}"?`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa toàn bộ kết quả quét mặt "${folder}"?`)) return;
     try {
         const res = await apiPost('/api/excel/face/delete-folder', { folder });
         if (res.success) {
@@ -1583,7 +1585,7 @@ async function deleteExcelFaceFolder(folder) {
 }
 
 async function deleteExcelFaceFile(folder, filename) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa file "${filename}"?`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa file "${filename}"?`)) return;
     try {
         const res = await apiPost('/api/excel/face/delete-file', { folder, filename });
         if (res.success) {
@@ -1598,7 +1600,7 @@ async function deleteExcelFaceFile(folder, filename) {
 }
 
 async function deletePDFUpload(filename) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa file PDF "${filename}"?`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa file PDF "${filename}"?`)) return;
     try {
         const res = await apiPost('/api/pdf/delete-upload', { filename });
         if (res.success) {
@@ -1613,7 +1615,7 @@ async function deletePDFUpload(filename) {
 }
 
 async function deletePDFExtractedFolder(folder) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa toàn bộ đợt tách PDF "${folder}"?`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa toàn bộ đợt tách PDF "${folder}"?`)) return;
     try {
         const res = await apiPost('/api/pdf/delete-folder', { folder });
         if (res.success) {
@@ -1628,7 +1630,7 @@ async function deletePDFExtractedFolder(folder) {
 }
 
 async function deletePDFExtractedFile(folder, filename) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa file "${filename}"?`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa file "${filename}"?`)) return;
     try {
         const res = await apiPost('/api/pdf/delete-file', { folder, filename });
         if (res.success) {
@@ -1643,7 +1645,7 @@ async function deletePDFExtractedFile(folder, filename) {
 }
 
 async function deletePDFFaceFolder(folder) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa toàn bộ kết quả quét mặt "${folder}"?`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa toàn bộ kết quả quét mặt "${folder}"?`)) return;
     try {
         const res = await apiPost('/api/pdf/face/delete-folder', { folder });
         if (res.success) {
@@ -1658,7 +1660,7 @@ async function deletePDFFaceFolder(folder) {
 }
 
 async function deletePDFFaceFile(folder, filename) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa file "${filename}"?`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa file "${filename}"?`)) return;
     try {
         const res = await apiPost('/api/pdf/face/delete-file', { folder, filename });
         if (res.success) {
@@ -1673,7 +1675,7 @@ async function deletePDFFaceFile(folder, filename) {
 }
 
 async function deleteResultFile(filename) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa file kết quả "${filename}"?`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa file kết quả "${filename}"?`)) return;
     try {
         const res = await apiPost('/api/results/delete', { filename });
         if (res.success) {
@@ -1889,7 +1891,7 @@ async function submitRenameProject() {
 }
 
 async function confirmDeleteProject() {
-    if (!confirm('Lưu trữ dự án này? Giữ nguyên ảnh và lịch sử.')) return;
+    if (!await confirmAction('Lưu trữ dự án này? Giữ nguyên ảnh và lịch sử.')) return;
     try {
         const res = await apiPost('/api/projects/delete', {name: currentProjectName});
         if (!res.success) throw new Error(res.error);
@@ -1948,7 +1950,7 @@ async function mapLegacyPhotoDay() {
     if (!folder) return;
     const target = prompt('Ngày đầy đủ của TẤT CẢ ảnh trong thư mục (YYYY-MM-DD):');
     if (!target) return;
-    if (!confirm('Chỉ xác nhận nếu mọi ảnh trong thư mục thuộc cùng ngày. Nếu lẫn tháng, hãy phân loại từng ảnh trước.')) return;
+    if (!await confirmAction('Chỉ xác nhận nếu mọi ảnh trong thư mục thuộc cùng ngày. Nếu lẫn tháng, hãy phân loại từng ảnh trước.')) return;
     const result = await apiPost('/api/photos/daily/legacy-map', {
         project: currentProjectName, folder, date: target, reviewer: 'system', confirm_single_period: true
     });
@@ -2101,7 +2103,7 @@ async function handleDailyPhotosUpload(input) {
 }
 
 async function deleteDailyPhoto(filename) {
-    if (!confirm(`Xóa ảnh camera "${filename}" của ngày ${activeSelectedDay}?`)) return;
+    if (!await confirmAction(`Xóa ảnh camera "${filename}" của ngày ${activeSelectedDay}?`)) return;
     try {
         const res = await apiPost('/api/photos/daily/delete', {
             project: currentProjectName,
@@ -2121,7 +2123,7 @@ async function deleteDailyPhoto(filename) {
 }
 
 async function confirmDeleteAllDayPhotos() {
-    if (!confirm(`Bạn có chắc chắn muốn XÓA TOÀN BỘ ảnh camera của ngày ${activeSelectedDay} không?`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn XÓA TOÀN BỘ ảnh camera của ngày ${activeSelectedDay} không?`)) return;
     try {
         const res = await apiPost('/api/photos/daily/delete', {
             project: currentProjectName,
@@ -2140,7 +2142,7 @@ async function confirmDeleteAllDayPhotos() {
     }
 }
 
-function confirmDeleteAllDaysPhotos() {
+async function confirmDeleteAllDaysPhotos() {
     if (!currentProjectName) {
         showToast('Vui lòng chọn dự án trước', 'warning');
         return;
@@ -2158,7 +2160,7 @@ function confirmDeleteAllDaysPhotos() {
         if (radioPeriod) radioPeriod.checked = true;
         openModal('modal-delete-all-days');
     } else {
-        const ok = confirm(`Bạn có chắc chắn muốn XÓA TOÀN BỘ ảnh camera của TẤT CẢ CÁC NGÀY trong tháng ${periodDisplay} (Dự án: "${currentProjectName}") không?\n\nLưu ý: Thao tác này sẽ xóa vĩnh viễn và không thể hoàn tác!`);
+        const ok = await confirmAction(`Bạn có chắc chắn muốn XÓA TOÀN BỘ ảnh camera của TẤT CẢ CÁC NGÀY trong tháng ${periodDisplay} (Dự án: "${currentProjectName}") không?\n\nLưu ý: Thao tác này sẽ xóa vĩnh viễn và không thể hoàn tác!`);
         if (ok) {
             submitDeleteAllDaysPhotosDirect('period');
         }
@@ -2208,6 +2210,8 @@ async function loadPortraits(btn) {
             if (res.success && Array.isArray(res.employees)) {
                 allEmployeesList = res.employees;
                 renderEmployeeCards(allEmployeesList);
+                const supplementSelect = document.getElementById('supp-employee');
+                if (supplementSelect) { supplementSelect.replaceChildren(); for (const employee of allEmployeesList) { const option = document.createElement('option'); option.value = employee.employee_id; option.textContent = employee.name; supplementSelect.appendChild(option); } }
                 updateProjectMetrics();
             }
         } catch (err) {
@@ -2630,7 +2634,7 @@ async function deleteEmployeePhoto(filename) {
         }
     } catch (_) {}
     const displayName = cleanFilename ? cleanFilename.split(/[\/\\]/).pop() : '';
-    if (!confirm(`Bạn có chắc muốn xóa vĩnh viễn ảnh chân dung "${displayName || cleanFilename}" của ${activeEmpModalName}?`)) return;
+    if (!await confirmAction(`Bạn có chắc muốn xóa vĩnh viễn ảnh chân dung "${displayName || cleanFilename}" của ${activeEmpModalName}?`)) return;
     try {
         const res = await apiPost('/api/portraits/employee/delete-photo', {
             project_id: (typeof allProjectsList !== 'undefined' && Array.isArray(allProjectsList) ? allProjectsList.find(p => p.name === currentProjectName)?.project_id : '') || '',
@@ -2652,7 +2656,7 @@ async function deleteEmployeePhoto(filename) {
 }
 
 async function deleteEmployee(empName) {
-    if (!confirm(`Bạn có chắc chắn muốn xóa nhân viên "${empName}" khỏi danh sách hoạt động? Ảnh và lịch sử vẫn được giữ.`)) return;
+    if (!await confirmAction(`Bạn có chắc chắn muốn xóa nhân viên "${empName}" khỏi danh sách hoạt động? Ảnh và lịch sử vẫn được giữ.`)) return;
     try {
         const res = await apiPost('/api/portraits/employee/delete', {
             project_id: allProjectsList.find(p => p.name === currentProjectName)?.project_id,
@@ -2849,7 +2853,7 @@ async function checkActiveZaloDownload() {
 
 // Hủy / Dừng tiến trình tải ảnh đang chạy
 async function cancelZaloDownload() {
-    if (!confirm('Bạn có chắc chắn muốn hủy / dừng tiến trình tải ảnh hiện tại không?')) return;
+    if (!await confirmAction('Bạn có chắc chắn muốn hủy / dừng tiến trình tải ảnh hiện tại không?')) return;
     try {
         appendZaloLog('[Hệ thống] Đang gửi yêu cầu dừng tiến trình...', 'warning');
         const res = await fetch('/api/zalo/download/cancel', { method: 'POST' });
@@ -3253,7 +3257,7 @@ async function cancelZaloLogin() {
 }
 
 async function logoutZalo() {
-    if (!confirm('Bạn có chắc chắn muốn đăng xuất tài khoản Zalo không?')) return;
+    if (!await confirmAction('Bạn có chắc chắn muốn đăng xuất tài khoản Zalo không?')) return;
     try {
         const res = await fetch('/api/zalo/logout', { method: 'POST' });
         const data = await res.json();
@@ -4538,6 +4542,67 @@ document.addEventListener('click', (e) => {
 
 // ==================== BỔ SUNG ẢNH CHẤM CÔNG (SUPPLEMENT) ====================
 
+
+// Keep destructive actions pending through confirmation, request, and refresh.
+(() => {
+    const pending = new Set();
+    function guard(name, action) {
+        return async function(...args) {
+            const key = name + ':' + JSON.stringify(args);
+            if (pending.has(key)) return;
+            pending.add(key);
+            const button = document.activeElement;
+            const isButton = button && button.tagName === 'BUTTON';
+            if (isButton) button.disabled = true;
+            try {
+                return await action.apply(this, args);
+            } finally {
+                pending.delete(key);
+                if (isButton && button.isConnected) {
+                    button.disabled = false;
+                    if (document.activeElement === document.body) button.focus();
+                }
+            }
+        };
+    }
+    confirmClearFaceCache = guard('confirmClearFaceCache', confirmClearFaceCache);
+    deleteExcelUpload = guard('deleteExcelUpload', deleteExcelUpload);
+    deleteExcelExtractedFolder = guard('deleteExcelExtractedFolder', deleteExcelExtractedFolder);
+    deleteExcelExtractedFile = guard('deleteExcelExtractedFile', deleteExcelExtractedFile);
+    deleteExcelFaceFolder = guard('deleteExcelFaceFolder', deleteExcelFaceFolder);
+    deleteExcelFaceFile = guard('deleteExcelFaceFile', deleteExcelFaceFile);
+    deletePDFUpload = guard('deletePDFUpload', deletePDFUpload);
+    deletePDFExtractedFolder = guard('deletePDFExtractedFolder', deletePDFExtractedFolder);
+    deletePDFExtractedFile = guard('deletePDFExtractedFile', deletePDFExtractedFile);
+    deletePDFFaceFolder = guard('deletePDFFaceFolder', deletePDFFaceFolder);
+    deletePDFFaceFile = guard('deletePDFFaceFile', deletePDFFaceFile);
+    deleteResultFile = guard('deleteResultFile', deleteResultFile);
+    confirmDeleteProject = guard('confirmDeleteProject', confirmDeleteProject);
+    deleteDailyPhoto = guard('deleteDailyPhoto', deleteDailyPhoto);
+    confirmDeleteAllDayPhotos = guard('confirmDeleteAllDayPhotos', confirmDeleteAllDayPhotos);
+    submitDeleteAllDaysPhotosDirect = guard('submitDeleteAllDaysPhotosDirect', submitDeleteAllDaysPhotosDirect);
+    deleteEmployeePhoto = guard('deleteEmployeePhoto', deleteEmployeePhoto);
+    deleteEmployee = guard('deleteEmployee', deleteEmployee);
+    supplementProcess = guard('supplementProcess', supplementProcess);
+    supplementProcessAll = guard('supplementProcessAll', supplementProcessAll);
+    supplementDelete = guard('supplementDelete', supplementDelete);
+})();
+
+async function supplementLoadEmployees() {
+    const select = document.getElementById('supp-employee');
+    if (!select) return;
+    const projectId = allProjectsList.find(p => p.name === currentProjectName)?.project_id;
+    if (!projectId) return;
+    try {
+        const data = await apiGet(`/api/portraits?include_history=true&project_id=${encodeURIComponent(projectId)}`);
+        if (!data.success) throw new Error(data.error || 'Employee loading failed');
+        select.replaceChildren();
+        for (const employee of data.employees || []) {
+            const option = document.createElement('option'); option.value = employee.employee_id; option.textContent = employee.name; select.appendChild(option);
+        }
+    } catch (error) { showToast(error.message, 'error'); }
+}
+
 function supplementFileSelected(input) {
     const nameEl = document.getElementById('supp-file-name');
     if (input.files && input.files[0]) {
@@ -4575,20 +4640,22 @@ async function supplementUpload(e) {
     try {
         const formData = new FormData();
         formData.append('photo', fileInput.files[0]);
-        formData.append('employee_name', document.getElementById('supp-employee').value);
+        formData.append('employee_id', document.getElementById('supp-employee').value);
+        formData.append('project_id', allProjectsList.find(p => p.name === currentProjectName)?.project_id || '');
         formData.append('target_date', document.getElementById('supp-date').value);
-        formData.append('target_time', document.getElementById('supp-time').value);
+        const targetTime = document.getElementById('supp-time').value.trim();
+        if (targetTime) formData.append('target_time', targetTime);
         formData.append('watermark_style', document.getElementById('supp-style').value);
         formData.append('watermark_position', document.getElementById('supp-position').value);
         formData.append('location_name', document.getElementById('supp-location').value);
         formData.append('gps_coords', document.getElementById('supp-gps').value);
-        formData.append('remove_old_watermark', document.getElementById('supp-remove-old').checked ? 'true' : 'false');
-        formData.append('modify_exif', document.getElementById('supp-modify-exif').checked ? 'true' : 'false');
+        formData.append('remove_old_watermark', targetTime && document.getElementById('supp-remove-old').checked ? 'true' : 'false');
+        formData.append('modify_exif', targetTime && document.getElementById('supp-modify-exif').checked ? 'true' : 'false');
         
         const resp = await fetch('/api/supplement/upload', { method: 'POST', body: formData });
         const data = await resp.json();
         
-        if (data.success) {
+        if (resp.ok && data.success) {
             alert('✅ Upload thành công! Record ID: ' + data.record.id);
             fileInput.value = '';
             document.getElementById('supp-file-name').textContent = '';
@@ -4610,7 +4677,7 @@ async function supplementLoadRecords() {
     container.innerHTML = '<p style="text-align:center; padding:16px; color:var(--text-secondary)">Đang tải...</p>';
     
     try {
-        const resp = await fetch('/api/supplement/records');
+        const resp = await fetch(`/api/supplement/records?project_id=${encodeURIComponent(allProjectsList.find(p => p.name === currentProjectName)?.project_id || '')}`);
         const data = await resp.json();
         
         if (!data.success || !data.records || data.records.length === 0) {
@@ -4651,7 +4718,12 @@ async function supplementLoadRecords() {
             html += `<td>${r.employee_name || ''}</td>`;
             html += `<td>${dateFormatted}</td>`;
             html += `<td>${r.target_time || ''}</td>`;
-            html += `<td>${statusBadge}</td>`;
+            html += `<td>${statusBadge}`;
+            for (const [label,value] of [['Date',r.date_status],['Face',r.face_status],['Integrity',r.integrity_status],['Storage',r.storage_status],['Watermark',r.processing?.watermark],['EXIF',r.processing?.exif],['Can apply',r.can_apply],['Reasons',r.reasons]]) {
+                const text = `${label}: ${typeof value === 'object' ? JSON.stringify(value) : value ?? 'unknown'}`;
+                html += `<div>${text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}</div>`;
+            }
+            html += '</td>';
             html += `<td style="white-space:nowrap;">${actions}</td>`;
             html += `</tr>`;
             
@@ -4667,8 +4739,15 @@ async function supplementLoadRecords() {
     }
 }
 
+function supplementGenerationFailed(data) {
+    const failed = /fail|error|missing|needs_confirmation/i;
+    const records = data.records || [data.record || data];
+    return records.some(record => [record.status, record.watermark_status, record.processing?.watermark, record.processing?.exif]
+        .some(value => failed.test(typeof value === 'object' ? value?.status || '' : value || '')));
+}
+
 async function supplementProcess(recordId) {
-    if (!confirm('Bạn có chắc muốn xử lý record này?')) return;
+    if (!await confirmAction('Bạn có chắc muốn xử lý record này?')) return;
     try {
         const resp = await fetch('/api/supplement/process', {
             method: 'POST',
@@ -4676,7 +4755,7 @@ async function supplementProcess(recordId) {
             body: JSON.stringify({ record_id: recordId })
         });
         const data = await resp.json();
-        if (data.success) {
+        if (resp.ok && data.success && !supplementGenerationFailed(data)) {
             alert('✅ Xử lý thành công!');
         } else {
             alert('❌ Lỗi: ' + (data.error || 'Không rõ'));
@@ -4688,7 +4767,7 @@ async function supplementProcess(recordId) {
 }
 
 async function supplementProcessAll() {
-    if (!confirm('Xử lý tất cả ảnh đang chờ?')) return;
+    if (!await confirmAction('Xử lý tất cả ảnh đang chờ?')) return;
     try {
         const resp = await fetch('/api/supplement/process', {
             method: 'POST',
@@ -4696,7 +4775,7 @@ async function supplementProcessAll() {
             body: JSON.stringify({})
         });
         const data = await resp.json();
-        if (data.success) {
+        if (resp.ok && data.success && !supplementGenerationFailed(data)) {
             const count = data.records ? data.records.length : 0;
             alert(`✅ Đã xử lý ${count} ảnh!`);
         } else {
@@ -4750,7 +4829,7 @@ async function supplementPreview(recordId) {
 }
 
 async function supplementDelete(recordId) {
-    if (!confirm('Xóa record ' + recordId + '? File ảnh liên quan cũng sẽ bị xóa.')) return;
+    if (!await confirmAction('Xóa record ' + recordId + '? File ảnh liên quan cũng sẽ bị xóa.')) return;
     try {
         const resp = await fetch('/api/supplement/delete', {
             method: 'POST',
@@ -4758,7 +4837,7 @@ async function supplementDelete(recordId) {
             body: JSON.stringify({ record_id: recordId })
         });
         const data = await resp.json();
-        if (data.success) {
+        if (resp.ok && data.success) {
             supplementLoadRecords();
         } else {
             alert('❌ Lỗi xóa: ' + (data.error || 'Không rõ'));
@@ -4792,7 +4871,7 @@ async function supplementLoadMissing() {
             html += `<td>${m.date || ''}</td>`;
             html += `<td>${m.weekday || ''}</td>`;
             html += `<td style="color:#f59e0b;">${m.issue_description || ''}</td>`;
-            html += `<td><button class="btn btn-primary btn-sm" onclick="supplementFillFromMissing('${m.person_name}','${m.date}')">Bổ sung</button></td>`;
+            html += `<td><button class="btn btn-primary btn-sm" onclick="supplementFillFromMissing('${m.employee_id || ''}','${m.date}')">Bổ sung</button></td>`;
             html += '</tr>';
         }
         
@@ -4813,9 +4892,10 @@ function supplementFillFromMissing(name, date) {
             isoDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
         }
     }
-    document.getElementById('supp-employee').value = name;
+    const employee = allEmployeesList.find(employee => employee.employee_id === name);
+    document.getElementById('supp-employee').value = employee?.employee_id || '';
     setDatePickerValue(document.getElementById('supp-date'), isoDate);
-    document.getElementById('supp-time').value = '08:00';
+    document.getElementById('supp-time').value = '';
     // Scroll to upload form
     document.getElementById('supplement-upload-form').scrollIntoView({ behavior: 'smooth' });
 }
@@ -4825,8 +4905,7 @@ async function confirmEmployeeIdentity(employee_id) {
     if (!payroll_code) return;
     const valid_from = prompt('Ngày bắt đầu thuộc dự án (YYYY-MM-DD), theo hồ sơ:');
     if (!valid_from) return;
-    const reviewer = prompt('Họ tên người xác nhận danh tính:');
-    if (!reviewer) return;
+    const reviewer = 'system';
     try {
         const res = await apiPost('/api/portraits/employee/confirm', {project_id: allProjectsList.find(p => p.name === currentProjectName)?.project_id, project: currentProjectName, employee_id, payroll_code, valid_from, reviewer});
         if (!res.success) throw new Error(res.error);

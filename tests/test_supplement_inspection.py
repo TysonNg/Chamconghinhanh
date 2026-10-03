@@ -1,31 +1,29 @@
+from supplement_test_support import environment
 import io
 import json
 from unittest.mock import patch
 
 from PIL import Image
-from flask import Flask
 
 from src.ai_timestamp_service import AITimestampService
-from src.fake_photo_service import FakePhotoService
-from src.supplement_batches import register_batches
 
 
 def photo_bytes():
     stream = io.BytesIO()
     exif = Image.Exif()
-    exif[306] = '2026:01:11 17:11:51'
+    exif[36867] = '2026:01:11 17:11:51'
     Image.new('RGB', (20, 20), 'white').save(stream, 'JPEG', exif=exif)
     return stream.getvalue()
 
 
 def test_supplement_preserves_bytes_and_reports_duplicate(tmp_path):
-    service = FakePhotoService(str(tmp_path))
+    service, client, ids = environment(tmp_path)
     raw = photo_bytes()
     with patch.object(service.ai_service, 'inspect_photo', return_value={'status': 'unconfigured', 'message': 'No key'}):
-        first = service.create_supplement_photo(raw, 'Site', 'Employee', '2026-09-16', 'photo.jpg')
-        second = service.create_supplement_photo(raw, 'Site', 'Employee', '2026-09-17', 'photo.jpg')
+        first = service.create_supplement_photo(raw, 'Site', 'Employee', '2026-09-16', 'photo.jpg', **ids)
+        second = service.create_supplement_photo(raw, 'Site', 'Employee', '2026-09-17', 'photo.jpg', **ids)
     assert service.get_staging_image_path(first['id']).read_bytes() == raw
-    assert first['inspection']['exif_datetime'] == '2026:01:11 17:11:51'
+    assert first['inspection']['exif_datetime'] == '2026-01-11 17:11:51'
     assert first['inspection']['date_mismatch'] is True
     assert second['inspection']['duplicate_ids'] == [first['id']]
     assert service.get_staging_photos()[0]['inspection']['status'] == 'unconfigured'
@@ -53,24 +51,24 @@ def test_inspection_prompt_and_date_validation(tmp_path):
 
 
 def test_records_endpoint_preserves_bytes_and_validates_all_dates(tmp_path):
-    app = Flask(__name__)
-    register_batches(app, tmp_path)
-    client = app.test_client()
+    service, client, ids = environment(tmp_path)
     raw = photo_bytes()
-    with patch.object(AITimestampService, 'inspect_photo', return_value={'status': 'failed', 'message': 'AI unavailable'}):
+    with patch.object(service.ai_service, 'inspect_photo', return_value={'status': 'failed', 'message': 'AI unavailable'}):
         response = client.post('/api/supplement/records', data={
-            'project': 'Site', 'employee': 'Employee',
+            **ids,
             'configs': json.dumps([{'target_date': '2026-09-16'}]),
             'photos': (io.BytesIO(raw), 'original.jpg')})
     assert response.status_code == 201
     item = response.json['items'][0]
     assert item['target_date'] == '2026-09-16'
-    assert item['target_time'] == ''
+    assert item['target_time'] is None
+    with service._connect() as c:
+        assert c.execute('SELECT target_time FROM staging_photos WHERE id=?', (item['id'],)).fetchone()[0] is None
     assert item['inspection']['status'] == 'failed'
     assert client.get(item['url']).data == raw
     assert client.get('/api/supplement/download-staging/' + item['id']).data == raw
     response = client.post('/api/supplement/records', data={
-        'project': 'Site', 'employee': 'Employee',
+        **ids,
         'configs': json.dumps([{'target_date': '2026-09-16'}, {'target_date': 'invalid'}]),
         'photos': [(io.BytesIO(raw), 'one.jpg'), (io.BytesIO(raw), 'two.jpg')]})
     assert response.status_code == 400
@@ -111,3 +109,30 @@ def test_provider_fallback_keeps_original_failure_visible(tmp_path):
     assert result['provider'] == 'openai'
     assert result['status'] == 'ok'
     assert result['provider_failures'] == ['gemini: HTTP 503']
+
+
+def test_modified_datetime_is_not_capture_evidence(tmp_path):
+    service, client, ids = environment(tmp_path)
+    stream = io.BytesIO()
+    exif = Image.Exif()
+    exif[306] = '2026:09:16 08:00:00'
+    Image.new('RGB', (20, 20), 'red').save(stream, 'JPEG', exif=exif)
+    item = service.create_supplement_photo(stream.getvalue(), 'Site', 'Employee',
+                    '2026-09-16', 'modified.jpg', **ids)
+    assert item['inspection']['exif_datetime'] is None
+    assert item['date_status'] == 'unknown'
+    assert item['can_apply'] is False
+
+
+def test_capture_datetime_reads_exif_sub_ifd(tmp_path):
+    import piexif
+    service, client, ids = environment(tmp_path)
+    stream = io.BytesIO()
+    metadata = piexif.dump({'0th': {306: b'2026:09:17 10:00:00'},
+                           'Exif': {36867: b'2026:09:16 08:00:00'}})
+    Image.new('RGB', (20, 20), 'green').save(stream, 'JPEG', exif=metadata)
+    item = service.create_supplement_photo(stream.getvalue(), 'Site', 'Employee',
+                    '2026-09-16', 'capture.jpg', **ids)
+    assert item['inspection']['exif_datetime'] == '2026-09-16 08:00:00'
+    assert item['date_status'] == 'consistent'
+    assert item['can_apply'] is True

@@ -238,3 +238,33 @@ def test_api_transfer_employee_endpoint(tmp_path):
 
 
 
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_transfer_legacy_employee_removes_source_listing_and_keeps_history(tmp_path, confirmed):
+    c, r = client(tmp_path)
+    source = r.register_project("Legacy Site")
+    target = r.register_project("New Site")
+    sid, tid = source["project_id"], target["project_id"]
+    folder = r.project_portrait_dir(sid) / "Legacy Employee"
+    folder.mkdir(parents=True)
+    image = folder / "face.png"
+    image.write_bytes(photo().getvalue())
+    eid = r.import_legacy(sid)[0]["employee_id"]
+    if confirmed:
+        r.confirm_source(sid, eid, "001", "2026-01-01", "Reviewer")
+    response = c.post("/api/portraits/employee/transfer", json={
+        "source_project_id": sid, "target_project_id": tid,
+        "employee_id": eid, "effective_date": date.today().isoformat(),
+    })
+    assert response.status_code == 200
+    source_employees = c.get("/api/portraits", query_string={"project_id": sid}).json["employees"]
+    assert all(e["employee_id"] != eid for e in source_employees)
+    target_employees = c.get("/api/portraits", query_string={"project_id": tid}).json["employees"]
+    moved = next(e for e in target_employees if e["employee_id"] == eid)
+    assert len(moved["images"]) == 1
+    assert image.exists()
+    from datetime import timedelta
+    yesterday = date.today() - timedelta(days=1)
+    assert r.portrait_paths(sid, eid, yesterday) == [image]
+    projects = c.get("/api/projects").json["projects"]
+    assert next(p for p in projects if p["project_id"] == sid)["employee_count"] == 0

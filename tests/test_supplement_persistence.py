@@ -41,18 +41,19 @@ def test_invalid_json_dates_are_client_errors(tmp_path, payload):
     assert c.patch(f"/api/supplement/batches/{b['id']}/items/{b['items'][0]['id']}", json=payload).status_code == 400
 
 
-def test_invalid_image_and_tamper_block_approval(tmp_path):
+def test_invalid_image_and_tamper_block_download(tmp_path):
     c = client(tmp_path)
     assert c.post('/api/supplement/batches', data={
         'employee': 'A', 'supplement_date': '2026-08-29',
         'photos': (io.BytesIO(b'not an image'), 'fake.jpg')}).status_code == 400
     b = create(c).json['batch']
     url = '/api/supplement/batches/' + b['id']
-    assert c.post(url + '/approve', json={}).status_code == 400
-    assert c.post(url + '/approve', json={'reviewer': 'A'}).status_code == 200
+    assert c.post(url + '/approve', json={}).status_code == 410
+    assert c.post(url + '/approve', json={'reviewer': 'A'}).status_code == 410
+    assert c.get(url + '/download').status_code == 200
     path = tmp_path / 'supplement_output' / b['id'] / b['items'][0]['archive_name']
     path.write_bytes(b'tampered')
-    assert c.post(url + '/approve', json={'reviewer': 'A'}).status_code == 409
+    assert c.post(url + '/approve', json={'reviewer': 'A'}).status_code == 410
     assert c.get(url + '/download').status_code == 409
 
 

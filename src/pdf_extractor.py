@@ -208,7 +208,10 @@ def start_extraction_task(pdf_path, output_dir):
     import uuid
     task_id = str(uuid.uuid4())[:8]
     
+    # Keep reruns and concurrent conversions out of each other's scan input.
+    output_dir = os.path.normpath(output_dir) + '_' + uuid.uuid4().hex
     task = PDFExtractorTask(task_id)
+    task.output_dir = output_dir
     pdf_tasks[task_id] = task
     
     def run():

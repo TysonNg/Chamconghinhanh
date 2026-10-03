@@ -10,6 +10,17 @@
   let selectedPhotos = []; // [{ file, target_date, target_time, thumbUrl }]
   let stagingPhotos = [];
 
+  async function checkedJSON(response) {
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || data.message || `HTTP ${response.status}`);
+    return data;
+  }
+
+  function generationFailed(data) {
+    const failure = /fail|error|missing|needs_confirmation/i;
+    return [data.status, data.watermark_status, data.processing?.watermark, data.processing?.exif].some(value => failure.test(typeof value === 'object' ? value?.status || '' : value || ''));
+  }
+
   // Helper DOM & Notifications
   const el = (tag, text, className) => {
     const n = document.createElement(tag);
@@ -51,50 +62,25 @@
     return isoDate;
   }
 
-  function getRandomShiftTime(shift = 'morning') {
-    let h, m, s;
-    if (shift === 'afternoon' || shift === 'chieu') {
-      // Ca Chiều: 17:45 - 18:15
-      if (Math.random() < 0.5) {
-        h = '17';
-        m = String(45 + Math.floor(Math.random() * 15)).padStart(2, '0');
-      } else {
-        h = '18';
-        m = String(Math.floor(Math.random() * 16)).padStart(2, '0');
-      }
-    } else {
-      // Ca Sáng: 05:45 - 06:15
-      if (Math.random() < 0.5) {
-        h = '05';
-        m = String(45 + Math.floor(Math.random() * 15)).padStart(2, '0');
-      } else {
-        h = '06';
-        m = String(Math.floor(Math.random() * 16)).padStart(2, '0');
-      }
-    }
-    s = String(Math.floor(Math.random() * 60)).padStart(2, '0');
-    return `${h}:${m}:${s}`;
-  }
-
   // --- 1. PROJECTS & EMPLOYEES LOADING ---
   async function loadProjects() {
     const projSelect = document.getElementById('supp-project-select');
     if (!projSelect) return;
 
     try {
-      const res = await fetch('/api/projects').then(r => r.json());
+      const res = await fetch('/api/projects').then(checkedJSON);
       if (res.success && Array.isArray(res.projects)) {
         projectsList = res.projects;
         projSelect.replaceChildren();
 
-        const defaultName = window.currentProjectName || res.default_project || (projectsList[0] ? projectsList[0].name : '');
+        const defaultName = projectsList.find(p => p.name === window.currentProjectName || p.name === res.default_project)?.project_id || projectsList[0]?.project_id || '';
         currentProject = defaultName;
 
         projectsList.forEach(p => {
           const opt = document.createElement('option');
-          opt.value = p.name;
+          opt.value = p.project_id;
           opt.textContent = `${p.name} (${p.employee_count || 0} NV)`;
-          if (p.name === currentProject) opt.selected = true;
+          if (p.project_id === currentProject) opt.selected = true;
           projSelect.appendChild(opt);
         });
 
@@ -119,7 +105,7 @@
     currentSelectedEmployee = null;
 
     try {
-      const res = await fetch(`/api/portraits?project=${encodeURIComponent(projectName)}`).then(r => r.json());
+      const res = await fetch(`/api/portraits?include_history=true&project_id=${encodeURIComponent(projectName)}`).then(checkedJSON);
       if (res.success && Array.isArray(res.employees)) {
         employeesList = res.employees;
 
@@ -147,7 +133,7 @@
 
     const hiddenVal = document.getElementById('supp-employee-val');
     const triggerLabel = document.getElementById('supp-emp-combobox-label');
-    if (hiddenVal) hiddenVal.value = emp.name;
+    if (hiddenVal) hiddenVal.value = emp.employee_id;
     if (triggerLabel) triggerLabel.textContent = `${emp.name} (${emp.image_count || 0} ảnh mẫu)`;
 
     // Update 90x90px Large Portrait Card
@@ -349,16 +335,10 @@
           const file = new File([blob], fname.split('/').pop(), { type: blob.type || 'image/jpeg' });
           const thumbUrl = URL.createObjectURL(blob);
 
-          // Random time in morning shift: 07:45 - 08:15
-          const isLate = Math.random() > 0.5;
-          const h = isLate ? '08' : '07';
-          const m = isLate ? String(Math.floor(Math.random() * 16)).padStart(2, '0') : String(45 + Math.floor(Math.random() * 15)).padStart(2, '0');
-          const s = String(Math.floor(Math.random() * 60)).padStart(2, '0');
 
           newItems.push({
             file,
             target_date: todayStr,
-            target_time: `${h}:${m}:${s}`,
             thumbUrl
           });
         }
@@ -392,7 +372,6 @@
     }
 
     const todayStr = getTodayISO();
-    const timeStr = '08:00:00';
 
     newFiles.forEach(file => {
       if (file.size > 20 * 1024 * 1024) {
@@ -403,7 +382,6 @@
       selectedPhotos.push({
         file,
         target_date: todayStr,
-        target_time: timeStr,
         thumbUrl
       });
     });
@@ -472,10 +450,7 @@
       // Date and Time inputs
       const inputsRow = el('div', null, 'supp-photo-item-inputs');
 
-      if (!item.target_time) {
-        const curShift = document.getElementById('tool-shift-select')?.value || 'morning';
-        item.target_time = getRandomShiftTime(curShift);
-      }
+
 
       // Date input row
       const dateRow = el('div', null, 'supp-photo-input-row');
@@ -508,7 +483,7 @@
       const timeLbl = el('span', 'Giờ', 'supp-photo-input-label');
       const timeInp = el('input', null, 'form-control supp-photo-input-control');
       timeInp.type = 'text';
-      timeInp.value = item.target_time;
+      timeInp.value = item.target_time || '';
       timeInp.placeholder = 'HH:MM:SS';
       timeInp.setAttribute('aria-label', 'Giờ đề nghị bổ sung');
       timeInp.onchange = () => { item.target_time = timeInp.value; };
@@ -522,7 +497,7 @@
     });
   }
 
-  // --- 5. BATCH TOOLS (CÙNG NGÀY, LIÊN TIẾP, RANDOM GIỜ) ---
+  // --- 5. BATCH DATE TOOLS ---
   function setupBatchTools() {
     // 1. Gán cùng ngày
     const btnSame = document.getElementById('btn-apply-same-date');
@@ -563,24 +538,6 @@
       };
     }
 
-    // 3. Random giờ ca
-    const btnRand = document.getElementById('btn-apply-random-time');
-    const selShift = document.getElementById('tool-shift-select');
-    if (btnRand && selShift) {
-      btnRand.onclick = () => {
-        if (selectedPhotos.length === 0) return;
-        const shift = selShift.value;
-
-        selectedPhotos.forEach(p => {
-          p.target_time = getRandomShiftTime(shift);
-        });
-
-        renderSelectedGrid();
-        notify(`Đã tạo giờ ngẫu nhiên trong ${shift === 'morning' ? 'Ca Sáng (05:45 - 06:15)' : 'Ca Chiều (17:45 - 18:15)'} cho toàn bộ ảnh.`, 'success');
-      };
-    }
-
-    // Nút hủy tất cả
     const btnClear = document.getElementById('btn-clear-all-selected');
     if (btnClear) {
       btnClear.onclick = () => {
@@ -598,6 +555,7 @@
 
     form.onsubmit = async e => {
       e.preventDefault();
+      if (submitBtn.disabled) return;
       if (selectedPhotos.length === 0) {
         notify('Vui lòng chọn hoặc bốc ít nhất 1 ảnh để xử lý.', 'warning');
         return;
@@ -611,17 +569,10 @@
       }
 
       const fd = new FormData();
-      fd.append('project', proj);
-      fd.append('employee', emp);
+      fd.append('project_id', proj);
+      fd.append('employee_id', emp);
 
-      const selShift = document.getElementById('tool-shift-select');
-      const curShift = selShift ? selShift.value : 'morning';
-      fd.append('shift', curShift);
-
-      const configs = selectedPhotos.map(p => ({
-        target_date: p.target_date,
-        target_time: p.target_time || getRandomShiftTime(curShift)
-      }));
+      const configs = selectedPhotos.map(p => ({target_date: p.target_date, ...(p.target_time?.trim() ? {target_time:p.target_time.trim()} : {})}));
       fd.append('configs', JSON.stringify(configs));
 
       selectedPhotos.forEach(p => {
@@ -644,7 +595,7 @@
           throw new Error(data.error || 'Lỗi tạo ảnh bổ sung');
         }
 
-        notify(`Đã tạo thành công ${data.count} ảnh bổ sung với watermark và EXIF mới!`, 'success');
+        notify(`Đã lưu ${data.count} ảnh. Xem trạng thái xử lý của từng ảnh bên dưới.`, 'info');
 
         // Reload staging
         await loadStaging();
@@ -669,17 +620,80 @@
   }
 
   // --- 7. STAGING WORKSPACE & ACTIONS ---
+  const pendingRecordActions = new Set();
+
+  async function runRecordAction(item, button, action) {
+    if (pendingRecordActions.has(item.id) || button?.disabled) return;
+    pendingRecordActions.add(item.id);
+    if (button) button.disabled = true;
+    try {
+      await action();
+    } catch (error) {
+      notify(error.message, 'error');
+    } finally {
+      pendingRecordActions.delete(item.id);
+      if (button) {
+        button.disabled = false;
+        if (button.isConnected && document.activeElement === document.body) button.focus();
+      }
+    }
+  }
+
+  async function recheckStagingPhoto(item, button) {
+    return runRecordAction(item, button, async () => {
+      const response = await fetch(`/api/supplement/records/${encodeURIComponent(item.id)}/check`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({})
+      });
+      const data = await checkedJSON(response);
+      if (!data.item) throw new Error('Thiếu kết quả kiểm tra');
+      notify(data.item.can_apply === true ? 'Đã kiểm tra: đủ điều kiện áp dụng.' : 'Đã kiểm tra: chưa đủ điều kiện. Xem lý do trên thẻ.', 'info');
+      await loadStaging();
+    });
+  }
+
+  async function rebindStagingPhoto(item, button) {
+    if (item.applied_path || item.applied_at) {
+      notify('Hồ sơ đã áp dụng không thể gắn lại danh tính.', 'error');
+      return;
+    }
+    const projectId = document.getElementById('supp-project-select')?.value;
+    const employeeId = document.getElementById('supp-employee-val')?.value;
+    const project = projectsList.find(project => project.project_id === projectId);
+    const employee = currentSelectedEmployee?.employee_id === employeeId ? currentSelectedEmployee : employeesList.find(employee => employee.employee_id === employeeId);
+    if (!project || !employee) {
+      notify('Chọn dự án và nhân viên trước khi gắn lại.', 'warning');
+      return;
+    }
+    const baseline = !item.source_sha256;
+    let message = `Gắn lại hồ sơ ${item.id} cho dự án "${project.name}" và nhân viên "${employee.name}"?`;
+    if (baseline) message += '\n\nHồ sơ cũ chưa có mã băm nguồn. File nguồn hiện tại sẽ trở thành mốc kiểm tra (baseline) từ lúc này. Không thể xác minh file có giống lúc nhập ban đầu hay không.';
+    return runRecordAction(item, button, async () => {
+      if (!await confirmAction(message)) return;
+      const payload = {project_id: projectId, employee_id: employeeId};
+      if (baseline) payload.confirm_legacy_source = true;
+      const response = await fetch(`/api/supplement/records/${encodeURIComponent(item.id)}`, {
+        method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+      });
+      await checkedJSON(response);
+      notify('Đã gắn lại danh tính. Xem trạng thái kiểm tra trên thẻ.', 'info');
+      await loadStaging();
+    });
+  }
+
   async function loadStaging() {
     const grid = document.getElementById('supp-staging-grid');
     const emptyBox = document.getElementById('supp-staging-empty');
     const countBadge = document.getElementById('staging-count');
     const actionsBar = document.getElementById('staging-actions-bar');
     if (!grid) return;
+    if (!currentProject) { stagingPhotos = []; grid.replaceChildren(); return; }
 
     try {
-      const resp = await fetch('/api/supplement/staging').then(r => r.json());
+      const resp = await fetch(`/api/supplement/staging?project_id=${encodeURIComponent(currentProject)}`).then(checkedJSON);
       if (resp.success && Array.isArray(resp.items)) {
         stagingPhotos = resp.items;
+        const bulkApply = document.getElementById('btn-apply-all-attendance');
+        if (bulkApply) bulkApply.disabled = !stagingPhotos.length || stagingPhotos.some(item => item.can_apply !== true);
         if (countBadge) countBadge.textContent = stagingPhotos.length;
 
         if (stagingPhotos.length === 0) {
@@ -701,7 +715,8 @@
           const thumbWrap = el('div', null, 'supp-staging-thumb-wrap');
           const img = el('img', null, 'supp-staging-thumb-img');
           const cacheBuster = `?v=${encodeURIComponent(item.created_at || '')}_${Date.now()}`;
-          img.src = `${item.url}${cacheBuster}`;
+          if (item.url) img.src = `${item.url}${cacheBuster}`;
+          else img.style.display = 'none';
           img.alt = item.original_name;
           img.loading = 'lazy';
 
@@ -716,9 +731,11 @@
             <span>Phóng to</span>
           `;
 
-          thumbWrap.append(img, zoomOverlay);
+          if (item.url) thumbWrap.append(img, zoomOverlay);
+          else thumbWrap.appendChild(el('div', 'Không có ảnh dẫn xuất', 'supp-staging-missing-image'));
           thumbWrap.onclick = () => {
-            const cap = `${item.employee} · Ngày đề nghị: ${formatDateDisplay(item.target_date)} ${item.target_time || ''} · Watermark & EXIF: ${formatDateDisplay(item.target_date)} ${item.target_time || ''} · ${item.project}`;
+            if (!item.url) return;
+            const cap = `${item.employee || item.employee_id} / ${item.project || item.project_id} / ${item.target_date} ${item.target_time || ""}`;
             openStagingLightbox(item, cap);
           };
 
@@ -729,14 +746,14 @@
           const metaRow = el('div', null, 'supp-staging-meta-row');
           const badge = el('span', `📅 ${formatDateDisplay(item.target_date)} · ${item.target_time || ''}`, 'supp-staging-badge');
           const statusLabels = {
-            completed: '✓ AI Khớp',
+            completed: 'Watermark: completed',
             needs_confirmation: '⚠ Chờ xác nhận',
             verification_failed: '✕ Chưa đạt hậu kiểm',
             original_missing: '✕ Thiếu ảnh gốc',
             not_requested: 'Ảnh gốc',
             legacy: 'Ảnh cũ'
           };
-          const watermarkStatus = item.watermark_status || 'legacy';
+          const watermarkStatus = item.processing?.watermark?.status || item.processing?.watermark || item.watermark_status || 'not_requested';
           const statusTag = el(
             'span',
             statusLabels[watermarkStatus] || watermarkStatus,
@@ -760,13 +777,14 @@
           applyBtn.type = 'button';
           applyBtn.title = 'Chỉ dùng ảnh gốc có ngày phù hợp; giữ ảnh và lịch sử xử lý';
           applyBtn.onclick = async () => {
+            if (applyBtn.disabled) return;
             applyBtn.disabled = true;
             try {
               const res = await fetch('/api/supplement/apply-to-attendance', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ids: [item.id], delete_after: true })
-              }).then(r => r.json());
+              }).then(checkedJSON);
               if (!res.success) throw new Error(res.error || res.message || 'Ngày ảnh gốc chưa đủ điều kiện');
               if (res.success) {
                 notify(`Đã đưa ảnh ngày ${formatDateDisplay(item.target_date)} vào chấm công!`, 'success');
@@ -778,6 +796,7 @@
               applyBtn.disabled = false;
             }
           };
+          applyBtn.disabled = item.can_apply !== true;
           mainRow.appendChild(applyBtn);
 
           // Hàng 2: Nhóm nút công cụ nhỏ gọn
@@ -786,6 +805,7 @@
           // Tool 1: Gen lại ảnh bằng AI
           const regenBtn = el('button', '🔄 Gen lại', 'supp-tool-btn btn-regen-ai');
           regenBtn.type = 'button';
+          regenBtn.disabled = !item.target_time;
           regenBtn.title = 'Thử tạo lại ảnh này bằng AI (giữ nguyên ngày giờ & nhân viên)';
           regenBtn.onclick = () => regenerateStagingPhoto(item.id, regenBtn);
 
@@ -797,7 +817,8 @@
 
           // Tool 3: Tải về
           const dlBtn = el('a', '⬇️', 'supp-tool-btn btn btn-secondary');
-          dlBtn.href = `/api/supplement/download-staging/${item.id}`;
+          if (item.url) dlBtn.href = `/api/supplement/download-staging/${item.id}`;
+          else { dlBtn.setAttribute('aria-disabled', 'true'); dlBtn.onclick = event => event.preventDefault(); }
           dlBtn.title = 'Tải file ảnh về máy tính';
 
           // Tool 4: Xóa
@@ -805,23 +826,38 @@
           delBtn.type = 'button';
           delBtn.title = 'Xóa ảnh này khỏi danh sách';
           delBtn.onclick = async () => {
+            if (delBtn.disabled) return;
+            delBtn.disabled = true;
             try {
-              await fetch('/api/supplement/delete-staging', {
+              if (!await confirmAction('Xóa ảnh này khỏi danh sách?')) return;
+              const response = await fetch('/api/supplement/delete-staging', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ids: [item.id] })
               });
+              const data = await response.json();
+              if (!response.ok || !data.success) throw new Error(data.error || 'Delete failed');
               notify('Đã xóa ảnh.', 'info');
               await loadStaging();
             } catch (e) {
               notify('Lỗi xóa: ' + e.message, 'error');
-            }
+            } finally { delBtn.disabled = false; if (delBtn.isConnected && document.activeElement === document.body) delBtn.focus(); }
           };
 
-          toolsRow.append(regenBtn, checkAiBtn, dlBtn, delBtn);
+          const recheckBtn = el('button', 'Kiểm tra lại', 'supp-tool-btn btn-recheck-evidence');
+          recheckBtn.type = 'button';
+          recheckBtn.onclick = () => recheckStagingPhoto(item, recheckBtn);
+          const rebindBtn = el('button', 'Gắn lại danh tính', 'supp-tool-btn btn-rebind-identity');
+          rebindBtn.type = 'button';
+          rebindBtn.disabled = Boolean(item.applied_path || item.applied_at);
+          rebindBtn.onclick = () => rebindStagingPhoto(item, rebindBtn);
+          toolsRow.append(recheckBtn, rebindBtn, regenBtn, checkAiBtn, dlBtn, delBtn);
           actions.append(mainRow, toolsRow);
 
-          body.append(metaRow, empP, actions);
+          const checks = el('div', null, 'supp-staging-checks');
+          for (const [label, value] of [['Ngày', item.date_status], ['Khuôn mặt', item.face_status], ['Toàn vẹn', item.integrity_status], ['Lưu trữ', item.storage_status], ['Watermark', item.processing?.watermark], ['EXIF', item.processing?.exif], ['Có thể áp dụng', item.can_apply]]) checks.appendChild(el('div', `${label}: ${typeof value === 'object' ? JSON.stringify(value) : value ?? 'unknown'}`));
+          for (const reason of item.reasons || []) checks.appendChild(el('div', typeof reason === 'string' ? reason : JSON.stringify(reason)));
+          body.append(metaRow, empP, checks, actions);
           card.append(thumbWrap, body);
           grid.appendChild(card);
         });
@@ -836,14 +872,14 @@
     const btnApplyAll = document.getElementById('btn-apply-all-attendance');
     if (btnApplyAll) {
       btnApplyAll.onclick = async () => {
-        if (stagingPhotos.length === 0) return;
+        if (stagingPhotos.length === 0 || btnApplyAll.disabled || stagingPhotos.some(item => item.can_apply !== true)) return;
         btnApplyAll.disabled = true;
         try {
           const res = await fetch('/api/supplement/apply-to-attendance', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ids: stagingPhotos.map(item => item.id), delete_after: true })
-          }).then(r => r.json());
+          }).then(checkedJSON);
           if (!res.success) throw new Error(res.error || res.message || 'Ngày ảnh gốc chưa đủ điều kiện');
           if (res.success) {
             notify(`✓ ${res.message}`, 'success');
@@ -877,6 +913,7 @@
           document.body.appendChild(a);
           a.click();
           a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (e) {
           notify('Lỗi tải zip: ' + e.message, 'error');
         }
@@ -888,18 +925,23 @@
     if (btnDelAll) {
       btnDelAll.onclick = async () => {
         if (stagingPhotos.length === 0) return;
-        if (!confirm(`Bạn có chắc chắn muốn xóa toàn bộ ${stagingPhotos.length} ảnh đang chờ?`)) return;
+        if (btnDelAll.disabled) return;
+        const ids = stagingPhotos.map(item => item.id);
+        btnDelAll.disabled = true;
         try {
-          await fetch('/api/supplement/delete-staging', {
+          if (!await confirmAction(`Xóa ${ids.length} ảnh đang hiển thị?`)) return;
+          const response = await fetch('/api/supplement/delete-staging', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            body: JSON.stringify({ids})
           });
+          const data = await response.json();
+          if (!response.ok || !data.success) throw new Error(data.error || 'Delete failed');
           notify('Đã xóa toàn bộ ảnh chờ.', 'info');
           await loadStaging();
         } catch (e) {
           notify('Lỗi xóa: ' + e.message, 'error');
-        }
+        } finally { btnDelAll.disabled = false; if (btnDelAll.isConnected && document.activeElement === document.body) btnDelAll.focus(); }
       };
     }
 
@@ -916,6 +958,7 @@
 
   // --- 7.1 STAGING LIGHTBOX & REGENERATE & CHECK AI ---
   function openStagingLightbox(item, cap) {
+    if (!item.url) { notify('Không có ảnh dẫn xuất.', 'warning'); return; }
     const modal = document.getElementById('modal-lightbox');
     const img = document.getElementById('lightbox-img');
     const capEl = document.getElementById('lightbox-caption');
@@ -1006,7 +1049,9 @@
   }
 
   async function regenerateStagingPhoto(photoId, btn, confirmedLines = null) {
-    if (!photoId) return;
+    if (!photoId || (btn && btn.disabled)) return false;
+    const item = stagingPhotos.find(item => item.id === photoId);
+    if (item && !item.target_time) { notify('Enter a time before processing watermark or EXIF.', 'warning'); return false; }
     const origHtml = btn ? btn.innerHTML : '';
     if (btn) {
       btn.disabled = true;
@@ -1030,7 +1075,7 @@
         notify('Không tìm thấy ảnh gốc bất biến; hệ thống từ chối gen chồng trên ảnh AI.', 'error');
         return false;
       }
-      if (res.ok && data.success) {
+      if (res.ok && data.success && !generationFailed(data)) {
         notify('Đã tạo lại ảnh bằng AI thành công!', 'success');
         await loadStaging();
 
@@ -1065,7 +1110,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ photo_id: photoId })
-      }).then(r => r.json());
+      }).then(checkedJSON);
 
       if (res.success && res.report) {
         showAIInspectorModal(res.report, fileName);
@@ -1191,6 +1236,7 @@
       projSelect.onchange = async () => {
         currentProject = projSelect.value;
         await loadEmployees(currentProject);
+        await loadStaging();
       };
     }
   }
@@ -1200,7 +1246,7 @@
 
   async function loadAIConfig() {
     try {
-      const res = await fetch('/api/supplement/ai-config').then(r => r.json());
+      const res = await fetch('/api/supplement/ai-config').then(async response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); });
       aiConfig = res;
       updateAIBadge(res);
       populateAIModal(res);
@@ -1360,7 +1406,7 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ provider, model, api_key: apiKey })
-          }).then(r => r.json());
+          }).then(checkedJSON);
 
           if (res.success) {
             if (testResultEl) {
@@ -1425,7 +1471,7 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
-          }).then(r => r.json());
+          }).then(checkedJSON);
 
           if (res.success) {
             aiConfig = res.config;

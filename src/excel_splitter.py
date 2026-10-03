@@ -7,7 +7,7 @@ import os
 import hashlib
 import re
 import unicodedata
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import xlrd
@@ -24,6 +24,50 @@ def _normalize_text(text: str) -> str:
     return text
 
 
+def attendance_column_map(row):
+    """Use the same supported attendance headers for splitting and Word export."""
+    columns = {}
+    for index, value in enumerate(row):
+        norm = _normalize_text(value)
+        if not norm:
+            continue
+        if 'ma nhan vien' in norm or 'ma the' in norm or norm == 'id':
+            columns['id'] = index
+        elif 'ten nhan vien' in norm or 'ho va ten' in norm or norm == 'ten':
+            columns['name'] = index
+        elif norm == 'phong ban':
+            columns['dept'] = index
+        elif norm == 'ngay' or 'ngay' in norm:
+            columns['date'] = index
+        elif norm == 'thu':
+            columns['weekday'] = index
+        elif 'gio vao' in norm or 'check in' in norm or 'time in' in norm:
+            columns['gio_vao'] = index
+        elif 'gio ra' in norm or 'check out' in norm or 'time out' in norm:
+            columns['gio_ra'] = index
+    return columns
+
+
+def convert_xls_cell(workbook, cell):
+    if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+        return ''
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        # Elapsed formats such as [h]:mm represent durations, even above 24h.
+        xf = workbook.xf_list[cell.xf_index]
+        fmt = workbook.format_map[xf.format_key].format_str
+        fmt = re.sub(r'"[^\"]*"|\\.', '', fmt)
+        if re.search(r'\[(?:h+|m+|s+)\]', fmt, flags=re.IGNORECASE):
+            return timedelta(seconds=round(float(cell.value) * 86400))
+        year, month, day, hour, minute, second = xlrd.xldate_as_tuple(
+            cell.value, workbook.datemode)
+        if year == 0 and month == 0 and day == 0:
+            return time(hour, minute, second)
+        if hour or minute or second:
+            return datetime(year, month, day, hour, minute, second)
+        return date(year, month, day)
+    return cell.value
+
+
 class _ExcelReader:
     def __init__(self, path: str):
         self.path = path
@@ -38,28 +82,14 @@ class _ExcelReader:
             for row in ws.iter_rows(values_only=True):
                 self.rows.append([v if v is not None else '' for v in row])
         else:
-            wb = xlrd.open_workbook(self.path)
+            wb = xlrd.open_workbook(self.path, formatting_info=True)
             sheet = wb.sheet_by_index(0)
             for r in range(sheet.nrows):
                 row = [self._convert_xls_cell(wb, sheet.cell(r, c)) for c in range(sheet.ncols)]
                 self.rows.append(row)
 
     def _convert_xls_cell(self, workbook, cell):
-        if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
-            return ''
-
-        if cell.ctype == xlrd.XL_CELL_DATE:
-            year, month, day, hour, minute, second = xlrd.xldate_as_tuple(
-                cell.value,
-                workbook.datemode
-            )
-            if year == 0 and month == 0 and day == 0:
-                return time(hour, minute, second)
-            if hour or minute or second:
-                return datetime(year, month, day, hour, minute, second)
-            return date(year, month, day)
-
-        return cell.value
+        return convert_xls_cell(workbook, cell)
 
 
 class ExcelAttendanceSplitter:
@@ -84,26 +114,8 @@ class ExcelAttendanceSplitter:
 
         for r in range(min(40, len(rows))):
             row = rows[r]
-            col_map = {}
+            col_map = attendance_column_map(row)
             score = 0
-            for c, val in enumerate(row):
-                norm = _normalize_text(val)
-                if not norm:
-                    continue
-                if 'ma nhan vien' in norm or 'ma the' in norm or norm == 'id':
-                    col_map['id'] = c
-                elif 'ten nhan vien' in norm or 'ho va ten' in norm or norm == 'ten':
-                    col_map['name'] = c
-                elif norm == 'phong ban':
-                    col_map['dept'] = c
-                elif norm == 'ngay' or 'ngay' in norm:
-                    col_map['date'] = c
-                elif norm == 'thu':
-                    col_map['weekday'] = c
-                elif 'gio vao' in norm or 'check in' in norm or 'time in' in norm:
-                    col_map['gio_vao'] = c
-                elif 'gio ra' in norm or 'check out' in norm or 'time out' in norm:
-                    col_map['gio_ra'] = c
 
             for k in ('id', 'name', 'date'):
                 if k in col_map:
@@ -162,9 +174,9 @@ class ExcelAttendanceSplitter:
             if not self._row_has_data(row):
                 continue
             name = self._get_cell(row, 'name')
-            if not name:
-                continue
             emp_id = self._get_cell(row, 'id')
+            if not name and not emp_id:
+                continue
             # Unknown codes remain separate source rows; never infer identity from names.
             key = (str(emp_id).strip() if emp_id else f"pending:{row_index}", str(emp_id).strip())
             groups.setdefault(key, []).append(row)
@@ -182,7 +194,17 @@ class ExcelAttendanceSplitter:
         output_files = []
         summaries = []
         for norm_name, (emp_id, data_rows, score) in selected.items():
-            display_name = data_rows[0][self.col_map.get('name', 0)]
+            display_name = next((self._get_cell(row, 'name') for row in data_rows
+                                 if self._get_cell(row, 'name')), emp_id)
+            # Fill missing display names only within the same explicit source code.
+            if 'name' in self.col_map:
+                named_rows = []
+                for row in data_rows:
+                    values = list(row)
+                    if not self._get_cell(row, 'name'):
+                        values[self.col_map['name']] = display_name
+                    named_rows.append(values)
+                data_rows = named_rows
             safe_name = re.sub(r'[<>:"/\\\\|?*]', '_', str(display_name).strip())
             identity_suffix = hashlib.sha256((emp_id or norm_name).encode("utf-8")).hexdigest()[:16]
             filename = f"{safe_name}_{identity_suffix}.xlsx"

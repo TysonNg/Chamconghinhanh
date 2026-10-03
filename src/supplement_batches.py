@@ -15,7 +15,7 @@ from PIL import Image, UnidentifiedImageError
 LABEL = 'Ảnh bổ sung — không xác nhận thời điểm chụp'
 
 
-def register_batches(app, data_dir):
+def register_batches(app, data_dir, registry_provider=None, matcher_provider=None, service=None):
     root = Path(data_dir) / 'supplement_output'
     root.mkdir(parents=True, exist_ok=True)
     db = Path(data_dir) / 'supplement_batches.sqlite3'
@@ -67,15 +67,15 @@ def register_batches(app, data_dir):
 
     @bp.errorhandler(ValueError)
     def invalid(e):
-        return jsonify(error=str(e)), 400
+        return jsonify(success=False,error=str(e)), 400
 
     @bp.errorhandler(LookupError)
     def missing(e):
-        return jsonify(error=str(e)), 404
+        return jsonify(success=False,error=str(e)), 404
 
     @bp.errorhandler(RuntimeError)
     def conflict(e):
-        return jsonify(error=str(e)), 409
+        return jsonify(success=False,error=str(e)), 409
 
     @bp.route('/api/supplement/batches', methods=['GET', 'POST'])
     def batches():
@@ -116,7 +116,7 @@ def register_batches(app, data_dir):
         bid = uuid.uuid4().hex
         folder = root / bid
         folder.mkdir()
-        b = {'id': bid, 'employee': employee, 'label': LABEL, 'status': 'approved',
+        b = {'id': bid, 'employee': employee, 'label': LABEL, 'status': 'stored',
              'items': [i for _, i in prepared], 'history': []}
         try:
             for raw, item in prepared:
@@ -151,7 +151,7 @@ def register_batches(app, data_dir):
                 raise LookupError('Không tìm thấy ảnh')
             old = dict(item)
             item.update(supplement_date=day, note=note)
-            b['status'] = 'approved'
+            b['checks_valid'] = False
             log(b, 'item_updated', {'item_id': iid, 'before': old, 'after': dict(item)})
             save(c, b)
         return jsonify(batch=b)
@@ -167,24 +167,12 @@ def register_batches(app, data_dir):
 
     @bp.post('/api/supplement/batches/<bid>/approve')
     def approve(bid):
-        reviewer = payload().get('reviewer', '')
-        if not isinstance(reviewer, str) or not reviewer.strip() or len(reviewer) > 200:
-            raise ValueError('Nhập tên người duyệt')
-        with connect() as c:
-            c.execute('BEGIN IMMEDIATE')
-            b = load(c, bid)
-            verify(b)
-            b['status'] = 'approved'
-            log(b, 'approved', {'reviewer': reviewer.strip()})
-            save(c, b)
-        return jsonify(batch=b)
+        return jsonify(success=False, error='Tool cá nhân không cần duyệt; có thể tải hồ sơ trực tiếp.'), 410
 
     @bp.get('/api/supplement/batches/<bid>/download')
     def download(bid):
         with connect() as c:
             b = load(c, bid)
-        if b['status'] != 'approved':
-            raise RuntimeError('Cần duyệt batch trước khi xuất')
         verify(b)
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, 'w', zipfile.ZIP_STORED) as z:
@@ -200,15 +188,17 @@ def register_batches(app, data_dir):
 
     # ==================== FAKE PHOTO ENGINE & STAGING ROUTES ====================
     from src.fake_photo_service import FakePhotoService
-    fake_service = FakePhotoService(data_dir)
+    fake_service = service or FakePhotoService(data_dir, registry_provider=registry_provider, matcher_provider=matcher_provider)
+    app.extensions['supplement_service'] = fake_service
+    from src.supplement_evidence import parse_target_time, selected_ids
 
     @bp.post('/api/supplement/records')
     def create_supplement_records():
         files = request.files.getlist('photos')
-        project = request.form.get('project', '').strip()
-        employee = request.form.get('employee', '').strip()
-        if not project or not employee or not 1 <= len(files) <= 31:
-            raise ValueError('Chọn dự án, nhân viên và từ 1 đến 31 ảnh')
+        project_id = request.form.get('project_id', '').strip()
+        employee_id = request.form.get('employee_id', '').strip()
+        if not project_id or not employee_id or not 1 <= len(files) <= 31:
+            raise ValueError('Chọn dự án, nhân viên bằng ID và từ 1 đến 31 ảnh')
         try:
             configs = json.loads(request.form.get('configs', '[]'))
         except (TypeError, json.JSONDecodeError):
@@ -217,16 +207,12 @@ def register_batches(app, data_dir):
             raise ValueError('Mỗi ảnh cần có ngày đề nghị bổ sung')
         prepared = []
         total = 0
-        default_shift = request.form.get('shift')
         for file, config in zip(files, configs):
             if not isinstance(config, dict):
                 raise ValueError('Cấu hình ảnh không hợp lệ')
             day = parse_day(config.get('target_date'))
-            target_time = config.get('target_time', '').strip()
-            if not target_time and default_shift:
-                target_time = fake_service.generate_random_time(default_shift)
-            elif target_time.count(':') == 1:
-                target_time = f"{target_time}:00"
+            target_time = parse_target_time(config.get('target_time'), provided='target_time' in config)
+            project, employee = fake_service._identity(project_id, employee_id, date.fromisoformat(day))
 
             raw = file.read(20 * 1024 * 1024 + 1)
             total += len(raw)
@@ -245,27 +231,42 @@ def register_batches(app, data_dir):
 
         items = []
         for raw, day, t_time, name in prepared:
-            item = fake_service.create_fake_photo(
-                raw_bytes=raw,
-                project=project,
-                employee=employee,
-                target_date=day,
-                target_time=t_time,
-                original_name=name,
-                replace_timestamp=True,
-                modify_exif=True
-            )
-            try:
-                insp = fake_service.ai_service.inspect_photo(raw)
-                if insp and isinstance(insp, dict):
-                    insp['original_visible_date'] = insp.get('visible_date')
-                    item['inspection'].update(insp)
-                    with fake_service._connect() as c:
-                        c.execute('UPDATE staging_photos SET inspection_json=? WHERE id=?', (json.dumps(item['inspection'], ensure_ascii=False), item['id']))
-            except Exception:
-                pass
+            item = fake_service.create_supplement_photo(
+                raw_bytes=raw, project=project['storage_dir'], employee=employee['display_name'],
+                target_date=day, target_time=t_time, original_name=name,
+                project_id=project_id, employee_id=employee_id,
+                replace_timestamp=request.form.get('replace_timestamp','true').lower() in ('true','1'),
+                modify_exif=request.form.get('modify_exif','true').lower() in ('true','1'))
             items.append(item)
         return jsonify(success=True, count=len(items), items=items), 201
+
+    @bp.post('/api/supplement/records/<photo_id>/check')
+    def check_record(photo_id):
+        return jsonify(success=True, item=fake_service.inspect_record(photo_id))
+
+    @bp.patch('/api/supplement/records/<photo_id>')
+    def update_record(photo_id):
+        data = payload()
+        with fake_service._connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute('SELECT * FROM staging_photos WHERE id=?',(photo_id,)).fetchone()
+            if not row:
+                raise LookupError('Không tìm thấy hồ sơ')
+            item = dict(row)
+            if item['applied_path']:
+                raise RuntimeError('Hồ sơ đã áp dụng không được đổi nguồn hoặc danh tính')
+            day = parse_day(data.get('target_date',item['target_date']))
+            pid, eid = data.get('project_id',item['project_id']), data.get('employee_id',item['employee_id'])
+            project, employee = fake_service._identity(pid,eid,date.fromisoformat(day))
+            source_hash = item['source_sha256']
+            if data.get('confirm_legacy_source') is True and not source_hash:
+                source_hash = hashlib.sha256(fake_service._source_path(item).read_bytes()).hexdigest()
+                fake_service._audit(c,photo_id,'legacy_source_baseline',{'sha256':source_hash,'not_original_intake_hash':True})
+            target_time = parse_target_time(data.get('target_time',item['target_time']), provided='target_time' in data)
+            c.execute('UPDATE staging_photos SET project_id=?,employee_id=?,project=?,employee=?,target_date=?,target_time=?,source_sha256=?,validation_json=? WHERE id=?',
+                      (pid,eid,project['storage_dir'],employee['display_name'],day,target_time,source_hash,'{}',photo_id))
+            fake_service._audit(c,photo_id,'updated',{'before':item,'requested':data})
+        return jsonify(success=True,item=fake_service.inspect_record(photo_id))
 
     # ==================== AI CONFIG & TEST ROUTES ====================
     @bp.route('/api/supplement/ai-config', methods=['GET', 'POST'])
@@ -308,65 +309,15 @@ def register_batches(app, data_dir):
 
     @bp.route('/api/supplement/fake-photos', methods=['POST'])
     def create_fake_photos():
-        files = request.files.getlist('photos')
-        if not files:
-            return jsonify(error='Vui lòng chọn ít nhất 1 ảnh'), 400
-        if len(files) > 31:
-            return jsonify(error='Tối đa 31 ảnh mỗi lần'), 400
-
-        project = request.form.get('project', '').strip()
-        employee = request.form.get('employee', '').strip()
-        if not project or not employee:
-            return jsonify(error='Vui lòng chọn dự án và nhân viên'), 400
-
-        replace_ts = request.form.get('replace_timestamp', 'true').lower() in ('true', '1')
-        mod_exif = request.form.get('modify_exif', 'true').lower() in ('true', '1')
-        location = request.form.get('location_name', project).strip()
-
-        raw_configs = request.form.get('configs', '')
-        configs_map = {}
-        if raw_configs:
-            try:
-                parsed = json.loads(raw_configs)
-                if isinstance(parsed, list):
-                    for idx, item in enumerate(parsed):
-                        configs_map[idx] = item
-            except Exception:
-                pass
-
-        created_items = []
-        default_date = request.form.get('default_date', date.today().isoformat())
-        default_time = request.form.get('default_time', '08:00:00')
-
-        for idx, f in enumerate(files):
-            raw = f.read()
-            cfg = configs_map.get(idx, {})
-            t_date = cfg.get('target_date') or request.form.get(f'date_{idx}') or default_date
-            t_time = cfg.get('target_time') or request.form.get(f'time_{idx}') or default_time
-
-            if len(t_time.split(':')) == 2:
-                t_time = f"{t_time}:00"
-
-            item = fake_service.create_fake_photo(
-                raw_bytes=raw,
-                project=project,
-                employee=employee,
-                target_date=t_date,
-                target_time=t_time,
-                original_name=Path(f.filename or f"photo_{idx}.jpg").name,
-                replace_timestamp=replace_ts,
-                modify_exif=mod_exif,
-                location_name=location
-            )
-            created_items.append(item)
-
-        return jsonify(success=True, count=len(created_items), items=created_items), 201
+        # Legacy route shares the same IDs, date/time and upload validation.
+        return create_supplement_records()
 
     @bp.route('/api/supplement/staging', methods=['GET'])
     def get_staging():
         proj = request.args.get('project')
         emp = request.args.get('employee')
-        items = fake_service.get_staging_photos(project=proj, employee=emp)
+        items = fake_service.get_staging_photos(project=proj, employee=emp,
+                    project_id=request.args.get('project_id'), employee_id=request.args.get('employee_id'))
         return jsonify(success=True, count=len(items), items=items)
 
     @bp.route('/api/supplement/staging/<photo_id>/image', methods=['GET'])
@@ -385,16 +336,16 @@ def register_batches(app, data_dir):
 
     @bp.route('/api/supplement/apply-to-attendance', methods=['POST'])
     def apply_to_attendance():
-        data = request.get_json() or {}
-        ids = data.get('ids', [])
+        data = payload()
+        ids = selected_ids(data.get('ids'))
         delete_after = data.get('delete_after', True)
         res = fake_service.apply_to_attendance(photo_ids=ids, delete_after=delete_after)
-        return jsonify(res)
+        return jsonify(res), (200 if res.get('success') else 422)
 
     @bp.route('/api/supplement/delete-staging', methods=['POST'])
     def delete_staging():
-        data = request.get_json() or {}
-        ids = data.get('ids', [])
+        data = payload()
+        ids = selected_ids(data.get('ids'))
         deleted = fake_service.delete_staging_photos(photo_ids=ids)
         return jsonify(success=True, deleted_count=deleted)
 
@@ -421,7 +372,7 @@ def register_batches(app, data_dir):
                 p = fake_service.get_staging_image_path(it['id'])
                 if p and p.exists():
                     safe_emp = re.sub(r'[<>:"/\\|?* ]', '_', it['employee'])
-                    safe_time = it['target_time'].replace(':', '-')
+                    safe_time = (it['target_time'] or '').replace(':', '-')
                     z_name = f"{safe_emp}_{it['target_date']}_{safe_time}_{it['id']}{p.suffix}"
                     z.write(p, arcname=z_name)
         stream.seek(0)
@@ -443,6 +394,10 @@ def register_batches(app, data_dir):
             return jsonify(success=False, **result), 409
         if status == 'verification_failed':
             return jsonify(success=False, **result), 422
+        if status == 'invalid_request':
+            return jsonify(success=False, **result), 400
+        if status == 'integrity_failed':
+            return jsonify(success=False, **result), 409
         if status in ('original_missing', 'not_found'):
             return jsonify(success=False, **result), 404
         return jsonify(success=False, status='failed', error='Không thể tạo lại ảnh này'), 500

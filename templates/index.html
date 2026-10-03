@@ -1240,15 +1240,15 @@
                             <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px;">
                                 <div class="form-group">
                                     <label for="supp-employee">Tên nhân viên *</label>
-                                    <input type="text" id="supp-employee" name="employee_name" required placeholder="Nguyễn Văn A" class="form-control">
+                                    <select id="supp-employee" name="employee_id" required class="form-control"><option value="">Chọn nhân viên</option></select>
                                 </div>
                                 <div class="form-group">
                                     <label for="supp-date">Ngày cần bổ sung *</label>
                                     <input type="text" id="supp-date" name="target_date" required class="form-control vn-date-picker" placeholder="dd/mm/yyyy" autocomplete="off">
                                 </div>
                                 <div class="form-group">
-                                    <label for="supp-time">Giờ chấm công *</label>
-                                    <input type="time" id="supp-time" name="target_time" required class="form-control" value="08:00">
+                                    <label for="supp-time">Giờ chấm công (tùy chọn)</label>
+                                    <input type="time" id="supp-time" name="target_time" class="form-control">
                                 </div>
                                 <div class="form-group">
                                     <label for="supp-style">Style Watermark</label>
@@ -1767,8 +1767,9 @@
     <script src="/static/vendor/flatpickr/vn.js"></script>
     <script src="/static/vendor/flatpickr/plugins/monthSelect.js"></script>
     <script src="/static/js/attendance-date.js"></script>
-    <script src="/static/js/app.js?v=20260930_5"></script>
-    <script src="/static/js/supplement-batches.js?v=20260918_6"></script>
+    <script src="/static/js/confirm-action.js"></script>
+    <script src="/static/js/app.js?v=20261004_personal_tool"></script>
+    <script src="/static/js/supplement-batches.js?v=20261004_personal_tool"></script>
 </body>
 
 </html>

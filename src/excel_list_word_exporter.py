@@ -15,6 +15,7 @@ from datetime import date, datetime, time, timedelta
 from typing import List, Optional
 
 import xlrd
+from src.excel_splitter import attendance_column_map, convert_xls_cell
 from openpyxl import load_workbook
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -77,9 +78,14 @@ def _format_display_value(value) -> str:
     return str(value).strip()
 
 
-def _format_xlrd_cell(cell, datemode: int) -> str:
+def _format_xlrd_cell(cell, datemode: int, workbook=None) -> str:
     if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
         return ''
+
+    if cell.ctype == xlrd.XL_CELL_DATE and workbook is not None:
+        value = convert_xls_cell(workbook, cell)
+        if isinstance(value, timedelta):
+            return _format_timedelta_value(value)
 
     if cell.ctype == xlrd.XL_CELL_DATE:
         year, month, day, hour, minute, second = xlrd.xldate_as_tuple(
@@ -111,11 +117,11 @@ def _read_rows(path: str) -> List[List[str]]:
         for row in worksheet.iter_rows():
             rows.append([_format_display_value(cell.value) for cell in row])
     else:
-        workbook = xlrd.open_workbook(path)
+        workbook = xlrd.open_workbook(path, formatting_info=True)
         worksheet = workbook.sheet_by_index(0)
         for row_index in range(worksheet.nrows):
             rows.append([
-                _format_xlrd_cell(worksheet.cell(row_index, col_index), workbook.datemode)
+                _format_xlrd_cell(worksheet.cell(row_index, col_index), workbook.datemode, workbook)
                 for col_index in range(worksheet.ncols)
             ])
 
@@ -128,11 +134,13 @@ class ExcelListWordExporter:
         os.makedirs(output_dir, exist_ok=True)
 
     def _find_header_row(self, rows: List[List[str]]) -> Optional[int]:
-        for row_index, row in enumerate(rows[:50]):
-            line = " ".join(_normalize(value) for value in row if value != '')
-            if "ma nhan vien" in line and "ten nhan vien" in line and "ngay" in line:
-                return row_index
-        return None
+        best_row, best_score = None, 1
+        for row_index, row in enumerate(rows[:40]):
+            columns = attendance_column_map(row)
+            score = sum(key in columns for key in ('id', 'name', 'date'))
+            if score > best_score:
+                best_row, best_score = row_index, score
+        return best_row
 
     def _find_title(self, rows: List[List[str]]) -> str:
         for row in rows[:10]:

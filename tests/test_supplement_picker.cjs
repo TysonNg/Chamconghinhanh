@@ -8,8 +8,8 @@ function harness(count) {
   const nodes = {
     'btn-pick-random-portrait': {}, 'supp-random-count': {value: count},
     'batch-message': {}, 'batch-create': {},
-    'btn-submit-fake-photos': {}, 'supp-project-select': {value: 'Site'},
-    'supp-employee-val': {value: 'Employee'},
+    'btn-submit-fake-photos': {}, 'supp-project-select': {value: 'p1'},
+    'supp-employee-val': {value: 'e1'},
   };
   const calls = [];
   const context = vm.createContext({
@@ -22,7 +22,7 @@ function harness(count) {
   });
   let source = fs.readFileSync(path.join(__dirname, '../static/js/supplement-batches.js'), 'utf8');
   source = source.slice(0, source.indexOf('  // --- INITIALIZE ---')) + `
-    currentSelectedEmployee = {name: 'Employee', images: ['one.jpg']};
+    currentSelectedEmployee = {employee_id: 'e1', name: 'Employee', images: ['one.jpg']};
     selectedPhotos = [{file: new File(['x'], 'one.jpg'), target_date:'2026-09-16'}];
     setupRandomPortraitPicker(); setupFormSubmit();
   })();`;
@@ -46,4 +46,13 @@ test('saving selected photos ignores random count and sends requested date only'
   assert.deepEqual(JSON.parse(calls[0].options.body.get('configs')), [{target_date:'2026-09-16'}]);
   assert.equal(calls[0].options.body.has('replace_timestamp'), false);
   assert.equal(calls[0].options.body.has('modify_exif'), false);
+});
+
+test('saving uses stable IDs and never sends a shift', async () => { const {nodes,calls}=harness('1'); await nodes['batch-create'].onsubmit({preventDefault(){}}); const form=calls[0].options.body; assert.equal(form.get('project_id'),'p1'); assert.equal(form.get('employee_id'),'e1'); assert.equal(form.has('shift'),false); });
+
+test('manual file selection and rendering preserve missing time',()=>{
+ const nodes={}; const ctx=vm.createContext({document:{getElementById:id=>nodes[id]||null},URL,Blob,console,window:{}});
+ let source=fs.readFileSync(path.join(__dirname,'../static/js/supplement-batches.js'),'utf8');
+ source=source.slice(0,source.indexOf('  // --- INITIALIZE ---'))+`\n handleFilesSelected([new Blob(['x'])]); window.photos=selectedPhotos; })();`;
+ vm.runInContext(source,ctx);assert.equal(ctx.window.photos.length,1);assert.equal(ctx.window.photos[0].target_time,undefined);
 });

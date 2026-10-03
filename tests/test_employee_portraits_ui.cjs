@@ -131,7 +131,7 @@ test('deleteEmployeePhoto handles URL-encoded filenames and cleans path', async 
     activeEmpModalName: 'NV003',
     currentProjectName: 'CongTyC',
     allProjectsList: [{ name: 'CongTyC', project_id: 'p3' }],
-    confirm: (msg) => {
+    confirmAction: (msg) => {
       assert.match(msg, /my photo\.jpg/);
       return true;
     },

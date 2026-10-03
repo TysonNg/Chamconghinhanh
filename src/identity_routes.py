@@ -81,11 +81,12 @@ def register_identity_routes(app, registry_provider, input_root):
     def projects():
         r=discover_projects()
         items=[]
+        from src.supplement_evidence import evidence_is_visible
         today_str = date.today().isoformat()
         for p in r.list_projects():
             r.import_legacy(p["project_id"])
             camera=Path(input_root())/p["storage_dir"]
-            photos=[x for x in camera.rglob("*") if x.is_file() and x.suffix.lower() in _EXT] if camera.exists() else []
+            photos=[x for x in camera.rglob("*") if x.is_file() and x.suffix.lower() in _EXT and evidence_is_visible(x)] if camera.exists() else []
             active_emps = [
                 e for e in r.list_employees(p["project_id"])
                 if e["active"] and (
@@ -127,12 +128,13 @@ def register_identity_routes(app, registry_provider, input_root):
         r.generate_internal_codes()
         items=[]
         search=request.args.get("search","").casefold()
+        include_history=request.args.get("include_history","").lower() in ("true","1")
         today_str = date.today().isoformat()
         for e in r.list_employees(p["project_id"]):
-            if not e["active"]:
+            if not e["active"] and not include_history:
                 continue
             # Bỏ qua nhân viên đã chuyển khỏi dự án này (membership đã kết thúc và không còn trong legacy_sources)
-            if e["memberships"] and not e["source_paths"]:
+            if not include_history and e["memberships"] and not e["source_paths"]:
                 latest = e["memberships"][0]
                 if latest.get("valid_to") and latest["valid_to"] <= today_str:
                     continue

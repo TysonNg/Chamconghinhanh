@@ -236,7 +236,8 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.jinja_env.auto_reload = True
 
 from src.supplement_batches import register_batches
-register_batches(app, SUPPLEMENT_DIR)
+register_batches(app, SUPPLEMENT_DIR, registry_provider=lambda: get_identity_registry(),
+                 matcher_provider=lambda: get_face_matcher())
 
 from src.task_manager import TaskManager
 task_manager = TaskManager(BASE_DIR)
@@ -310,11 +311,12 @@ def send_log(message, log_type='default'):
 
 def get_image_files(folder_path):
     """Lấy danh sách file ảnh trong thư mục"""
+    from src.supplement_evidence import evidence_is_visible
     image_files = []
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             ext = os.path.splitext(file)[1].lower()
-            if ext in SUPPORTED_IMAGE_EXTENSIONS:
+            if ext in SUPPORTED_IMAGE_EXTENSIONS and evidence_is_visible(Path(root) / file):
                 image_files.append(os.path.join(root, file))
     return image_files
 
@@ -659,6 +661,7 @@ def pdf_extract():
     
     # Bắt đầu task trong background
     task_id = pdf_extractor.start_extraction_task(filepath, output_dir)
+    output_dir = pdf_extractor.get_task(task_id).output_dir
     
     return jsonify({
         'success': True,
@@ -1080,6 +1083,8 @@ def excel_extract():
 
                 splitter = ExcelAttendanceSplitter(filepath)
                 person_files, summaries = splitter.split(person_dir)
+                if not summaries:
+                    raise ValueError('Không tìm thấy dữ liệu nhân viên để tách.')
                 task.total = len(summaries)
                 send_log(f"✅ Tìm thấy {len(summaries)} nhân viên trong file", "success")
 
@@ -1101,6 +1106,8 @@ def excel_extract():
                         })
                     task.progress = i
 
+                if task.errors:
+                    raise ValueError(f'Xuất Word thất bại cho {len(task.errors)}/{task.total} nhân viên.')
                 task.status = 'completed'
                 send_log(
                     f"🎉 Hoàn tất! Đã tạo {len(task.files)} file Word in trong excel_extracted\\{base_name}",

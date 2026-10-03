@@ -408,10 +408,13 @@ class IdentityRegistry:
 
                 for r in legacy_rows:
                     self._bind(c, source_id, employee_id, r["relative_path"], reviewer)
-                c.execute("DELETE FROM legacy_sources WHERE project_id=? AND employee_id=?",
-                          (source_id, employee_id))
 
             self._assign(c,target_id,employee_id,payroll_code,effective,None)
+            # Confirmed legacy employees also retain legacy_sources. Remove that
+            # pending-source link so ended memberships hide them from active lists;
+            # portrait bindings and the original files preserve historical access.
+            c.execute("DELETE FROM legacy_sources WHERE project_id=? AND employee_id=?",
+                      (source_id, employee_id))
             # Source remains untouched. Unique target directory avoids name collisions.
             if portraits:
                 target.mkdir(parents=True,exist_ok=True)

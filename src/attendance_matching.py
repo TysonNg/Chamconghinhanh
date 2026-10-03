@@ -1,5 +1,6 @@
 """Join identity, full date and face evidence without inferring missing data."""
 from pathlib import Path
+from src.supplement_evidence import evidence_is_visible
 from src.attendance_dates import parse_attendance_date, resolve_day_folder, image_date_status
 
 def match_attendance_record(record, person, *, project_id, registry, matcher,
@@ -35,7 +36,7 @@ def match_attendance_record(record, person, *, project_id, registry, matcher,
         return
     images=sorted(p for p in folder.path.rglob("*")
                   if p.is_file() and not p.is_symlink() and p.resolve().is_relative_to(folder.path.resolve())
-                  and p.suffix.lower() in {".jpg",".jpeg",".png",".bmp",".webp"})
+                  and p.suffix.lower() in {".jpg",".jpeg",".png",".bmp",".webp"} and evidence_is_visible(p))
     if not images:
         record.update(date_status="missing",review_reason="Thư mục ngày không có ảnh")
         return

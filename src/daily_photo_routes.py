@@ -66,10 +66,11 @@ def register_daily_photo_routes(app, input_root, project_resolver=None):
         return project, folder
 
     def images(folder):
+        from src.supplement_evidence import evidence_is_visible
         if not folder.is_dir():
             return []
         return sorted(p for p in folder.iterdir()
-                      if p.is_file() and not p.is_symlink() and p.suffix.lower() in _EXTENSIONS)
+                      if p.is_file() and not p.is_symlink() and p.suffix.lower() in _EXTENSIONS and evidence_is_visible(p))
 
     @bp.get("/api/photos/daily")
     def stats():

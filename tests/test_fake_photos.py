@@ -1,14 +1,11 @@
+from supplement_test_support import environment
 import io
 import json
 from pathlib import Path
 from PIL import Image
-from flask import Flask
-from src.supplement_batches import register_batches
 
 def test_fake_photos_flow(tmp_path):
-    app = Flask(__name__)
-    register_batches(app, tmp_path / 'data')
-    c = app.test_client()
+    service, c, ids = environment(tmp_path, 'TestProject', 'NguyenVanA')
 
     # Create dummy images with matching EXIF dates
     exif1 = Image.Exif()
@@ -28,8 +25,7 @@ def test_fake_photos_flow(tmp_path):
 
     # Test POST fake-photos
     resp = c.post('/api/supplement/fake-photos', data={
-        'project': 'TestProject',
-        'employee': 'NguyenVanA',
+        **ids,
         'configs': json.dumps(configs),
         'photos': [
             (io.BytesIO(img1.getvalue()), 'p1.jpg'),
@@ -64,10 +60,18 @@ def test_fake_photos_flow(tmp_path):
     apply_data = resp_apply.get_json()
     assert apply_data['count'] == 1
 
-    # Verify p0 was deleted from staging
+    # Applied records and their immutable sources remain available for audit
     resp_stg2 = c.get('/api/supplement/staging?project=TestProject')
     assert len(resp_stg2.get_json()['items']) == 1
+    with service._connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM staging_photos").fetchone()[0] == 2
+        assert connection.execute("SELECT applied_path FROM staging_photos WHERE id=?", (p0_id,)).fetchone()[0]
+    assert c.post('/api/supplement/delete-staging', json={'ids': [p0_id]}).status_code == 409
+    assert c.post('/api/supplement/apply-to-attendance', json={'ids': []}).status_code == 400
+    assert c.post('/api/supplement/delete-staging', json={'ids': []}).status_code == 400
 
     # Verify input_images file exists
     dest_path = Path(apply_data['applied'][0]['dest_path'])
     assert dest_path.exists()
+    selected = next(i for i in items if i["id"] == p0_id)
+    assert dest_path.read_bytes() == (service.raw_dir / selected["original_file_name"]).read_bytes()

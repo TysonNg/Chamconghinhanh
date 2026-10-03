@@ -4,6 +4,7 @@ Module nhận diện khuôn mặt - so sánh ảnh camera với ảnh chân dung
 """
 
 import os
+import hashlib
 from dataclasses import dataclass
 from datetime import date
 import re
@@ -381,6 +382,7 @@ class FaceMatcher:
         self.portrait_cache = {}  # {person_name: [portrait_paths]}
         self.project_portrait_cache = {}  # {project_name: {person_name: [portrait_paths]}}
         self._embedding_cache = {}  # {path: (mtime, embedding)}
+        self._photo_embedding_cache = {}
         self.log_callback = log_callback
         self._scan_portraits()
 
@@ -455,6 +457,88 @@ class FaceMatcher:
         if not project_name:
             return []
         return list(self.project_portrait_cache.get(project_name, {}).get(person_name, []))
+
+    def _get_detected_embeddings(self, image_path: str) -> List[np.ndarray]:
+        """Cache all detected faces by exact image bytes and detection settings.
+
+        Exceptions remain errors; only an empty representation means no face.
+        A fresh ASCII snapshot also avoids the legacy mtime-based copy cache.
+        """
+        if self.detector_backend.lower() == "skip":
+            raise ValueError("Face detection cannot be skipped")
+        with open(image_path, "rb") as image_file:
+            content = image_file.read()
+        key = (hashlib.sha256(content).hexdigest(), self.model_name,
+               self.detector_backend, True)
+        if key in self._photo_embedding_cache:
+            return self._photo_embedding_cache[key]
+        deepface = get_deepface()
+        if deepface is None:
+            raise RuntimeError("DeepFace is unavailable")
+        with tempfile.TemporaryDirectory(prefix="face_photo_") as folder:
+            snapshot = os.path.join(folder, "image" + os.path.splitext(image_path)[1])
+            with open(snapshot, "wb") as image_file:
+                image_file.write(content)
+            representations = deepface.represent(
+                img_path=snapshot, model_name=self.model_name,
+                detector_backend=self.detector_backend, enforce_detection=True)
+        if not isinstance(representations, list):
+            raise ValueError("Invalid face detection response")
+        embeddings = []
+        for representation in representations:
+            vector = np.asarray(representation["embedding"], dtype=np.float32)
+            if (vector.ndim != 1 or not vector.size or
+                    not np.all(np.isfinite(vector)) or np.linalg.norm(vector) == 0):
+                raise ValueError("Invalid detected face embedding")
+            embeddings.append(vector)
+        self._photo_embedding_cache[key] = embeddings
+        return embeddings
+
+    def match_employee_in_photo(
+        self, *, project_id: str, employee_id: str, attendance_date: date,
+        image_path: str, distance_threshold: Optional[float] = None
+    ) -> MatchResult:
+        """Compare every detected camera face with confirmed single-face portraits."""
+        threshold = (self._get_default_threshold() if distance_threshold is None
+                     else distance_threshold)
+        if not np.isfinite(threshold) or threshold <= 0:
+            raise ValueError("Invalid matching threshold: must be finite and positive")
+
+        def result(status, distance=None, reason=""):
+            return MatchResult(status, str(image_path) if status == "matched" else None,
+                               distance, project_id, employee_id, reason)
+
+        try:
+            registry = self.identity_registry
+            if not registry or not registry.is_member(project_id, employee_id, attendance_date):
+                return result("identity_unresolved", reason="Employee membership is not confirmed for this project/date")
+            portraits = registry.portrait_paths(project_id, employee_id, attendance_date)
+            if not portraits:
+                return result("no_portrait", reason="No confirmed employee portraits")
+            references = []
+            for path in portraits:
+                faces = self._get_detected_embeddings(str(path))
+                if len(faces) == 1:
+                    references.append(faces[0])
+            if not references:
+                return result("no_portrait", reason="No confirmed portrait has exactly one detected face")
+            faces = self._get_detected_embeddings(str(image_path))
+            if not faces:
+                return result("no_face", reason="No face detected in camera image")
+            distances = [self._cosine_distance(face, reference)
+                         if self.distance_metric == "cosine"
+                         else float(np.linalg.norm(face - reference))
+                         for face in faces for reference in references]
+            if not all(np.isfinite(value) for value in distances):
+                raise ValueError("Invalid face comparison distance")
+            best_distance = min(distances)
+            if best_distance <= threshold:
+                return result("matched", best_distance,
+                              "Detected face matches confirmed portrait within threshold")
+            return result("no_match", best_distance,
+                          "No detected face matches confirmed portraits within threshold")
+        except Exception as exc:
+            return result("error", reason=f"Face matching failed: {exc}")
 
     def match_employee_in_images(
         self, *, project_id: str, employee_id: str, attendance_date: date,

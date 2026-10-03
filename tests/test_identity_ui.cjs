@@ -60,7 +60,7 @@ test('employee transfer uses today, existing payroll code, and system reviewer w
 test('legacy folder mapping asks only for folder, date, and safety confirmation',async()=>{
   const calls=[];const prompts=['01','2026-09-01'];
   const context=vm.createContext({
-    currentProjectName:'A',prompt:()=>prompts.shift(),confirm:()=>true,
+    currentProjectName:'A',prompt:()=>prompts.shift(),confirmAction:()=>true,
     apiPost:async(url,payload)=>{calls.push({url,payload});return {success:true};},
     showToast(){},loadDailyPhotosStats(){}
   });

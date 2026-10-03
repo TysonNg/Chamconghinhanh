@@ -1,83 +1,36 @@
-import io
-import json
-import sys
-from pathlib import Path
-sys.stdout.reconfigure(encoding='utf-8')
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
+import hashlib
+from unittest.mock import patch
 from PIL import Image
-from src.fake_photo_service import FakePhotoService
+from supplement_test_support import environment, image_bytes
 
-def test_fake_photo_generation():
-    # Use real staging image or generate dummy image
-    staging_files = list(Path('supplement_data/supplement_staging').glob('*.jpg'))
-    if staging_files:
-        raw_bytes = staging_files[0].read_bytes()
-    else:
-        img = Image.new('RGB', (400, 300), color=(200, 200, 200))
-        buf = io.BytesIO()
-        img.save(buf, format='JPEG')
-        raw_bytes = buf.getvalue()
 
-    service = FakePhotoService('supplement_data')
-    
-    # Test random time generation
-    morning_time = service.generate_random_time("morning")
-    afternoon_time = service.generate_random_time("afternoon")
-    print(f"Generated morning time: {morning_time}")
-    print(f"Generated afternoon time: {afternoon_time}")
-    
-    assert 5 <= int(morning_time.split(':')[0]) <= 6
-    assert 17 <= int(afternoon_time.split(':')[0]) <= 18
-
-    target_date = "2026-09-28"
-    from unittest.mock import patch
-    confirmed_analysis = {
-        "status": "confirmed",
-        "suggested_lines": ["28 Th9, 2026 06:15:00", "Đường Trần Trọng Cung", "Quận 7"],
-        "confirmed_lines": ["28 Th9, 2026 06:15:00", "Đường Trần Trọng Cung", "Quận 7"],
-        "new_timestamp": f"28 Th9, 2026 {morning_time}",
-        "block_box_2d": [750, 400, 990, 990],
-        "provider_results": {"gemini": {"confidence": 0.95}},
-    }
-    with patch.object(service.ai_service, "analyze_watermark_block", return_value=confirmed_analysis), \
-         patch.object(service.ai_service, "generate_verified_watermark_crop", return_value={
-             "status": "completed", "image_bytes": raw_bytes, "provider": "gemini",
-             "model": "gemini-3.1-flash-image", "attempts": 1, "crop_box": [10, 10, 50, 50],
-         }):
-        item = service.create_fake_photo(
-            raw_bytes=raw_bytes,
-            project="Chung cư Tân Thuận Đông",
-            employee="Dang Van Tau",
-            target_date=target_date,
-            target_time=morning_time,
-            original_name="test_tau.jpg",
-            replace_timestamp=True,
-            modify_exif=True
-        )
-
-    print("Created Item:", json.dumps(item, ensure_ascii=False, indent=2))
-    assert item['target_date'] == target_date
-    assert item['target_time'] == morning_time
-    assert item['inspection']['status'] == 'ok'
-    assert item['inspection']['date_mismatch'] is False
-
-    # Check generated file
-    file_path = service.get_staging_image_path(item['id'])
-    assert file_path is not None
-    assert file_path.exists()
-    
-    # Verify EXIF
-    with Image.open(file_path) as img:
-        exif = img.getexif()
-        captured = exif.get(306)
-        print("Updated EXIF in file:", captured)
-        assert captured.startswith("2026:09:28")
-
-    # Clean up test artifact from staging
-    service.delete_staging_photos([item['id']])
-
-    print("\nALL ASSERTIONS PASSED SUCCESSFULLY!")
-
-if __name__ == '__main__':
-    test_fake_photo_generation()
+def test_fake_photo_generation(tmp_path):
+    service, client, ids = environment(tmp_path)
+    raw = image_bytes('2026:09:27 06:15:00')
+    target_time = '06:15:00'
+    analysis = {'status': 'confirmed',
+                'confirmed_lines': ['27 Th9, 2026 06:15:00', 'Test address'],
+                'new_timestamp': '28 Th9, 2026 06:15:00'}
+    with patch.object(service.ai_service, 'is_configured', return_value=True), \
+         patch.object(service.ai_service, 'analyze_watermark_block', return_value=analysis), \
+         patch.object(service.ai_service, 'generate_verified_watermark_crop', return_value={
+             'status': 'completed', 'image_bytes': raw, 'provider': 'test',
+             'model': 'test', 'attempts': 1}) as generate:
+        item = service.create_supplement_photo(raw, 'Site', 'Employee', '2026-09-28',
+                    'employee.jpg', target_time=target_time, **ids)
+    generate.assert_called_once()
+    assert generate.call_args.args[0] == raw
+    assert generate.call_args.args[1]['confirmed_lines'] == ['28 Th9, 2026 06:15:00', 'Test address']
+    assert item['target_time'] == target_time
+    assert item['processing'] == {'watermark': 'completed', 'exif': 'completed'}
+    assert item['inspection']['exif_datetime'] == '2026-09-27 06:15:00'
+    assert item['inspection']['date_mismatch'] is True
+    assert item['date_status'] == 'mismatch' and item['can_apply'] is False
+    assert item['source_sha256'] == hashlib.sha256(raw).hexdigest()
+    assert (service.raw_dir / item['original_file_name']).read_bytes() == raw
+    path = service.get_staging_image_path(item['id'])
+    with Image.open(path) as image:
+        assert image.getexif().get_ifd(34665)[36867] == '2026:09:28 06:15:00'
+    assert service.apply_to_attendance([item['id']])['success'] is False
+    assert service.delete_staging_photos([item['id']]) == 1
+    assert service.get_staging_image_path(item['id']) is None

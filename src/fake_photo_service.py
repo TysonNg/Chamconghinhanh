@@ -22,12 +22,15 @@ import piexif
 from src.watermark_engine import ExifEditor
 from src.smart_watermark_replacer import SmartWatermarkReplacer
 from src.ai_timestamp_service import AITimestampService
+from src.supplement_evidence import SupplementEvidenceMixin, parse_target_time, capture_datetime
 
 logger = logging.getLogger(__name__)
 
 
-class FakePhotoService:
-    def __init__(self, data_dir: str):
+class FakePhotoService(SupplementEvidenceMixin):
+    def __init__(self, data_dir: str, registry_provider=None, matcher_provider=None):
+        self.registry_provider = registry_provider
+        self.matcher_provider = matcher_provider
         self.data_dir = Path(data_dir)
         self.staging_dir = self.data_dir / 'supplement_staging'
         self.raw_dir = self.data_dir / 'supplement_staging_raw'
@@ -51,7 +54,9 @@ class FakePhotoService:
         self.smart_replacer = SmartWatermarkReplacer(ai_service=self.ai_service)
         self.exif_editor = ExifEditor()
         
+        self._backup_evidence()
         self._init_db()
+        self._init_evidence()
 
     def _connect(self):
         c = sqlite3.connect(self.db_path, timeout=30)
@@ -110,65 +115,33 @@ class FakePhotoService:
             new_timestamp = f"{dt.day:02d} Th{dt.month}, {dt.year} {target_time}"
         return [new_timestamp, *source[1:]]
 
-    @staticmethod
-    def generate_random_time(shift: str = "morning") -> str:
-        """
-        Ca Sáng: 05:45 - 06:15
-        Ca Chiều: 17:45 - 18:15
-        """
-        import random
-        if shift in ("afternoon", "chieu"):
-            if random.random() < 0.5:
-                h = 17
-                m = random.randint(45, 59)
-            else:
-                h = 18
-                m = random.randint(0, 15)
-        else:
-            if random.random() < 0.5:
-                h = 5
-                m = random.randint(45, 59)
-            else:
-                h = 6
-                m = random.randint(0, 15)
-        s = random.randint(0, 59)
-        return f"{h:02d}:{m:02d}:{s:02d}"
-
-    def create_supplement_photo(self, raw_bytes, project, employee, target_date, original_name, target_time=""):
-        """Tạo ảnh bổ sung chấm công: AI sửa watermark ngày giờ & EXIF theo đúng ngày đề nghị."""
-        datetime.strptime(target_date, '%Y-%m-%d')
-        if not target_time:
-            target_time = self.generate_random_time("morning")
-        item = self.create_fake_photo(
-            raw_bytes=raw_bytes,
-            project=project,
-            employee=employee,
-            target_date=target_date,
-            target_time=target_time,
-            original_name=original_name,
-            replace_timestamp=True,
-            modify_exif=True
-        )
+    def create_supplement_photo(self, raw_bytes, project, employee, target_date, original_name,
+                                target_time=None, *, project_id="", employee_id="",
+                                replace_timestamp=True, modify_exif=True):
+        """Keep observed evidence separate from requested changes to a derived image."""
+        target_time = parse_target_time(target_time)
+        if project_id or employee_id:
+            p, e = self._identity(project_id, employee_id, datetime.strptime(target_date, '%Y-%m-%d').date())
+            project, employee = p['storage_dir'], e['display_name']
+        item = self.create_fake_photo(raw_bytes, project, employee, target_date, target_time, original_name,
+                    replace_timestamp=bool(target_time and replace_timestamp),
+                    modify_exif=bool(target_time and modify_exif), project_id=project_id, employee_id=employee_id)
+        inspection = dict(item['inspection'])
         try:
-            insp = self.ai_service.inspect_photo(raw_bytes)
-            if insp and isinstance(insp, dict):
-                orig_exif_dt = None
-                try:
-                    with Image.open(io.BytesIO(raw_bytes)) as img:
-                        exif_data = img.getexif()
-                        orig_exif_dt = exif_data.get(306) or exif_data.get(36867)
-                except Exception:
-                    pass
-                insp['exif_datetime'] = orig_exif_dt or f"{target_date} {target_time}"
-                insp['date_mismatch'] = bool(orig_exif_dt and not orig_exif_dt.replace(':', '-').startswith(target_date))
-                insp['duplicate_ids'] = item['inspection'].get('duplicate_ids', [])
-                insp['original_visible_date'] = insp.get('visible_date')
-                item['inspection'] = insp
-                with self._connect() as c:
-                    c.execute('UPDATE staging_photos SET inspection_json=? WHERE id=?', (json.dumps(insp, ensure_ascii=False), item['id']))
-        except Exception:
-            pass
-        return item
+            observed = self.ai_service.inspect_photo(raw_bytes)
+            if isinstance(observed, dict):
+                inspection.update(observed)
+                inspection['original_visible_date'] = observed.get('visible_date')
+                inspection['visible_date'] = observed.get('visible_date')
+                inspection['visible_time'] = observed.get('visible_time')
+        except Exception as exc:
+            inspection.update(status='failed', message='Không đọc được ngày trên ảnh: ' + type(exc).__name__)
+        inspection['exif_datetime'] = capture_datetime(raw_bytes)
+        inspection['date_mismatch'] = bool(inspection['exif_datetime'] and not inspection['exif_datetime'].startswith(target_date))
+        with self._connect() as c:
+            c.execute('UPDATE staging_photos SET inspection_json=? WHERE id=?',
+                      (json.dumps(inspection, ensure_ascii=False), item['id']))
+        return self.inspect_record(item['id'], check_face=True)
 
     def create_fake_photo(
         self,
@@ -184,11 +157,17 @@ class FakePhotoService:
         # Legacy params (ignored, kept for API compat)
         remove_old_watermark: bool = True,
         add_watermark: bool = True,
+        project_id: str = "",
+        employee_id: str = "",
     ) -> Dict:
         """
         Xử lý 1 ảnh: Phát hiện text timestamp cũ → Xóa chỉ text → Vẽ text mới → Sửa EXIF.
         Giữ nguyên 100% ảnh gốc (mặt, nền), chỉ thay đổi text ngày/giờ.
         """
+        target_time = parse_target_time(target_time)
+        datetime.strptime(target_date, '%Y-%m-%d')
+        replace_timestamp = bool(replace_timestamp and target_time)
+        modify_exif = bool(modify_exif and target_time)
         photo_id = uuid.uuid4().hex[:12]
         temp_in = self.temp_dir / f"{photo_id}_raw.jpg"
         temp_replaced = self.temp_dir / f"{photo_id}_replaced.jpg"
@@ -212,6 +191,7 @@ class FakePhotoService:
             watermark_ocr = {}
             confirmed_watermark = {}
             generation_meta = {}
+            exif_status = 'not_requested'
 
             # 2. OCR toàn bộ watermark (Cloud AI hoặc EasyOCR nội bộ) và xử lý watermark.
             if replace_timestamp:
@@ -277,43 +257,28 @@ class FakePhotoService:
 
                     exif_raw = piexif.dump(exif_dict)
                     piexif.insert(exif_raw, current_path)
+                    exif_status = 'completed'
                 except Exception as e:
                     logger.warning(f"Lỗi chèn piexif: {e}, fallback regex...")
-                    self.exif_editor.modify_exif_date(current_path, current_path, target_date, target_time)
+                    fallback_exif = self.exif_editor.modify_exif_date(current_path, current_path, target_date, target_time)
+                    exif_status = 'completed' if fallback_exif else 'failed'
 
 
             # Copy kết quả cuối cùng vào Staging
-            if watermark_status == 'completed' or not replace_timestamp:
+            if watermark_status == 'completed' or (not replace_timestamp and exif_status == 'completed'):
                 shutil.copy2(current_path, str(final_file))
             else:
                 final_file.write_bytes(raw_bytes)
 
-            # Kiểm tra ảnh trùng nội dung (duplicate) trong staging
+            source_sha256 = hashlib.sha256(raw_bytes).hexdigest()
             with self._connect() as c:
-                dup_rows = c.execute('SELECT id, original_file_name FROM staging_photos').fetchall()
-            duplicate_ids = []
-            for r_id, r_orig in dup_rows:
-                p = self.raw_dir / (r_orig or f"{r_id}_raw.jpg")
-                if p.exists() and p.read_bytes() == raw_bytes:
-                    duplicate_ids.append(r_id)
-
-            orig_exif_dt = None
-            try:
-                with Image.open(io.BytesIO(raw_bytes)) as img:
-                    exif_data = img.getexif()
-                    orig_exif_dt = exif_data.get(306) or exif_data.get(36867)
-            except Exception:
-                pass
-
-            # Tạo thông tin inspection báo cáo
+                duplicate_ids = [row[0] for row in c.execute('SELECT id FROM staging_photos WHERE source_sha256=?', (source_sha256,))]
+            orig_exif_dt = capture_datetime(raw_bytes)
             inspection = {
-                'status': 'ok',
-                'visible_date': target_date,
-                'visible_time': target_time,
-                'exif_datetime': orig_exif_dt or f"{target_date} {target_time}",
-                'date_mismatch': bool(orig_exif_dt and not orig_exif_dt.replace(':', '-').startswith(target_date)),
-                'message': f"AI đã sửa watermark ngày giờ & EXIF thành công: {target_date} {target_time}",
-                'duplicate_ids': duplicate_ids
+                'status': 'not_run', 'visible_date': None, 'visible_time': None,
+                'original_visible_date': None, 'exif_datetime': orig_exif_dt,
+                'date_mismatch': bool(orig_exif_dt and not orig_exif_dt.startswith(target_date)),
+                'message': 'Đã lưu ảnh gốc; kết quả xử lý được báo riêng', 'duplicate_ids': duplicate_ids
             }
 
             # Lưu vào Database
@@ -332,6 +297,9 @@ class FakePhotoService:
                 'watermark_ocr': watermark_ocr,
                 'confirmed_watermark': confirmed_watermark,
                 'generation_meta': generation_meta,
+                'project_id': project_id, 'employee_id': employee_id,
+                'source_sha256': source_sha256, 'derived_sha256': hashlib.sha256(final_file.read_bytes()).hexdigest(),
+                'exif_status': exif_status,
             }
 
             with self._connect() as c:
@@ -340,8 +308,8 @@ class FakePhotoService:
                         id, project, employee, target_date, target_time, original_name,
                         file_name, created_at, inspection_json, original_file_name,
                         watermark_status, watermark_ocr_json, confirmed_watermark_json,
-                        generation_meta_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        generation_meta_json, project_id, employee_id, source_sha256, derived_sha256, exif_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     record['id'], record['project'], record['employee'],
                     record['target_date'], record['target_time'],
@@ -353,10 +321,12 @@ class FakePhotoService:
                     json.dumps(watermark_ocr, ensure_ascii=False),
                     json.dumps(confirmed_watermark, ensure_ascii=False),
                     json.dumps(generation_meta, ensure_ascii=False),
+                    project_id, employee_id, source_sha256, record['derived_sha256'], exif_status,
                 ))
+                self._audit(c, photo_id, 'created', {'source_sha256': source_sha256, 'project_id':project_id, 'employee_id':employee_id})
 
             record['url'] = f"/api/supplement/staging/{photo_id}/image"
-            return record
+            return self._public_record(record)
 
         finally:
             # Dọn dẹp file tạm
@@ -366,42 +336,6 @@ class FakePhotoService:
                         p.unlink(missing_ok=True)
                 except Exception:
                     pass
-
-    def get_staging_photos(self, project: Optional[str] = None, employee: Optional[str] = None) -> List[Dict]:
-        """Lấy danh sách ảnh đang chờ trong Staging"""
-        query = "SELECT * FROM staging_photos WHERE applied_at=''" 
-        params = []
-        if project:
-            query += ' AND project = ?'
-            params.append(project)
-        if employee:
-            query += ' AND employee = ?'
-            params.append(employee)
-        query += ' ORDER BY created_at DESC'
-
-        with self._connect() as c:
-            rows = c.execute(query, params).fetchall()
-
-        items = []
-        for r in rows:
-            item = dict(r)
-            item['inspection'] = json.loads(item.pop('inspection_json', '{}'))
-            item['watermark_ocr'] = json.loads(item.pop('watermark_ocr_json', '{}') or '{}')
-            item['confirmed_watermark'] = json.loads(item.pop('confirmed_watermark_json', '{}') or '{}')
-            item['generation_meta'] = json.loads(item.pop('generation_meta_json', '{}') or '{}')
-            file_path = self.staging_dir / item['file_name']
-            if file_path.exists():
-                item['url'] = f"/api/supplement/staging/{item['id']}/image"
-                item['size_kb'] = round(file_path.stat().st_size / 1024, 1)
-                items.append(item)
-            else:
-                # File đã bị xóa trên ổ đĩa, dọn khỏi DB
-                c = self._connect()
-                c.execute('DELETE FROM staging_photos WHERE id=?', (item['id'],))
-                c.commit()
-                c.close()
-
-        return items
 
     def get_staging_image_path(self, photo_id: str) -> Optional[Path]:
         """Lấy đường dẫn file ảnh trong staging"""
@@ -464,6 +398,10 @@ class FakePhotoService:
             return {'status': 'original_missing', 'photo_id': photo_id}
 
         raw_bytes = raw_file.read_bytes()
+        if not target_time:
+            return {'status':'invalid_request', 'error':'Nhập giờ trước khi sửa watermark/EXIF'}
+        if not record.get('source_sha256') or hashlib.sha256(raw_bytes).hexdigest() != record['source_sha256']:
+            return {'status':'integrity_failed', 'error':'Ảnh gốc chưa được xác nhận toàn vẹn hoặc đã thay đổi'}
         temp_candidate = self.temp_dir / f"{photo_id}_candidate.jpg"
 
         try:
@@ -555,6 +493,7 @@ class FakePhotoService:
             temp_candidate.write_bytes(generated['image_bytes'])
 
             # Sửa EXIF
+            exif_status = 'not_requested'
             try:
                 date_parts = target_date.split('-')
                 exif_dt = f"{date_parts[0]}:{date_parts[1]}:{date_parts[2]} {target_time}"
@@ -568,7 +507,9 @@ class FakePhotoService:
                 exif_dict['Exif'][piexif.ExifIFD.DateTimeDigitized] = exif_bytes_val
                 exif_raw = piexif.dump(exif_dict)
                 piexif.insert(exif_raw, str(temp_candidate))
+                exif_status = 'completed'
             except Exception as e:
+                exif_status = 'failed'
                 logger.warning(f"Lỗi chèn piexif khi regenerate: {e}")
 
             # Chỉ thay kết quả hiện tại sau khi candidate đã vượt hậu kiểm.
@@ -587,6 +528,11 @@ class FakePhotoService:
                     ),
                 )
 
+            with self._connect() as c:
+                c.execute('UPDATE staging_photos SET derived_sha256=?,exif_status=? WHERE id=?',
+                          (hashlib.sha256(staging_file.read_bytes()).hexdigest(), exif_status, photo_id))
+                self._audit(c, photo_id, 'regenerated', {'watermark':'completed','exif':exif_status})
+            record['exif_status'] = exif_status
             record['created_at'] = now_iso
             record['url'] = f"/api/supplement/staging/{photo_id}/image"
             record['size_kb'] = round(staging_file.stat().st_size / 1024, 1)
@@ -597,7 +543,7 @@ class FakePhotoService:
             record['generation_meta'] = meta
             record['status'] = 'completed'
             logger.info(f"Đã regenerate thành công photo_id={photo_id}")
-            return record
+            return self._public_record(record)
 
         finally:
             try:
@@ -605,100 +551,3 @@ class FakePhotoService:
             except Exception:
                 pass
 
-    def apply_to_attendance(self, photo_ids: List[str], delete_after: bool = True) -> Dict:
-        """Apply original evidence to a full date; retain sources and audit records."""
-        from src.attendance_dates import canonical_day_path, parse_attendance_date, image_date_status
-        from src.daily_photo_routes import safe_component
-        if not isinstance(photo_ids, list) or not photo_ids or not all(isinstance(i, str) for i in photo_ids):
-            return {'success': False, 'count': 0, 'message': 'Chọn rõ ảnh cần áp dụng.', 'rejected': []}
-        photo_ids = list(dict.fromkeys(photo_ids))
-        with self._connect() as c:
-            rows = c.execute('SELECT * FROM staging_photos WHERE id IN (' + ','.join('?' for _ in photo_ids) + ')', photo_ids).fetchall()
-        prepared, rejected = [], []
-        present = {r['id'] for r in rows}
-        for missing in set(photo_ids) - present:
-            rejected.append({'id': missing, 'date_status': 'unknown', 'reason': 'Không tìm thấy hồ sơ'})
-        for row in rows:
-            item = dict(row)
-            try:
-                target = parse_attendance_date(item['target_date'])
-                project = safe_component(item['project'])
-                original = self.raw_dir / (item['original_file_name'] or f"{item['id']}_raw.jpg")
-                if not original.is_file():
-                    raise ValueError('Không còn ảnh gốc để đối chiếu')
-                date_status = image_date_status(original, target)
-                inspection = json.loads(item.get('inspection_json') or '{}')
-                visible = inspection.get('original_visible_date')
-                if visible:
-                    if parse_attendance_date(visible) != target:
-                        date_status = 'mismatch'
-                    elif date_status == 'unknown':
-                        date_status = 'consistent'
-                if date_status != 'consistent':
-                    rejected.append({'id': item['id'], 'date_status': date_status,
-                                     'reason': 'Ngày ảnh gốc lệch hồ sơ' if date_status == 'mismatch' else 'Chưa xác định được ngày ảnh gốc'})
-                    continue
-                folder = canonical_day_path(self.input_images_dir / project, target)
-                if not folder.resolve().is_relative_to(self.input_images_dir.resolve()):
-                    raise ValueError('Đường dẫn dự án không hợp lệ')
-                dest = folder / (item['id'] + original.suffix)
-                prepared.append((item, original, dest))
-            except (ValueError, OSError) as exc:
-                rejected.append({'id': item['id'], 'date_status': 'unknown', 'reason': str(exc)})
-        if rejected:
-            return {'success': False, 'count': 0, 'rejected': rejected,
-                    'message': 'Chưa áp dụng: ' + '; '.join(r['reason'] for r in rejected)}
-        applied = []
-        for item, original, dest in prepared:
-            raw = original.read_bytes()
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                with dest.open('xb') as f:
-                    f.write(raw)
-            except FileExistsError:
-                if hashlib.sha256(dest.read_bytes()).digest() != hashlib.sha256(raw).digest():
-                    return {'success': False, 'count': len(applied), 'applied': applied,
-                            'message': 'Ảnh đích đã thay đổi; cần kiểm tra trước khi áp dụng lại.'}
-            inspection = json.loads(item.get('inspection_json') or '{}')
-            metadata = {'derived': False, 'source': 'supplement_original', 'record_id': item['id'],
-                        'requested_date': item['target_date'], 'sha256': hashlib.sha256(raw).hexdigest(),
-                        'original_visible_date': inspection.get('original_visible_date')}
-            dest.with_suffix(dest.suffix + '.json').write_text(json.dumps(metadata, ensure_ascii=False), encoding='utf-8')
-            with self._connect() as c:
-                c.execute('UPDATE staging_photos SET applied_path=?, applied_at=? WHERE id=?',
-                          (str(dest), datetime.now(timezone.utc).isoformat() if delete_after else '', item['id']))
-            applied.append({'id': item['id'], 'dest_path': str(dest), 'filename': dest.name,
-                            'project': item['project'], 'day': item['target_date']})
-        return {'success': True, 'count': len(applied), 'applied': applied, 'rejected': [],
-                'message': f'Đã áp dụng {len(applied)} ảnh gốc; giữ nguyên nguồn để đối chiếu.'}
-
-    def delete_staging_photos(self, photo_ids: List[str]) -> int:
-        """Xóa các ảnh trong staging"""
-        deleted_count = 0
-        with self._connect() as c:
-            if photo_ids:
-                placeholders = ','.join(['?'] * len(photo_ids))
-                rows = c.execute(f'SELECT id, file_name, original_file_name FROM staging_photos WHERE id IN ({placeholders}) AND COALESCE(applied_path, \'\')=\'\'', photo_ids).fetchall()
-            else:
-                rows = c.execute('SELECT id, file_name, original_file_name FROM staging_photos WHERE COALESCE(applied_path, \'\')=\'\'').fetchall()
-
-            for r in rows:
-                p_id, f_name, original_file_name = r[0], r[1], r[2]
-                f_path = self.staging_dir / f_name
-                try:
-                    if f_path.exists():
-                        f_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
-                raw_path = (
-                    self.raw_dir / original_file_name
-                    if original_file_name else self.raw_dir / f"{p_id}_raw.jpg"
-                )
-                try:
-                    raw_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
-                c.execute('DELETE FROM staging_photos WHERE id=?', (p_id,))
-                deleted_count += 1
-
-        return deleted_count

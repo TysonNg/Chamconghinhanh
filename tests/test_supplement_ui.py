@@ -41,6 +41,31 @@ def test_full_watermark_generation_never_requests_confirmation_and_keeps_sources
     assert 'id="modal-watermark-confirm"' in html
     assert script.count('showWatermarkConfirmation(') == 1
     assert "res.status === 409" not in script
-    success_branch = script.split("notify(`Đã tạo thành công", 1)[1].split("// Reload staging", 1)[0]
-    assert "selectedPhotos = []" not in success_branch
+    # Stored uploads report per-image processing and validation rather than unconditional success.
+    assert 'item.processing?.watermark' in script
+    assert 'item.processing?.exif' in script
+    for field in ('date_status', 'face_status', 'integrity_status', 'storage_status', 'can_apply'):
+        assert 'item.' + field in script
     assert 'verification_failed' in script
+    assert 'supp-staging-status-tag' in script
+
+
+def test_failed_processing_displays_error_status():
+    import subprocess
+    root = Path(__file__).resolve().parents[1]
+    # Exercise the existing UI in a VM; the Node agent owns all JS and .cjs files.
+    program = r"""
+const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
+let source = fs.readFileSync('static/js/supplement-batches.js', 'utf8');
+source = source.slice(0, source.indexOf('  // --- INITIALIZE ---')) + '\n window.regenerate=regenerateStagingPhoto; })();';
+const message = {};
+const context = vm.createContext({window:{}, document:{getElementById:id=>id==='batch-message'?message:null}, console,
+ fetch:async()=>({ok:true,status:200,json:async()=>({success:true,processing:{watermark:{status:'failed'}},status:'verification_failed'})})});
+vm.runInContext(source, context);
+(async()=>{assert.equal(await context.window.regenerate('one', {innerHTML:'Generate'}), false);
+assert.equal(message.className.includes('error'), true);
+assert.equal(message.className.includes('success'), false);
+assert.ok(message.textContent);})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+    result = subprocess.run(['node', '-e', program], cwd=root, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr

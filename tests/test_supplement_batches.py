@@ -17,7 +17,9 @@ def test_export_is_ready_without_manual_approval_and_stays_ready_after_edit(tmp_
     r = c.post('/api/supplement/batches', data={'employee': 'A', 'supplement_date': '2026-08-29', 'photos': (io.BytesIO(original), 'a.jpg')})
     b = r.get_json()['batch']
     url = '/api/supplement/batches/' + b['id']
-    assert b['status'] == 'approved'
+    assert b['status'] == 'stored'
+    assert c.post(url + '/approve', json={'reviewer': 'A'}).status_code == 410
+    assert c.get(url + '/download').status_code == 200
     archive = zipfile.ZipFile(io.BytesIO(c.get(url + '/download').data))
     manifest = json.loads(archive.read('manifest.json'))
     assert archive.read(manifest['items'][0]['archive_name']) == original
