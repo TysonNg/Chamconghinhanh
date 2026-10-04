@@ -4,12 +4,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const puppeteer = require('../zalo-service/node_modules/puppeteer-core');
 const script = name => fs.readFileSync(path.join(__dirname,'../static/js',name),'utf8');
-test('real Chrome confirmation lifecycle and mocked staging deletion', {timeout:30000}, async () => {
- const browser = await puppeteer.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--no-sandbox']});
+const browsers = [ ['Chrome','Google/Chrome/Application/chrome.exe'], ['Edge','Microsoft/Edge/Application/msedge.exe'] ];
+for (const [name,relative] of browsers) {
+ const executablePath=[process.env.PROGRAMFILES,process.env['PROGRAMFILES(X86)'],process.env.LOCALAPPDATA].filter(Boolean).map(root=>path.join(root,relative)).find(candidate=>fs.existsSync(candidate));
+ test('real '+name+' confirmation lifecycle and mocked staging deletion', {timeout:60000,skip:!executablePath && name+' unavailable'}, async () => {
+ const browser = await puppeteer.launch({executablePath,headless:true,args:['--no-sandbox']});
  try {
   const page=await browser.newPage();
   await page.setContent('<button id="trigger">Delete</button><button id="outside">Outside</button><div id="batch-message"></div><button id="btn-delete-all-staging">Delete all</button>');
   await page.addScriptTag({content:script('confirm-action.js')});
+  await page.evaluate(()=>{window.confirm=()=>false;});
   const open=async()=>{await page.evaluate(()=>{document.querySelector('#trigger').focus();document.body.style.overflow='auto';window.result=null;confirmAction('<img src=x> Delete?').then(v=>window.result=v);});};
   for(const mode of ['cancel','escape','outside','accept']) {
    await open();
@@ -29,6 +33,16 @@ test('real Chrome confirmation lifecycle and mocked staging deletion', {timeout:
    assert.equal(await page.evaluate(()=>document.body.style.overflow),'auto');
    assert.equal(await page.evaluate(()=>document.activeElement.id),'trigger');
   }
+  await page.evaluate(()=>{window.confirm=()=>{throw new Error('Native confirmation used');};window.result=null;confirmAction({title:'<b>Title</b>',message:'<img src=x> Message',confirmLabel:'<i>Proceed</i>'}).then(v=>window.result=v);});
+  for(const [selector,value] of [['#confirm-action-title','<b>Title</b>'],['#confirm-action-message','<img src=x> Message'],['[data-confirm=accept]','<i>Proceed</i>']]) {
+   assert.equal(await page.$eval(selector,el=>el.textContent),value);assert.equal(await page.$eval(selector,el=>el.children.length),0);
+  }
+  await page.click('[data-confirm=accept]');assert.equal(await page.evaluate(()=>result),true);
+  await page.reload();
+  await page.setContent('<button id="trigger">Delete</button><button id="outside">Outside</button><div id="batch-message"></div><button id="btn-delete-all-staging">Delete all</button>');
+  await page.addScriptTag({content:script('confirm-action.js')});
+  await page.evaluate(()=>{window.confirm=()=>{throw new Error('Native confirmation after reload');};});
+  await open();await page.click('[data-confirm=accept]');assert.equal(await page.evaluate(()=>result),true);
   // Exercise an app.js delete handler with its real shared request guard.
   const app=script('app.js');
   const api=app.slice(app.indexOf('async function parseJsonResponse'),app.indexOf('// ==================== Vietnamese'));
@@ -70,11 +84,18 @@ test('real Chrome confirmation lifecycle and mocked staging deletion', {timeout:
   cards=cards.slice(0,cards.indexOf('  // --- INITIALIZE ---'))+'\n currentProject="p1"; projectsList=[{project_id:"p1",name:"Project One"}]; currentSelectedEmployee={employee_id:"e2",name:"Employee Two"}; window.loadCards=loadStaging; })();';
   await page.evaluate(()=>{window.fetch=async(url,options)=>{
     if(options) { calls.push({url,body:JSON.parse(options.body)}); return {ok:false,json:async()=>({success:true,error:'single failure'})}; }
-    return {ok:true,json:async()=>({success:true,items:[{id:'one',project_id:'p1',employee_id:'e1',original_name:'one.jpg',url:'data:,',target_date:'2026-10-04',date_status:'consistent',face_status:'matched',integrity_status:'intact',storage_status:'available',processing:{watermark:'not_requested',exif:'not_requested'},can_apply:false,reasons:['Blocked reason']}]})};
+    return {ok:true,json:async()=>({success:true,items:[{id:'one',project_id:'p1',employee_id:'e1',original_name:'one.jpg',original_url:'/mock/original?token=test',derived_url:'/mock/derived',target_date:'2026-10-04',date_status:'consistent',face_status:'matched',integrity_status:'intact',storage_status:'available',processing:{watermark:'not_requested',exif:'not_requested'},can_apply:false,reasons:['Blocked reason']}]})};
   };});
   await page.addScriptTag({content:cards}); await page.evaluate(()=>loadCards());
   const text=await page.$eval('#supp-staging-grid',el=>el.textContent);
-  for(const value of ['consistent','matched','intact','available','not_requested','Blocked reason']) assert.ok(text.includes(value));
+  for(const value of ['Phù hợp','Khớp','Nguyên vẹn','Có sẵn','Chưa yêu cầu','Blocked reason']) assert.ok(text.includes(value));
+  assert.equal(await page.$eval('.btn-view-original',b=>b.textContent),'Ảnh gốc');
+  assert.equal(await page.$eval('.btn-view-derived',b=>b.textContent),'Ảnh xử lý');
+  assert.equal(await page.$eval('.btn-download-original',a=>a.getAttribute('href')),'/mock/original?token=test&download=1');
+  await page.evaluate(()=>{const modal=document.createElement('div');modal.id='modal-lightbox';modal.innerHTML='<img id="lightbox-img"><div id="lightbox-toolbar"><a id="lightbox-btn-download"></a></div>';document.body.append(modal);});
+  await page.click('.btn-view-original');assert.ok((await page.$eval('#lightbox-img',img=>img.getAttribute('src'))).startsWith('/mock/original?token=test'));
+  await page.click('#lightbox-toolbar .btn-view-derived');assert.ok((await page.$eval('#lightbox-img',img=>img.getAttribute('src'))).startsWith('/mock/derived'));
+  await page.evaluate(()=>document.querySelector('#modal-lightbox').style.display='none');
   assert.equal(await page.$eval('.supp-action-main-btn',b=>b.disabled),true);
   await page.click('.supp-staging-card-actions button.btn-danger');
   await page.click('[data-confirm=accept]');
@@ -109,9 +130,23 @@ test('real Chrome confirmation lifecycle and mocked staging deletion', {timeout:
   await page.click('[data-confirm=accept]');
   await page.waitForFunction(()=>document.querySelector('.supp-action-main-btn').disabled);
   assert.deepEqual(await page.evaluate(()=>calls.at(-1).body),{project_id:'p1',employee_id:'e2',confirm_legacy_source:true});
+  await page.evaluate(()=>{cardItem.original_url='/mock/only-original';cardItem.derived_url=null;return loadCards();});
+  assert.equal(await page.$eval('.btn-view-original',b=>b.disabled),false);assert.equal(await page.$eval('.btn-view-derived',b=>b.disabled),true);
+  assert.equal(await page.$eval('.btn-download-original',a=>a.getAttribute('href')),'/mock/only-original?download=1');
+  await page.click('.btn-view-original');assert.ok((await page.$eval('#lightbox-img',img=>img.getAttribute('src'))).startsWith('/mock/only-original'));
+  await page.evaluate(()=>document.querySelector('#modal-lightbox').style.display='none');
   await page.evaluate(()=>{cardItem.applied_path='immutable.jpg';return loadCards();});
   assert.equal(await page.$eval('.btn-rebind-identity',b=>b.disabled),true);
+  assert.equal(await page.$eval('#lightbox-btn-download',a=>a.getAttribute('href')),'/mock/only-original?download=1');
+  await page.evaluate(()=>{window.fetch=async(url,options)=>{if(options) return {ok:true,json:async()=>({success:true,item:{can_apply:true}})};throw new Error('mock load failure');};});
+  await page.click('.btn-recheck-evidence');
+  await page.waitForFunction(()=>!document.querySelector('.btn-recheck-evidence').disabled);
+  assert.equal(await page.$eval('#batch-message',el=>el.textContent),'Thao tác đã thực hiện nhưng không tải lại được danh sách');
+  await page.evaluate(()=>loadCards());assert.ok((await page.$eval('#batch-message',el=>el.textContent)).includes('Không tải được danh sách'));
+  assert.equal(await page.$eval('.btn-recheck-evidence',b=>b.disabled),false);
 
 
  } finally { await browser.close(); }
 });
+
+}

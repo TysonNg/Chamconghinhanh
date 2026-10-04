@@ -11,6 +11,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file
 from PIL import Image, UnidentifiedImageError
+from src.supplement_evidence import EvidenceConnection
 
 LABEL = 'Ảnh bổ sung — không xác nhận thời điểm chụp'
 
@@ -21,7 +22,7 @@ def register_batches(app, data_dir, registry_provider=None, matcher_provider=Non
     db = Path(data_dir) / 'supplement_batches.sqlite3'
 
     def connect():
-        c = sqlite3.connect(db, timeout=30)
+        c = sqlite3.connect(db, timeout=30, factory=EvidenceConnection)
         c.row_factory = sqlite3.Row
         return c
 
@@ -55,7 +56,7 @@ def register_batches(app, data_dir, registry_provider=None, matcher_provider=Non
             return jsonify(error='Luồng đổi timestamp đã ngừng. Dùng hồ sơ ảnh bổ sung tại /api/supplement/batches; ảnh và EXIF được giữ nguyên.'), 410
 
     def parse_day(value):
-        if not isinstance(value, str):
+        if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}',value):
             raise ValueError('Ngày hồ sơ phải có định dạng YYYY-MM-DD')
         return date.fromisoformat(value).isoformat()
 
@@ -85,10 +86,11 @@ def register_batches(app, data_dir, registry_provider=None, matcher_provider=Non
         files = request.files.getlist('photos')
         if not 1 <= len(files) <= 31:
             raise ValueError('Chọn từ 1 đến 31 ảnh')
-        employee = request.form.get('employee', '').strip()
-        if not employee or len(employee) > 200:
-            raise ValueError('Tên nhân viên không hợp lệ')
         day = parse_day(request.form.get('supplement_date', ''))
+        project_id = request.form.get('project_id', '').strip()
+        employee_id = request.form.get('employee_id', '').strip()
+        project, identity = fake_service._identity(project_id, employee_id, date.fromisoformat(day))
+        employee = identity['display_name']
         prepared = []
         total = 0
         for f in files:
@@ -116,7 +118,7 @@ def register_batches(app, data_dir, registry_provider=None, matcher_provider=Non
         bid = uuid.uuid4().hex
         folder = root / bid
         folder.mkdir()
-        b = {'id': bid, 'employee': employee, 'label': LABEL, 'status': 'stored',
+        b = {'id': bid, 'employee': employee, 'project_id': project_id, 'employee_id': employee_id, 'label': LABEL, 'status': 'stored',
              'items': [i for _, i in prepared], 'history': []}
         try:
             for raw, item in prepared:
@@ -149,6 +151,8 @@ def register_batches(app, data_dir, registry_provider=None, matcher_provider=Non
             item = next((i for i in b['items'] if i['id'] == iid), None)
             if item is None:
                 raise LookupError('Không tìm thấy ảnh')
+            if b.get('project_id') and b.get('employee_id'):
+                fake_service._identity(b['project_id'], b['employee_id'], date.fromisoformat(day))
             old = dict(item)
             item.update(supplement_date=day, note=note)
             b['checks_valid'] = False
@@ -229,15 +233,9 @@ def register_batches(app, data_dir, registry_provider=None, matcher_provider=Non
                 raise ValueError('File ảnh không hợp lệ') from exc
             prepared.append((raw, day, target_time, Path(file.filename or 'photo').name))
 
-        items = []
-        for raw, day, t_time, name in prepared:
-            item = fake_service.create_supplement_photo(
-                raw_bytes=raw, project=project['storage_dir'], employee=employee['display_name'],
-                target_date=day, target_time=t_time, original_name=name,
-                project_id=project_id, employee_id=employee_id,
+        items = fake_service.create_records(prepared,project_id,employee_id,
                 replace_timestamp=request.form.get('replace_timestamp','true').lower() in ('true','1'),
                 modify_exif=request.form.get('modify_exif','true').lower() in ('true','1'))
-            items.append(item)
         return jsonify(success=True, count=len(items), items=items), 201
 
     @bp.post('/api/supplement/records/<photo_id>/check')
@@ -261,6 +259,7 @@ def register_batches(app, data_dir, registry_provider=None, matcher_provider=Non
             source_hash = item['source_sha256']
             if data.get('confirm_legacy_source') is True and not source_hash:
                 source_hash = hashlib.sha256(fake_service._source_path(item).read_bytes()).hexdigest()
+                c.execute('UPDATE staging_photos SET source_provenance=? WHERE id=?',('legacy_baseline',photo_id))
                 fake_service._audit(c,photo_id,'legacy_source_baseline',{'sha256':source_hash,'not_original_intake_hash':True})
             target_time = parse_target_time(data.get('target_time',item['target_time']), provided='target_time' in data)
             c.execute('UPDATE staging_photos SET project_id=?,employee_id=?,project=?,employee=?,target_date=?,target_time=?,source_sha256=?,validation_json=? WHERE id=?',
@@ -327,6 +326,25 @@ def register_batches(app, data_dir, registry_provider=None, matcher_provider=Non
             return jsonify(error='Không tìm thấy ảnh'), 404
         return send_file(img_path)
 
+    @bp.get('/api/supplement/staging/<photo_id>/original')
+    def original_image(photo_id):
+        with fake_service._connect() as c:
+            row = c.execute('SELECT * FROM staging_photos WHERE id=?',(photo_id,)).fetchone()
+        if not row:
+            raise LookupError('Không tìm thấy hồ sơ')
+        item = dict(row)
+        if item.get('intake_operation_id'):
+            with fake_service._connect() as c:
+                op=c.execute('SELECT state FROM supplement_operations WHERE id=?',(item['intake_operation_id'],)).fetchone()
+            if not op or op[0] != 'committed':
+                raise LookupError('Đợt tạo hồ sơ chưa hoàn tất')
+        path = fake_service._source_path(item)
+        if not path.is_file():
+            raise LookupError('Không còn ảnh gốc')
+        if item['source_sha256'] and hashlib.sha256(path.read_bytes()).hexdigest() != item['source_sha256']:
+            raise RuntimeError('Ảnh gốc đã thay đổi so với lúc tiếp nhận')
+        return send_file(path, as_attachment=request.args.get('download') == '1', download_name=path.name)
+
     @bp.route('/api/supplement/staging/<photo_id>/watermark-crop', methods=['GET'])
     def get_staging_watermark_crop(photo_id):
         crop = fake_service.get_watermark_crop_bytes(photo_id)
@@ -354,27 +372,24 @@ def register_batches(app, data_dir, registry_provider=None, matcher_provider=Non
         img_path = fake_service.get_staging_image_path(photo_id)
         if not img_path or not img_path.exists():
             return jsonify(error='Không tìm thấy ảnh'), 404
-        return send_file(img_path, as_attachment=True, download_name=img_path.name)
+        img_path, raw = fake_service.read_verified_derived(photo_id)
+        return send_file(io.BytesIO(raw), as_attachment=True, download_name=img_path.name)
 
     @bp.route('/api/supplement/download-staging-zip', methods=['POST'])
     def download_staging_zip():
-        data = request.get_json() or {}
-        ids = data.get('ids', [])
-        items = fake_service.get_staging_photos()
-        if ids:
-            items = [it for it in items if it['id'] in ids]
-        if not items:
-            return jsonify(error='Không có ảnh để tải'), 400
-
+        data = payload()
+        ids = selected_ids(data.get('ids'))
+        lookup = {item['id']:item for item in fake_service.get_staging_photos()}
+        if any(photo_id not in lookup for photo_id in ids):
+            raise RuntimeError('Danh sách có hồ sơ không tồn tại hoặc đã áp dụng')
+        prepared = [(lookup[photo_id], *fake_service.read_verified_derived(photo_id)) for photo_id in ids]
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, 'w', zipfile.ZIP_DEFLATED) as z:
-            for it in items:
-                p = fake_service.get_staging_image_path(it['id'])
-                if p and p.exists():
-                    safe_emp = re.sub(r'[<>:"/\\|?* ]', '_', it['employee'])
-                    safe_time = (it['target_time'] or '').replace(':', '-')
-                    z_name = f"{safe_emp}_{it['target_date']}_{safe_time}_{it['id']}{p.suffix}"
-                    z.write(p, arcname=z_name)
+            for item, path, raw in prepared:
+                safe_emp = re.sub(r'[<>:"/\\|?* ]', '_', item['employee'])
+                safe_time = (item['target_time'] or '').replace(':', '-')
+                name = f"{safe_emp}_{item['target_date']}_{safe_time}_{item['id']}{path.suffix}"
+                z.writestr(name, raw)
         stream.seek(0)
         return send_file(stream, mimetype='application/zip', as_attachment=True, download_name='anh-fake-bo-sung.zip')
 

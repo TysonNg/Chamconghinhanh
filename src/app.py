@@ -502,8 +502,9 @@ def get_config():
 
 @app.route('/images/<path:filename>')
 def serve_image(filename):
-    file_path = os.path.join(INPUT_IMAGES_DIR, filename)
-    if os.path.exists(file_path):
+    from src.supplement_evidence import evidence_is_visible
+    file_path = Path(INPUT_IMAGES_DIR) / filename
+    if file_path.is_file() and not file_path.is_symlink() and file_path.resolve().is_relative_to(Path(INPUT_IMAGES_DIR).resolve()) and evidence_is_visible(file_path):
         return send_file(file_path)
     return jsonify({'error': 'File không tồn tại'}), 404
 
@@ -513,7 +514,8 @@ from src.identity_routes import register_identity_routes
 from src.daily_photo_routes import register_daily_photo_routes
 register_identity_routes(app, get_identity_registry, lambda: INPUT_IMAGES_DIR)
 register_daily_photo_routes(app, lambda: INPUT_IMAGES_DIR,
-                           project_resolver=lambda ref: get_identity_registry().get_project(ref))
+                           project_resolver=lambda ref: get_identity_registry().get_project(ref),
+                           evidence_service_provider=lambda: app.extensions['supplement_service'])
 
 # ==================== API: FACE MATCHER ====================
 

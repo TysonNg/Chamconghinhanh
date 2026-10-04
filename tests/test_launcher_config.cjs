@@ -9,7 +9,7 @@ const launcher = fs.readFileSync(
 
 assert.match(
   launcher,
-  /-c "import flask, piexif"/,
+  /-c "import flask, piexif(?:, [a-z0-9_]+)*"/,
   'Launcher must verify piexif before it skips dependency installation.',
 );
 

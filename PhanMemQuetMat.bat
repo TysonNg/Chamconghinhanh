@@ -99,7 +99,7 @@ REM BƯỚC 3: KIỂM TRA VÀ CÀI ĐẶT THƯ VIỆN PYTHON (requirements.txt)
 REM ==============================================================
 echo [3/4] Đang kiểm tra các thư viện cần thiết...
 
-"%RUN_PYTHON%" -c "import flask, cv2, deepface, easyocr, fitz, xlrd, docx, requests" > nul 2>&1
+"%RUN_PYTHON%" -c "import flask, piexif, cv2, deepface, easyocr, fitz, xlrd, docx, requests" > nul 2>&1
 if errorlevel 1 (
     echo   - Thiếu một số thư viện quan trọng. Đang tiến hành cài đặt từ requirements.txt...
     echo   - Quá trình này có thể mất 3-5 phút trong lần chạy đầu tiên. Vui lòng giữ kết nối mạng.

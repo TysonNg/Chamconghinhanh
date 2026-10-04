@@ -21,8 +21,18 @@ def safe_component(value):
         raise ValueError("Tên dự án hoặc tệp không hợp lệ")
     return value.strip()
 
-def register_daily_photo_routes(app, input_root, project_resolver=None):
+def register_daily_photo_routes(app, input_root, project_resolver=None, evidence_service_provider=None):
     bp = Blueprint("daily_photos", __name__)
+
+    def evidence_write_guard(action):
+        from functools import wraps
+        @wraps(action)
+        def guarded(*args,**kwargs):
+            service=evidence_service_provider() if evidence_service_provider else None
+            if service:
+                return service.mutate_attendance(lambda:action(*args,**kwargs))
+            return action(*args,**kwargs)
+        return guarded
 
     @bp.errorhandler(ValueError)
     def invalid(exc):
@@ -120,6 +130,7 @@ def register_daily_photo_routes(app, input_root, project_resolver=None):
         return send_file(p)
 
     @bp.post("/api/photos/daily/upload")
+    @evidence_write_guard
     def upload():
         target = requested_day(request.form)
         project, root = project_path(request.form)
@@ -164,6 +175,7 @@ def register_daily_photo_routes(app, input_root, project_resolver=None):
         return jsonify(success=True, project=project, date=target.isoformat(), saved_count=len(saved), files=saved)
 
     @bp.post("/api/photos/daily/delete")
+    @evidence_write_guard
     def delete():
         data = request.get_json()
         if not isinstance(data, dict):
@@ -233,6 +245,7 @@ def register_daily_photo_routes(app, input_root, project_resolver=None):
         return jsonify(success=True, deleted_count=len(selected), message=f"Đã xóa {len(selected)} ảnh")
 
     @bp.post("/api/photos/daily/legacy-map")
+    @evidence_write_guard
     def legacy_map():
         data = request.get_json()
         if not isinstance(data, dict):

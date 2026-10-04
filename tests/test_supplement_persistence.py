@@ -9,17 +9,28 @@ from src.supplement_batches import register_batches
 
 
 def client(root):
-    app = Flask(__name__)
-    app.testing = True
-    register_batches(app, root)
-    return app.test_client()
+    from supplement_test_support import environment
+    if (root / 'identity.sqlite3').exists():
+        from src.identity_registry import IdentityRegistry
+        registry = IdentityRegistry(root / 'identity.sqlite3', root / 'portraits')
+        project = registry.list_projects()[0]
+        employee = registry.list_employees(project['project_id'])[0]
+        ids = {'project_id':project['project_id'], 'employee_id':employee['employee_id']}
+        app = Flask(__name__)
+        app.testing = True
+        register_batches(app, root / 'supplement_data', registry_provider=lambda:registry)
+        c = app.test_client()
+    else:
+        _, c, ids = environment(root)
+    c.application.config['TEST_IDENTITY'] = ids
+    return c
 
 
 def create(c, count=1):
     raw = io.BytesIO()
     Image.new('RGB', (16, 16), 'blue').save(raw, 'PNG')
     return c.post('/api/supplement/batches', data={
-        'employee': 'A', 'supplement_date': '2026-08-29',
+        **c.application.config['TEST_IDENTITY'], 'supplement_date': '2026-08-29',
         'photos': [(io.BytesIO(raw.getvalue()), '../../sample.jpg') for _ in range(count)]})
 
 
@@ -44,14 +55,14 @@ def test_invalid_json_dates_are_client_errors(tmp_path, payload):
 def test_invalid_image_and_tamper_block_download(tmp_path):
     c = client(tmp_path)
     assert c.post('/api/supplement/batches', data={
-        'employee': 'A', 'supplement_date': '2026-08-29',
+        **c.application.config['TEST_IDENTITY'], 'supplement_date': '2026-08-29',
         'photos': (io.BytesIO(b'not an image'), 'fake.jpg')}).status_code == 400
     b = create(c).json['batch']
     url = '/api/supplement/batches/' + b['id']
     assert c.post(url + '/approve', json={}).status_code == 410
     assert c.post(url + '/approve', json={'reviewer': 'A'}).status_code == 410
     assert c.get(url + '/download').status_code == 200
-    path = tmp_path / 'supplement_output' / b['id'] / b['items'][0]['archive_name']
+    path = tmp_path / 'supplement_data' / 'supplement_output' / b['id'] / b['items'][0]['archive_name']
     path.write_bytes(b'tampered')
     assert c.post(url + '/approve', json={'reviewer': 'A'}).status_code == 410
     assert c.get(url + '/download').status_code == 409

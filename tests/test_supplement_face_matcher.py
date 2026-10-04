@@ -143,3 +143,56 @@ def test_detection_skip_backend_cannot_approve(setup):
     setup.matcher.detector_backend = 'skip'
     assert setup.match().status == 'error'
     assert not setup.calls
+
+
+def test_downstream_matching_checks_second_face_in_committed_supplement(setup, monkeypatch):
+    import json
+    import src.supplement_evidence as evidence
+    setup.camera.with_suffix('.jpg.json').write_text(json.dumps({'source':'supplement_original','operation_id':'test'}),encoding='utf-8')
+    monkeypatch.setattr(evidence,'evidence_is_visible',lambda path:True)
+    monkeypatch.setattr(setup.matcher,'_get_embedding',lambda path: (_ for _ in ()).throw(AssertionError('Legacy first-face path must not handle supplemental image')))
+    result=setup.matcher.match_employee_in_images(project_id=setup.scope[0],employee_id=setup.scope[1],
+                attendance_date=setup.scope[2],camera_images=[str(setup.camera)])
+    assert result.status=='matched'
+
+
+def test_downstream_uncommitted_supplement_is_not_a_candidate(setup,monkeypatch):
+    import json
+    import src.supplement_evidence as evidence
+    setup.camera.with_suffix('.jpg.json').write_text(json.dumps({'source':'supplement_original','operation_id':'test'}),encoding='utf-8')
+    monkeypatch.setattr(evidence,'evidence_is_visible',lambda path:False)
+    result=setup.matcher.match_employee_in_images(project_id=setup.scope[0],employee_id=setup.scope[1],
+                attendance_date=setup.scope[2],camera_images=[str(setup.camera)])
+    assert result.status!='matched'
+
+
+@pytest.mark.parametrize('target,status', [(b'camera00', 'no_face'), (b'portrait', 'no_portrait')])
+def test_specific_face_not_detected_is_empty_detection(setup, monkeypatch, target, status):
+    import sys
+    from types import ModuleType
+    exceptions = ModuleType('deepface.modules.exceptions')
+    class FaceNotDetected(ValueError):
+        pass
+    exceptions.FaceNotDetected = FaceNotDetected
+    monkeypatch.setitem(sys.modules, exceptions.__name__, exceptions)
+    setup.responses[target] = FaceNotDetected('No face detected')
+    result = setup.match()
+    assert result.status == status
+    assert result.reason
+    assert result.distance is None
+    calls = len(setup.calls)
+    assert setup.match().status == status
+    assert len(setup.calls) == calls
+
+
+def test_same_named_unrelated_exception_remains_error(setup, monkeypatch):
+    import sys
+    from types import ModuleType
+    exceptions = ModuleType('deepface.modules.exceptions')
+    exceptions.FaceNotDetected = type('FaceNotDetected', (ValueError,), {})
+    monkeypatch.setitem(sys.modules, exceptions.__name__, exceptions)
+    unrelated = type('FaceNotDetected', (ValueError,), {})
+    setup.responses[b'camera00'] = unrelated('unrelated failure')
+    result = setup.match()
+    assert result.status == 'error'
+    assert 'unrelated failure' in result.reason

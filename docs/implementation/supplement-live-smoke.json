@@ -1,0 +1,26 @@
+{
+  "kind": "local_self_match_smoke",
+  "images": 3,
+  "accuracy_evaluated": false,
+  "model": "ArcFace",
+  "detector": "retinaface",
+  "threshold": 0.37,
+  "results": [
+    {
+      "sample": 1,
+      "status": "no_portrait",
+      "distance": null
+    },
+    {
+      "sample": 2,
+      "status": "matched",
+      "distance": 5.960464477539063e-08
+    },
+    {
+      "sample": 3,
+      "status": "matched",
+      "distance": 5.960464477539063e-08
+    }
+  ],
+  "cloud_ai": "awaiting_explicit_image_permission"
+}

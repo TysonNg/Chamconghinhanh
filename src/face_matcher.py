@@ -461,7 +461,7 @@ class FaceMatcher:
     def _get_detected_embeddings(self, image_path: str) -> List[np.ndarray]:
         """Cache all detected faces by exact image bytes and detection settings.
 
-        Exceptions remain errors; only an empty representation means no face.
+        FaceNotDetected means no face; other exceptions remain errors.
         A fresh ASCII snapshot also avoids the legacy mtime-based copy cache.
         """
         if self.detector_backend.lower() == "skip":
@@ -479,9 +479,17 @@ class FaceMatcher:
             snapshot = os.path.join(folder, "image" + os.path.splitext(image_path)[1])
             with open(snapshot, "wb") as image_file:
                 image_file.write(content)
-            representations = deepface.represent(
-                img_path=snapshot, model_name=self.model_name,
-                detector_backend=self.detector_backend, enforce_detection=True)
+            try:
+                representations = deepface.represent(
+                    img_path=snapshot, model_name=self.model_name,
+                    detector_backend=self.detector_backend, enforce_detection=True)
+            except Exception as exc:
+                # Detection already loads this module; avoid importing heavy DeepFace here.
+                exceptions = sys.modules.get("deepface.modules.exceptions")
+                no_face = getattr(exceptions, "FaceNotDetected", None)
+                if no_face is None or not isinstance(exc, no_face):
+                    raise
+                representations = []
         if not isinstance(representations, list):
             raise ValueError("Invalid face detection response")
         embeddings = []
@@ -511,20 +519,20 @@ class FaceMatcher:
         try:
             registry = self.identity_registry
             if not registry or not registry.is_member(project_id, employee_id, attendance_date):
-                return result("identity_unresolved", reason="Employee membership is not confirmed for this project/date")
+                return result("identity_unresolved", reason="Chưa xác nhận nhân viên trong đúng dự án/ngày")
             portraits = registry.portrait_paths(project_id, employee_id, attendance_date)
             if not portraits:
-                return result("no_portrait", reason="No confirmed employee portraits")
+                return result("no_portrait", reason="Chưa có chân dung nhân viên đã xác nhận")
             references = []
             for path in portraits:
                 faces = self._get_detected_embeddings(str(path))
                 if len(faces) == 1:
                     references.append(faces[0])
             if not references:
-                return result("no_portrait", reason="No confirmed portrait has exactly one detected face")
+                return result("no_portrait", reason="Chân dung cần có một khuôn mặt đọc được")
             faces = self._get_detected_embeddings(str(image_path))
             if not faces:
-                return result("no_face", reason="No face detected in camera image")
+                return result("no_face", reason="Không phát hiện khuôn mặt trong ảnh")
             distances = [self._cosine_distance(face, reference)
                          if self.distance_metric == "cosine"
                          else float(np.linalg.norm(face - reference))
@@ -534,11 +542,11 @@ class FaceMatcher:
             best_distance = min(distances)
             if best_distance <= threshold:
                 return result("matched", best_distance,
-                              "Detected face matches confirmed portrait within threshold")
+                              "Có khuôn mặt khớp chân dung trong ngưỡng so sánh")
             return result("no_match", best_distance,
-                          "No detected face matches confirmed portraits within threshold")
+                          "Không có khuôn mặt đạt ngưỡng so sánh")
         except Exception as exc:
-            return result("error", reason=f"Face matching failed: {exc}")
+            return result("error", reason=f"Lỗi đối chiếu khuôn mặt: {exc}")
 
     def match_employee_in_images(
         self, *, project_id: str, employee_id: str, attendance_date: date,
@@ -549,6 +557,34 @@ class FaceMatcher:
         if not registry or not registry.is_member(project_id, employee_id, attendance_date):
             return MatchResult("identity_unresolved", None, None, project_id, employee_id,
                                "Chưa xác nhận nhân viên trong đúng dự án/ngày hiệu lực")
+        # Supplemental group photos use all faces, including during downstream attendance analysis.
+        from src.supplement_evidence import evidence_is_visible
+        from pathlib import Path
+        import json
+        supplemental_results, legacy_images = [], []
+        for path in camera_images:
+            image = Path(path)
+            try:
+                metadata = json.loads(image.with_suffix(image.suffix + '.json').read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                metadata = {}
+            if not evidence_is_visible(image):
+                continue
+            if isinstance(metadata, dict) and metadata.get('source') == 'supplement_original':
+                supplemental_results.append(self.match_employee_in_photo(project_id=project_id,
+                    employee_id=employee_id, attendance_date=attendance_date, image_path=str(image),
+                    distance_threshold=distance_threshold))
+            else:
+                legacy_images.append(str(image))
+        matched = [result for result in supplemental_results if result.status == 'matched']
+        if matched:
+            return min(matched, key=lambda result:result.distance)
+        if not legacy_images:
+            if supplemental_results:
+                return min(supplemental_results, key=lambda result:float('inf') if result.distance is None else result.distance)
+            return MatchResult("no_match", None, None, project_id, employee_id,
+                               "Không có ảnh đã hoàn tất để đối chiếu")
+        camera_images = legacy_images
         portraits = registry.portrait_paths(project_id, employee_id, attendance_date)
         if not portraits:
             return MatchResult("no_portrait", None, None, project_id, employee_id,

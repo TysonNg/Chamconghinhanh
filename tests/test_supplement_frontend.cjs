@@ -62,3 +62,17 @@ test('recheck deduplicates concurrent requests and recovers from HTTP failure',a
  await Promise.all([h.ctx.window.check({id:'one'},button),h.ctx.window.check({id:'one'},button)]);
  assert.equal(h.calls.length,1);assert.equal(button.disabled,false);assert.equal(h.nodes['batch-message'].className.includes('error'),true);
 });
+
+ test('list load errors are visible and distinguish completed mutations',async()=>{
+  const nodes={'batch-message':{},'supp-staging-grid':{}};
+  let source=read('supplement-batches.js');source=source.slice(0,source.indexOf('  // --- INITIALIZE ---'))+'\n currentProject="p1"; window.load=loadStaging; window.check=recheckStagingPhoto; })();';
+  const ctx=vm.createContext({window:{},document:{getElementById:id=>nodes[id]||null},console:{error(){}},fetch:async(url,options)=>{if(options)return {ok:true,json:async()=>({success:true,item:{can_apply:true}})};throw new Error('offline');}});
+  vm.runInContext(source,ctx);await ctx.window.load();assert.match(nodes['batch-message'].textContent,/Không tải được danh sách/);
+  const button={disabled:false};await ctx.window.check({id:'one'},button);assert.match(nodes['batch-message'].textContent,/Thao tác đã thực hiện nhưng không tải lại được danh sách/);assert.equal(button.disabled,false);
+ });
+
+test('status enums and processing objects have Vietnamese labels',()=>{
+ let source=read('supplement-batches.js');source=source.slice(0,source.indexOf('  // --- INITIALIZE ---'))+'\n window.label=statusText; })();';
+ const ctx=vm.createContext({window:{}});vm.runInContext(source,ctx);
+ for(const [value,label] of [[true,'Có'],[false,'Chưa'],['matched','Khớp'],['consistent','Phù hợp'],['unverified','Chưa xác nhận'],[{status:'completed'},'Đã hoàn tất'],[null,'Chưa rõ'],['unexpected','Chưa rõ']]) assert.equal(ctx.window.label(value),label);
+});

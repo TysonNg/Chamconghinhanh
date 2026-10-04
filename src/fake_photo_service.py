@@ -22,7 +22,7 @@ import piexif
 from src.watermark_engine import ExifEditor
 from src.smart_watermark_replacer import SmartWatermarkReplacer
 from src.ai_timestamp_service import AITimestampService
-from src.supplement_evidence import SupplementEvidenceMixin, parse_target_time, capture_datetime
+from src.supplement_evidence import SupplementEvidenceMixin, parse_target_time, capture_datetime, serialized, EvidenceConnection
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class FakePhotoService(SupplementEvidenceMixin):
         self._init_evidence()
 
     def _connect(self):
-        c = sqlite3.connect(self.db_path, timeout=30)
+        c = sqlite3.connect(self.db_path, timeout=30, factory=EvidenceConnection)
         c.row_factory = sqlite3.Row
         return c
 
@@ -95,14 +95,12 @@ class FakePhotoService(SupplementEvidenceMixin):
 
     @staticmethod
     def _original_extension(original_name: str, raw_bytes: bytes) -> str:
-        suffix = Path(original_name or '').suffix.lower()
-        if suffix in ('.jpg', '.jpeg', '.png', '.webp', '.bmp'):
-            return suffix
         try:
             with Image.open(io.BytesIO(raw_bytes)) as image:
-                return '.' + (image.format or 'jpg').lower().replace('jpeg', 'jpg')
+                return '.' + (image.format or 'jpg').lower().replace('jpeg','jpg')
         except Exception:
-            return '.jpg'
+            suffix=Path(original_name or '').suffix.lower()
+            return suffix if suffix in ('.jpg','.jpeg','.png','.webp','.bmp') else '.jpg'
 
     @staticmethod
     def _target_watermark_lines(analysis: Dict, target_date: str, target_time: str) -> List[str]:
@@ -115,9 +113,21 @@ class FakePhotoService(SupplementEvidenceMixin):
             new_timestamp = f"{dt.day:02d} Th{dt.month}, {dt.year} {target_time}"
         return [new_timestamp, *source[1:]]
 
+    def _verify_local_watermark(self, path, analysis, lines):
+        try:
+            with Image.open(path) as image:
+                image = ImageOps.exif_transpose(image).convert('RGB')
+                crop, _ = self.ai_service.extract_watermark_crop(image, analysis)
+                output = io.BytesIO()
+                crop.save(output, format='JPEG', quality=95)
+            return bool(self.ai_service.verify_watermark_crop(output.getvalue(), lines))
+        except Exception:
+            logger.warning('Local watermark verification failed', exc_info=True)
+            return False
+
     def create_supplement_photo(self, raw_bytes, project, employee, target_date, original_name,
                                 target_time=None, *, project_id="", employee_id="",
-                                replace_timestamp=True, modify_exif=True):
+                                replace_timestamp=True, modify_exif=True, record_id=None, intake_operation_id=""):
         """Keep observed evidence separate from requested changes to a derived image."""
         target_time = parse_target_time(target_time)
         if project_id or employee_id:
@@ -125,7 +135,8 @@ class FakePhotoService(SupplementEvidenceMixin):
             project, employee = p['storage_dir'], e['display_name']
         item = self.create_fake_photo(raw_bytes, project, employee, target_date, target_time, original_name,
                     replace_timestamp=bool(target_time and replace_timestamp),
-                    modify_exif=bool(target_time and modify_exif), project_id=project_id, employee_id=employee_id)
+                    modify_exif=bool(target_time and modify_exif), project_id=project_id, employee_id=employee_id,
+                    record_id=record_id, intake_operation_id=intake_operation_id)
         inspection = dict(item['inspection'])
         try:
             observed = self.ai_service.inspect_photo(raw_bytes)
@@ -159,6 +170,8 @@ class FakePhotoService(SupplementEvidenceMixin):
         add_watermark: bool = True,
         project_id: str = "",
         employee_id: str = "",
+        record_id: str = None,
+        intake_operation_id: str = "",
     ) -> Dict:
         """
         Xử lý 1 ảnh: Phát hiện text timestamp cũ → Xóa chỉ text → Vẽ text mới → Sửa EXIF.
@@ -168,7 +181,7 @@ class FakePhotoService(SupplementEvidenceMixin):
         datetime.strptime(target_date, '%Y-%m-%d')
         replace_timestamp = bool(replace_timestamp and target_time)
         modify_exif = bool(modify_exif and target_time)
-        photo_id = uuid.uuid4().hex[:12]
+        photo_id = record_id or uuid.uuid4().hex[:12]
         temp_in = self.temp_dir / f"{photo_id}_raw.jpg"
         temp_replaced = self.temp_dir / f"{photo_id}_replaced.jpg"
         final_file = self.staging_dir / f"{photo_id}.jpg"
@@ -177,7 +190,8 @@ class FakePhotoService(SupplementEvidenceMixin):
 
         try:
             # 0. Lưu bytes upload bất biến. Mọi lần gen lại chỉ được đọc file này.
-            original_file.write_bytes(raw_bytes)
+            self._reserve_intake_file(intake_operation_id,original_file,raw_bytes)
+            self._reserve_intake_file(intake_operation_id,final_file,b"")
 
             # 1. Đọc ảnh và chuẩn hóa sang RGB JPEG
             with Image.open(io.BytesIO(raw_bytes)) as img:
@@ -200,12 +214,12 @@ class FakePhotoService(SupplementEvidenceMixin):
                         raw_bytes, target_date, target_time
                     )
                     watermark_status = watermark_ocr.get('status', 'needs_confirmation')
-                    has_lines = bool(watermark_ocr.get('confirmed_lines') or watermark_ocr.get('suggested_lines'))
+                    lines = self._target_watermark_lines(watermark_ocr, target_date, target_time)
+                    has_lines = bool(lines)
                     if not has_lines:
                         watermark_status = 'verification_failed'
                         generation_meta = {'error': 'full_watermark_ocr_required'}
                     elif watermark_status == 'confirmed' and self.ai_service.is_configured():
-                        lines = self._target_watermark_lines(watermark_ocr, target_date, target_time)
                         block = dict(watermark_ocr)
                         block['confirmed_lines'] = lines
                         generated = self.ai_service.generate_verified_watermark_crop(raw_bytes, block)
@@ -224,7 +238,7 @@ class FakePhotoService(SupplementEvidenceMixin):
                             fallback_ok = self.smart_replacer.replace_timestamp(
                                 str(temp_in), str(temp_replaced), target_date, target_time
                             )
-                            if fallback_ok and temp_replaced.exists():
+                            if fallback_ok and temp_replaced.exists() and self._verify_local_watermark(temp_replaced, watermark_ocr, lines):
                                 current_path = str(temp_replaced)
                                 watermark_status = 'completed'
                                 generation_meta['fallback'] = 'smart_replacer'
@@ -299,7 +313,7 @@ class FakePhotoService(SupplementEvidenceMixin):
                 'generation_meta': generation_meta,
                 'project_id': project_id, 'employee_id': employee_id,
                 'source_sha256': source_sha256, 'derived_sha256': hashlib.sha256(final_file.read_bytes()).hexdigest(),
-                'exif_status': exif_status,
+                'exif_status': exif_status, 'intake_operation_id':intake_operation_id, 'source_provenance':'intake',
             }
 
             with self._connect() as c:
@@ -308,8 +322,8 @@ class FakePhotoService(SupplementEvidenceMixin):
                         id, project, employee, target_date, target_time, original_name,
                         file_name, created_at, inspection_json, original_file_name,
                         watermark_status, watermark_ocr_json, confirmed_watermark_json,
-                        generation_meta_json, project_id, employee_id, source_sha256, derived_sha256, exif_status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        generation_meta_json, project_id, employee_id, source_sha256, derived_sha256, exif_status, intake_operation_id, source_provenance
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     record['id'], record['project'], record['employee'],
                     record['target_date'], record['target_time'],
@@ -321,7 +335,7 @@ class FakePhotoService(SupplementEvidenceMixin):
                     json.dumps(watermark_ocr, ensure_ascii=False),
                     json.dumps(confirmed_watermark, ensure_ascii=False),
                     json.dumps(generation_meta, ensure_ascii=False),
-                    project_id, employee_id, source_sha256, record['derived_sha256'], exif_status,
+                    project_id, employee_id, source_sha256, record['derived_sha256'], exif_status, intake_operation_id, 'intake',
                 ))
                 self._audit(c, photo_id, 'created', {'source_sha256': source_sha256, 'project_id':project_id, 'employee_id':employee_id})
 
@@ -340,16 +354,34 @@ class FakePhotoService(SupplementEvidenceMixin):
     def get_staging_image_path(self, photo_id: str) -> Optional[Path]:
         """Lấy đường dẫn file ảnh trong staging"""
         with self._connect() as c:
-            row = c.execute('SELECT file_name FROM staging_photos WHERE id=?', (photo_id,)).fetchone()
+            row = c.execute("SELECT file_name FROM staging_photos WHERE id=? AND (intake_operation_id='' OR EXISTS(SELECT 1 FROM supplement_operations o WHERE o.id=staging_photos.intake_operation_id AND o.state='committed'))", (photo_id,)).fetchone()
         if not row:
             return None
         p = self.staging_dir / row[0]
         return p if p.exists() else None
 
+    @serialized
+    def read_verified_derived(self, photo_id):
+        path = self.get_staging_image_path(photo_id)
+        if path is None:
+            raise RuntimeError('Không còn ảnh xử lý hoặc đợt lưu chưa hoàn tất')
+        with self._connect() as c:
+            row = c.execute('SELECT * FROM staging_photos WHERE id=?', (photo_id,)).fetchone()
+        if row is None:
+            raise RuntimeError('Hồ sơ đã bị xóa trong khi tải ảnh')
+        item = dict(row)
+        source = self._source_path(item)
+        if not item.get('source_sha256') or not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != item['source_sha256']:
+            raise RuntimeError('Nguồn ảnh chưa xác nhận hoặc đã thay đổi')
+        raw = path.read_bytes()
+        if not item.get('derived_sha256') or hashlib.sha256(raw).hexdigest() != item['derived_sha256']:
+            raise RuntimeError('Ảnh xử lý đã thay đổi hoặc chưa có hash xác nhận')
+        return path, raw
+
     def get_watermark_crop_bytes(self, photo_id: str) -> Optional[bytes]:
         with self._connect() as c:
             row = c.execute(
-                'SELECT original_file_name, watermark_ocr_json FROM staging_photos WHERE id=?',
+                "SELECT original_file_name, watermark_ocr_json FROM staging_photos WHERE id=? AND (intake_operation_id='' OR EXISTS(SELECT 1 FROM supplement_operations o WHERE o.id=staging_photos.intake_operation_id AND o.state='committed'))",
                 (photo_id,),
             ).fetchone()
         if not row:
@@ -377,6 +409,7 @@ class FakePhotoService(SupplementEvidenceMixin):
             logger.warning('Không thể tạo crop watermark %s: %s', photo_id, exc)
             return None
 
+    @serialized
     def regenerate_staging_photo(
         self, photo_id: str, confirmed_lines: Optional[List[str]] = None
     ) -> Dict:
@@ -460,7 +493,7 @@ class FakePhotoService(SupplementEvidenceMixin):
                     fallback_ok = self.smart_replacer.replace_timestamp(
                         str(temp_in), str(fallback_out), target_date, target_time
                     )
-                    if fallback_ok and fallback_out.exists():
+                    if fallback_ok and fallback_out.exists() and self._verify_local_watermark(fallback_out, analysis, lines):
                         generated = {
                             'status': 'completed',
                             'image_bytes': fallback_out.read_bytes(),
@@ -532,6 +565,7 @@ class FakePhotoService(SupplementEvidenceMixin):
                 c.execute('UPDATE staging_photos SET derived_sha256=?,exif_status=? WHERE id=?',
                           (hashlib.sha256(staging_file.read_bytes()).hexdigest(), exif_status, photo_id))
                 self._audit(c, photo_id, 'regenerated', {'watermark':'completed','exif':exif_status})
+            record['derived_sha256'] = hashlib.sha256(staging_file.read_bytes()).hexdigest()
             record['exif_status'] = exif_status
             record['created_at'] = now_iso
             record['url'] = f"/api/supplement/staging/{photo_id}/image"

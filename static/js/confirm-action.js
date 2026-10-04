@@ -3,6 +3,7 @@
   'use strict';
   let pending = false;
   window.confirmAction = function confirmAction(message) {
+    const options = message && typeof message === 'object' ? message : {message};
     if (pending) return Promise.resolve(false);
     pending = true;
     return new Promise(resolve => {
@@ -17,10 +18,10 @@
       dialog.setAttribute('aria-labelledby', 'confirm-action-title');
       dialog.setAttribute('aria-describedby', 'confirm-action-message');
       dialog.style.cssText = 'background:var(--bg-primary,#fff);color:var(--text-primary,#222);padding:24px;border-radius:12px;width:440px;max-width:100%;max-height:80vh;overflow:auto;box-sizing:border-box';
-      const title = document.createElement('h3'); title.id = 'confirm-action-title'; title.textContent = 'Xác nhận thao tác';
-      const text = document.createElement('p'); text.id = 'confirm-action-message'; text.textContent = message; text.style.whiteSpace = 'pre-wrap';
+      const title = document.createElement('h3'); title.id = 'confirm-action-title'; title.textContent = options.title ?? 'Xác nhận thao tác';
+      const text = document.createElement('p'); text.id = 'confirm-action-message'; text.textContent = options.message ?? ''; text.style.whiteSpace = 'pre-wrap';
       const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Hủy bỏ'; cancel.className = 'btn btn-secondary'; cancel.dataset.confirm = 'cancel';
-      const accept = document.createElement('button'); accept.type = 'button'; accept.textContent = 'Xác nhận'; accept.className = 'btn btn-danger'; accept.dataset.confirm = 'accept'; accept.style.marginLeft = '12px';
+      const accept = document.createElement('button'); accept.type = 'button'; accept.textContent = options.confirmLabel ?? 'Xác nhận'; accept.className = 'btn btn-danger'; accept.dataset.confirm = 'accept'; accept.style.marginLeft = '12px';
       let finished = false;
       function finish(value) {
         if (finished) return; finished = true;

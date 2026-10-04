@@ -598,7 +598,7 @@
         notify(`Đã lưu ${data.count} ảnh. Xem trạng thái xử lý của từng ảnh bên dưới.`, 'info');
 
         // Reload staging
-        await loadStaging();
+        await loadStaging(true);
 
         // Scroll down to staging area
         const stagingCard = document.getElementById('supp-staging-card');
@@ -647,7 +647,7 @@
       const data = await checkedJSON(response);
       if (!data.item) throw new Error('Thiếu kết quả kiểm tra');
       notify(data.item.can_apply === true ? 'Đã kiểm tra: đủ điều kiện áp dụng.' : 'Đã kiểm tra: chưa đủ điều kiện. Xem lý do trên thẻ.', 'info');
-      await loadStaging();
+      await loadStaging(true);
     });
   }
 
@@ -676,11 +676,35 @@
       });
       await checkedJSON(response);
       notify('Đã gắn lại danh tính. Xem trạng thái kiểm tra trên thẻ.', 'info');
-      await loadStaging();
+      await loadStaging(true);
     });
   }
 
-  async function loadStaging() {
+  function statusText(value) {
+    if (value === true) return 'Có';
+    if (value === false) return 'Chưa';
+    if (value && typeof value === 'object') value = value.status;
+    const labels = {matched:'Khớp', consistent:'Phù hợp', unverified:'Chưa xác nhận', verified:'Đã xác nhận', intact:'Nguyên vẹn', available:'Có sẵn', missing:'Thiếu ảnh', original_missing:'Thiếu ảnh gốc', derived_missing:'Thiếu ảnh xử lý', derived_changed:'Ảnh xử lý đã thay đổi', baseline_verified:'Đã xác nhận nguồn hiện tại; thiếu hash tiếp nhận ban đầu', no_portrait:'Thiếu chân dung đã xác nhận', mismatch:'Không khớp', not_matched:'Không khớp', no_match:'Không khớp', unknown:'Chưa rõ', not_run:'Chưa kiểm tra', error:'Lỗi kiểm tra', failed:'Thất bại', completed:'Đã hoàn tất', not_requested:'Chưa yêu cầu', needs_confirmation:'Chờ xác nhận', verification_failed:'Chưa đạt hậu kiểm', identity_unresolved:'Chưa xác định danh tính', legacy:'Ảnh cũ', pending:'Đang chờ', processing:'Đang xử lý', no_face:'Không tìm thấy khuôn mặt', multiple_faces:'Có nhiều khuôn mặt', unmatched:'Không khớp'};
+    return labels[value] || 'Chưa rõ';
+  }
+
+  function originalDownload(url) {
+    const [base, hash] = url.split('#');
+    return base + (base.includes('?') ? '&' : '?') + 'download=1' + (hash ? '#'+hash : '');
+  }
+
+  function imageChoices(item, select) {
+    const row = el('div', null, 'supp-image-choices');
+    for (const [label, url, className] of [['Ảnh gốc', item.original_url, 'btn-view-original'], ['Ảnh xử lý', item.derived_url, 'btn-view-derived']]) {
+      const button = el('button', label, 'supp-tool-btn '+className);
+      button.type = 'button'; button.disabled = !url;
+      button.onclick = event => { event.stopPropagation(); select(url); };
+      row.appendChild(button);
+    }
+    return row;
+  }
+
+  async function loadStaging(afterAction = false) {
     const grid = document.getElementById('supp-staging-grid');
     const emptyBox = document.getElementById('supp-staging-empty');
     const countBadge = document.getElementById('staging-count');
@@ -690,6 +714,7 @@
 
     try {
       const resp = await fetch(`/api/supplement/staging?project_id=${encodeURIComponent(currentProject)}`).then(checkedJSON);
+      if (!Array.isArray(resp.items)) throw new Error('Dữ liệu danh sách không hợp lệ');
       if (resp.success && Array.isArray(resp.items)) {
         stagingPhotos = resp.items;
         const bulkApply = document.getElementById('btn-apply-all-attendance');
@@ -700,7 +725,7 @@
           if (actionsBar) actionsBar.style.setProperty('display', 'none', 'important');
           if (emptyBox) emptyBox.style.display = 'flex';
           grid.replaceChildren();
-          return;
+          return true;
         }
 
         if (actionsBar) actionsBar.style.setProperty('display', 'flex', 'important');
@@ -714,8 +739,8 @@
           // Thumbnail with zoom on click
           const thumbWrap = el('div', null, 'supp-staging-thumb-wrap');
           const img = el('img', null, 'supp-staging-thumb-img');
-          const cacheBuster = `?v=${encodeURIComponent(item.created_at || '')}_${Date.now()}`;
-          if (item.url) img.src = `${item.url}${cacheBuster}`;
+          const previewUrl = item.derived_url || item.original_url;
+          if (previewUrl) img.src = previewUrl;
           else img.style.display = 'none';
           img.alt = item.original_name;
           img.loading = 'lazy';
@@ -731,10 +756,10 @@
             <span>Phóng to</span>
           `;
 
-          if (item.url) thumbWrap.append(img, zoomOverlay);
-          else thumbWrap.appendChild(el('div', 'Không có ảnh dẫn xuất', 'supp-staging-missing-image'));
+          if (previewUrl) thumbWrap.append(img, zoomOverlay);
+          else thumbWrap.appendChild(el('div', 'Không có ảnh để xem', 'supp-staging-missing-image'));
           thumbWrap.onclick = () => {
-            if (!item.url) return;
+            if (!previewUrl) return;
             const cap = `${item.employee || item.employee_id} / ${item.project || item.project_id} / ${item.target_date} ${item.target_time || ""}`;
             openStagingLightbox(item, cap);
           };
@@ -746,17 +771,17 @@
           const metaRow = el('div', null, 'supp-staging-meta-row');
           const badge = el('span', `📅 ${formatDateDisplay(item.target_date)} · ${item.target_time || ''}`, 'supp-staging-badge');
           const statusLabels = {
-            completed: 'Watermark: completed',
+            completed: 'Watermark: Đã hoàn tất',
             needs_confirmation: '⚠ Chờ xác nhận',
             verification_failed: '✕ Chưa đạt hậu kiểm',
             original_missing: '✕ Thiếu ảnh gốc',
-            not_requested: 'Ảnh gốc',
+            not_requested: 'Chưa yêu cầu',
             legacy: 'Ảnh cũ'
           };
           const watermarkStatus = item.processing?.watermark?.status || item.processing?.watermark || item.watermark_status || 'not_requested';
           const statusTag = el(
             'span',
-            statusLabels[watermarkStatus] || watermarkStatus,
+            statusLabels[watermarkStatus] || statusText(watermarkStatus),
             `supp-staging-status-tag ${watermarkStatus}`
           );
           metaRow.append(badge, statusTag);
@@ -788,7 +813,7 @@
               if (!res.success) throw new Error(res.error || res.message || 'Ngày ảnh gốc chưa đủ điều kiện');
               if (res.success) {
                 notify(`Đã đưa ảnh ngày ${formatDateDisplay(item.target_date)} vào chấm công!`, 'success');
-                await loadStaging();
+                await loadStaging(true);
               }
             } catch (e) {
               notify('Lỗi: ' + e.message, 'error');
@@ -817,9 +842,11 @@
 
           // Tool 3: Tải về
           const dlBtn = el('a', '⬇️', 'supp-tool-btn btn btn-secondary');
-          if (item.url) dlBtn.href = `/api/supplement/download-staging/${item.id}`;
+          dlBtn.classList.add('btn-download-original');
+          dlBtn.textContent = 'Tải ảnh gốc';
+          if (item.original_url) dlBtn.href = originalDownload(item.original_url);
           else { dlBtn.setAttribute('aria-disabled', 'true'); dlBtn.onclick = event => event.preventDefault(); }
-          dlBtn.title = 'Tải file ảnh về máy tính';
+          dlBtn.title = 'Tải ảnh gốc về máy tính';
 
           // Tool 4: Xóa
           const delBtn = el('button', '🗑️', 'supp-tool-btn btn btn-danger');
@@ -838,7 +865,7 @@
               const data = await response.json();
               if (!response.ok || !data.success) throw new Error(data.error || 'Delete failed');
               notify('Đã xóa ảnh.', 'info');
-              await loadStaging();
+              await loadStaging(true);
             } catch (e) {
               notify('Lỗi xóa: ' + e.message, 'error');
             } finally { delBtn.disabled = false; if (delBtn.isConnected && document.activeElement === document.body) delBtn.focus(); }
@@ -852,18 +879,21 @@
           rebindBtn.disabled = Boolean(item.applied_path || item.applied_at);
           rebindBtn.onclick = () => rebindStagingPhoto(item, rebindBtn);
           toolsRow.append(recheckBtn, rebindBtn, regenBtn, checkAiBtn, dlBtn, delBtn);
-          actions.append(mainRow, toolsRow);
+          actions.append(mainRow, imageChoices(item, url => openStagingLightbox(item, item.original_name, url)), toolsRow);
 
           const checks = el('div', null, 'supp-staging-checks');
-          for (const [label, value] of [['Ngày', item.date_status], ['Khuôn mặt', item.face_status], ['Toàn vẹn', item.integrity_status], ['Lưu trữ', item.storage_status], ['Watermark', item.processing?.watermark], ['EXIF', item.processing?.exif], ['Có thể áp dụng', item.can_apply]]) checks.appendChild(el('div', `${label}: ${typeof value === 'object' ? JSON.stringify(value) : value ?? 'unknown'}`));
+          for (const [label, value] of [['Ngày', item.date_status], ['Khuôn mặt', item.face_status], ['Toàn vẹn', item.integrity_status], ['Lưu trữ', item.storage_status], ['Watermark', item.processing?.watermark], ['EXIF', item.processing?.exif], ['Có thể áp dụng', item.can_apply]]) checks.appendChild(el('div', `${label}: ${statusText(value)}`));
           for (const reason of item.reasons || []) checks.appendChild(el('div', typeof reason === 'string' ? reason : JSON.stringify(reason)));
           body.append(metaRow, empP, checks, actions);
           card.append(thumbWrap, body);
           grid.appendChild(card);
         });
       }
+      return true;
     } catch (e) {
       console.error('Lỗi tải staging:', e);
+      notify(afterAction === true ? 'Thao tác đã thực hiện nhưng không tải lại được danh sách' : 'Không tải được danh sách ảnh. Vui lòng thử lại.', 'error');
+      return false;
     }
   }
 
@@ -883,7 +913,7 @@
           if (!res.success) throw new Error(res.error || res.message || 'Ngày ảnh gốc chưa đủ điều kiện');
           if (res.success) {
             notify(`✓ ${res.message}`, 'success');
-            await loadStaging();
+            await loadStaging(true);
           }
         } catch (e) {
           notify('Lỗi: ' + e.message, 'error');
@@ -938,7 +968,7 @@
           const data = await response.json();
           if (!response.ok || !data.success) throw new Error(data.error || 'Delete failed');
           notify('Đã xóa toàn bộ ảnh chờ.', 'info');
-          await loadStaging();
+          await loadStaging(true);
         } catch (e) {
           notify('Lỗi xóa: ' + e.message, 'error');
         } finally { btnDelAll.disabled = false; if (btnDelAll.isConnected && document.activeElement === document.body) btnDelAll.focus(); }
@@ -950,15 +980,14 @@
     if (btnRefresh) {
       btnRefresh.onclick = async () => {
         await loadProjects();
-        await loadStaging();
-        notify('Đã làm mới dữ liệu.', 'info');
+        if (await loadStaging()) notify('Đã làm mới dữ liệu.', 'info');
       };
     }
   }
 
   // --- 7.1 STAGING LIGHTBOX & REGENERATE & CHECK AI ---
-  function openStagingLightbox(item, cap) {
-    if (!item.url) { notify('Không có ảnh dẫn xuất.', 'warning'); return; }
+  function openStagingLightbox(item, cap, selectedUrl = item.derived_url || item.original_url) {
+    if (!selectedUrl) { notify('Không có ảnh để xem.', 'warning'); return; }
     const modal = document.getElementById('modal-lightbox');
     const img = document.getElementById('lightbox-img');
     const capEl = document.getElementById('lightbox-caption');
@@ -967,12 +996,14 @@
     const btnCheck = document.getElementById('lightbox-btn-check');
     const btnDl = document.getElementById('lightbox-btn-download');
 
-    const fullUrl = `${item.url}?v=${Date.now()}`;
+    const fullUrl = selectedUrl;
     if (img) img.src = fullUrl;
     if (capEl) capEl.textContent = cap;
 
     if (toolbar) {
       toolbar.style.display = 'flex';
+      toolbar.querySelector('.supp-image-choices')?.remove();
+      toolbar.appendChild(imageChoices(item, url => { if (img) img.src = url; }));
 
       if (btnRegen) {
         btnRegen.onclick = (e) => {
@@ -987,7 +1018,9 @@
         };
       }
       if (btnDl) {
-        btnDl.href = `/api/supplement/download-staging/${item.id}`;
+        btnDl.textContent = 'Tải ảnh gốc';
+        if (item.original_url) { btnDl.href = originalDownload(item.original_url); btnDl.removeAttribute('aria-disabled'); }
+        else { btnDl.removeAttribute('href'); btnDl.setAttribute('aria-disabled', 'true'); }
       }
     }
 
@@ -1077,7 +1110,7 @@
       }
       if (res.ok && data.success && !generationFailed(data)) {
         notify('Đã tạo lại ảnh bằng AI thành công!', 'success');
-        await loadStaging();
+        await loadStaging(true);
 
         // Cập nhật ngay trong Lightbox nếu đang mở
         const lbImg = document.getElementById('lightbox-img');
