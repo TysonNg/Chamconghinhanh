@@ -4774,4 +4774,70 @@ span.flatpickr-weekday {
     color: #b91c1c !important;
     border-color: #f87171 !important;
     transform: scale(1.05) !important;
-}
+}
+
+/* Keep frequent employee actions visible; secondary actions use a compact menu. */
+#subtab-photo-portraits .card-header {
+    gap: 12px;
+    flex-wrap: wrap;
+    overflow: visible;
+}
+#subtab-photo-portraits .header-search-bar {
+    flex: 1 1 220px;
+    min-width: 180px;
+}
+.employee-toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+.employee-more-actions {
+    position: relative;
+}
+.employee-more-actions > summary {
+    list-style: none;
+    cursor: pointer;
+}
+.employee-more-actions > summary::-webkit-details-marker {
+    display: none;
+}
+.employee-more-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 30;
+    width: 260px;
+    max-width: calc(100vw - 48px);
+    padding: 8px;
+    background: var(--bg-card, #fff);
+    border: 1px solid var(--border-color, #dce3eb);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.employee-more-menu .btn {
+    justify-content: flex-start;
+    width: 100%;
+    white-space: normal;
+    text-align: left;
+}
+.employee-more-menu .btn-danger {
+    margin-top: 6px;
+}
+
+.roster-heading, .roster-controls, .roster-summary, .roster-row-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.roster-heading { justify-content:space-between; margin-bottom:14px; }
+.roster-muted, .roster-heading span { color:var(--text-secondary); font-size:12px; }
+.roster-summary { margin:12px 0; }
+.roster-badge { display:inline-block; background:var(--bg-surface, #f3f6fa); border:1px solid var(--border-color, #dce3eb); border-radius:6px; padding:4px 8px; font-size:12px; }
+.roster-badge.needs-review { color:#9a6500; background:#fff7e5; }
+.roster-table-wrap { overflow:auto; max-height:42vh; margin:12px 0; }
+.roster-table-wrap table { width:100%; }
+.roster-table-wrap th { position:sticky; top:0; background:var(--bg-surface, #f3f6fa); z-index:1; }
+#employee-audit-content details { font-size:12px; margin-top:6px; }
+#employee-audit-content summary { cursor:pointer; color:var(--text-secondary); }
+
+.roster-sync-blocked { padding:10px; border-radius:6px; background:#fff7e5; color:#875d00; font-size:13px; }

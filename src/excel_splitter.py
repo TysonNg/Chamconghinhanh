@@ -12,6 +12,8 @@ from typing import Dict, List, Optional, Tuple
 
 import xlrd
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import PatternFill
+from src.attendance_highlight import ATTENDANCE_WARNING_FILL, should_highlight_attendance
 
 
 def _normalize_text(text: str) -> str:
@@ -165,7 +167,12 @@ class ExcelAttendanceSplitter:
         if self.header_row_idx is None:
             raise ValueError("Không nhận diện được header của bảng chấm công.")
 
-        os.makedirs(output_dir, exist_ok=True)
+        output_dir = os.path.normpath(output_dir)
+        drive, rest = os.path.splitdrive(output_dir)
+        parts = [p.rstrip('. ') for p in rest.split(os.sep) if p]
+        clean_dir = (drive + os.sep + os.sep.join(parts)) if drive else (os.sep.join(parts) or output_dir)
+        os.makedirs(clean_dir, exist_ok=True)
+        output_dir = clean_dir
 
         rows = self._iter_data_rows()
         groups: Dict[Tuple[str, str], List[List]] = {}
@@ -205,7 +212,9 @@ class ExcelAttendanceSplitter:
                         values[self.col_map['name']] = display_name
                     named_rows.append(values)
                 data_rows = named_rows
-            safe_name = re.sub(r'[<>:"/\\\\|?*]', '_', str(display_name).strip())
+            safe_name = re.sub(r'[<>:"/\\\\|?*\x00-\x1f]', '_', str(display_name).strip()).rstrip('. ')
+            if not safe_name:
+                safe_name = "nhan_vien"
             identity_suffix = hashlib.sha256((emp_id or norm_name).encode("utf-8")).hexdigest()[:16]
             filename = f"{safe_name}_{identity_suffix}.xlsx"
             out_path = os.path.join(output_dir, filename)
@@ -218,6 +227,9 @@ class ExcelAttendanceSplitter:
             # Write data rows for this person
             for r in data_rows:
                 ws.append(list(r))
+                if should_highlight_attendance(r, self.col_map):
+                    for cell in ws[ws.max_row]:
+                        cell.fill = PatternFill('solid', fgColor=ATTENDANCE_WARNING_FILL)
             wb.save(out_path)
 
             output_files.append(out_path)

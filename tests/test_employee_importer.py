@@ -152,14 +152,20 @@ def test_api_import_file_endpoint(tmp_path):
     data = res.get_json()
     assert data["success"] is True
     assert data["total_found"] == 2
-    assert data["created_new"] == 2
-    assert data["internal_codes_created"] == 2
+    assert data['audit']['filename'] == 'test_list.xlsx'
+    assert len(data['audit']['missing_profiles']) == 2
 
     # Verify employees now exist in project
     emp_res = client.get(f"/api/portraits?project_id={pid}")
     emp_data = emp_res.get_json()
     assert emp_data["success"] is True
-    assert emp_data["total"] == 2
-    assert any(e["payroll_code"] == "00111" for e in emp_data["employees"])
-    assert any(e["payroll_code"] == "00222" for e in emp_data["employees"])
-    assert all(e["internal_code"].startswith("NV-") for e in emp_data["employees"])
+    assert emp_data["total"] == 0  # Reading a roster must not bind photos or create identities.
+    invalid = client.post('/api/portraits/employee/create', json={
+        'project_id': pid, 'name': 'Wrong Name', 'payroll_code': '00111'})
+    assert invalid.status_code == 400
+    valid = client.post('/api/portraits/employee/create', json={
+        'project_id': pid, 'name': 'Nguyễn Văn Một', 'payroll_code': '00111'})
+    assert valid.status_code == 200
+    duplicate = client.post('/api/portraits/employee/create', json={
+        'project_id': pid, 'name': 'Nguyễn Văn Một', 'payroll_code': '00111'})
+    assert duplicate.status_code == 400

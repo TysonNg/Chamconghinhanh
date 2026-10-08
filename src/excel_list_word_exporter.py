@@ -16,6 +16,7 @@ from typing import List, Optional
 
 import xlrd
 from src.excel_splitter import attendance_column_map, convert_xls_cell
+from src.attendance_highlight import ATTENDANCE_WARNING_FILL, should_highlight_attendance
 from openpyxl import load_workbook
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -107,7 +108,7 @@ def _format_xlrd_cell(cell, datemode: int, workbook=None) -> str:
     return str(cell.value).strip()
 
 
-def _read_rows(path: str) -> List[List[str]]:
+def _read_rows(path: str, raw_rows=None) -> List[List[str]]:
     ext = os.path.splitext(path)[1].lower()
     rows: List[List[str]] = []
 
@@ -115,11 +116,18 @@ def _read_rows(path: str) -> List[List[str]]:
         workbook = load_workbook(path, data_only=True)
         worksheet = workbook.active
         for row in worksheet.iter_rows():
+            if raw_rows is not None:
+                raw_rows.append([cell.value for cell in row])
             rows.append([_format_display_value(cell.value) for cell in row])
     else:
         workbook = xlrd.open_workbook(path, formatting_info=True)
         worksheet = workbook.sheet_by_index(0)
         for row_index in range(worksheet.nrows):
+            if raw_rows is not None:
+                raw_rows.append([
+                    convert_xls_cell(workbook, worksheet.cell(row_index, col_index))
+                    for col_index in range(worksheet.ncols)
+                ])
             rows.append([
                 _format_xlrd_cell(worksheet.cell(row_index, col_index), workbook.datemode, workbook)
                 for col_index in range(worksheet.ncols)
@@ -130,8 +138,11 @@ def _read_rows(path: str) -> List[List[str]]:
 
 class ExcelListWordExporter:
     def __init__(self, output_dir: str):
-        self.output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
+        output_dir = os.path.normpath(output_dir)
+        drive, rest = os.path.splitdrive(output_dir)
+        parts = [p.rstrip('. ') for p in rest.split(os.sep) if p]
+        self.output_dir = (drive + os.sep + os.sep.join(parts)) if drive else (os.sep.join(parts) or output_dir)
+        os.makedirs(self.output_dir, exist_ok=True)
 
     def _find_header_row(self, rows: List[List[str]]) -> Optional[int]:
         best_row, best_score = None, 1
@@ -229,7 +240,8 @@ class ExcelListWordExporter:
         row_properties.append(table_header)
 
     def export_from_excel(self, excel_path: str) -> Optional[str]:
-        rows = _read_rows(excel_path)
+        source_rows = []
+        rows = _read_rows(excel_path, raw_rows=source_rows)
         if not rows:
             return None
 
@@ -242,11 +254,14 @@ class ExcelListWordExporter:
         header = [str(value).strip() for value in rows[header_idx][:last_col + 1]]
 
         data_rows = []
-        for raw_row in rows[header_idx + 1:]:
+        highlights = []
+        columns = attendance_column_map(header)
+        for source_index, raw_row in enumerate(rows[header_idx + 1:], header_idx + 1):
             row = (raw_row + [''] * (last_col + 1))[:last_col + 1]
             if all(str(value).strip() == '' for value in row):
                 continue
             data_rows.append([str(value).strip() for value in row])
+            highlights.append(should_highlight_attendance(source_rows[source_index], columns))
 
         document = Document()
         section = document.sections[0]
@@ -283,10 +298,12 @@ class ExcelListWordExporter:
             run = paragraph.add_run(text)
             self._set_run_font(run, 10, bold=True)
 
-        for row_data in data_rows:
+        for row_data, highlight in zip(data_rows, highlights):
             row = table.add_row()
             for index, value in enumerate(row_data):
                 cell = row.cells[index]
+                if highlight:
+                    self._shade_cell(cell, ATTENDANCE_WARNING_FILL)
                 cell.width = column_widths[index]
                 cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                 paragraph = cell.paragraphs[0]

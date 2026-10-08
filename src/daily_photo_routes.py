@@ -120,6 +120,29 @@ def register_daily_photo_routes(app, input_root, project_resolver=None, evidence
         return jsonify(success=True, project=project, date=target.isoformat(), day=f"{target.day:02}",
                        photos=photos, total=len(photos))
 
+    @bp.get("/api/photos/daily/export-word")
+    def export_word():
+        from src.daily_photo_word_exporter import export_daily_photo_word
+        target = requested_day(request.args)
+        project, folder = folder_for(request.args, target)
+        photos = [{"path": p, **shift_info(p)} for p in images(folder)]
+        if not photos:
+            raise ValueError("Ngày đang chọn không có ảnh để xuất Word")
+        display_name = project
+        if project_resolver:
+            selected = project_resolver(request.args.get("project_id") or request.args.get("project", ""))
+            display_name = selected["display_name"]
+        try:
+            output, filename = export_daily_photo_word(display_name, target, photos)
+        except ValueError:
+            raise
+        except Exception:
+            app.logger.exception("Daily photo Word export failed")
+            return jsonify(success=False, error="Không thể tạo file Word. Vui lòng thử lại."), 500
+        return send_file(output, as_attachment=True, download_name=filename,
+                         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                         max_age=0)
+
     @bp.get("/api/photos/view/daily")
     def view():
         name = safe_component(request.args.get("filename"))

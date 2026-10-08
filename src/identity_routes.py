@@ -160,19 +160,67 @@ def register_identity_routes(app, registry_provider, input_root):
         registry().confirm_source(p["project_id"],e["employee_id"],payroll_code,valid_from,reviewer)
         return jsonify(success=True,employee_id=e["employee_id"])
 
+    @bp.get('/api/portraits/audit')
+    def audit():
+        from src.employee_audit import audit_project
+        p = project(request.args)
+        result = audit_project(registry(), p['project_id'])
+        result['shared_images'] = []
+        if request.args.get('images') == '1':
+            import hashlib
+            from collections import defaultdict
+            groups = defaultdict(list)
+            r = registry()
+            for other_project in r.list_projects():
+                for e in r.list_employees(other_project['project_id']):
+                    if not e['active']:
+                        continue
+                    for image in display_paths(other_project, e['employee_id']):
+                        digest = hashlib.sha256(image.read_bytes()).hexdigest()
+                        groups[digest].append({'project': other_project['display_name'],
+                            'project_id': other_project['project_id'], 'employee_id': e['employee_id'],
+                            'name': e['display_name']})
+            result['shared_images'] = [group for group in groups.values()
+                if any(i['project_id'] == p['project_id'] for i in group)
+                and len({(i['project_id'], i['employee_id']) for i in group}) > 1]
+        return jsonify(success=True, audit=result)
+
     @bp.post("/api/portraits/employee/create")
     def create_employee():
         from src.identity_registry import _day
+        from src.employee_audit import load_roster, name_key
+        from src.employee_importer import normalize_vietnamese_name
         data=payload(); p=project(data); r=registry()
         name=str(data.get("name") or "").strip()
         reviewer=str(data.get("reviewer") or "system").strip()
         if not name:
             raise ValueError("Nhập tên nhân viên")
         payroll_code = str(data.get("payroll_code") or "").strip()
+        roster = load_roster(r, p['project_id'])
+        if roster['filename']:
+            selected = [row for row in roster['rows'] if row['payroll_code'] == payroll_code and name_key(row['name']) == name_key(name)]
+            code_rows = [row for row in roster['rows'] if row['payroll_code'] == payroll_code]
+            if not payroll_code or len(selected) != 1 or len(code_rows) != 1:
+                raise ValueError('Chọn đúng tên và mã từ bảng chấm công đã đối chiếu')
+        existing = r.list_employees(p['project_id'])
+        for other in existing:
+            if not other['active']:
+                continue
+            codes = {m['payroll_code'] for m in other['memberships'] if m['payroll_code']}
+            if payroll_code and payroll_code in codes:
+                raise ValueError('Mã chấm công đã có hồ sơ trong dự án; hãy kiểm tra hồ sơ hiện có')
+            if normalize_vietnamese_name(other['display_name']) == normalize_vietnamese_name(name) and (not payroll_code or not codes or payroll_code in codes):
+                raise ValueError('Đã có hồ sơ cùng tên chưa phân biệt được; hãy kiểm tra mã và ảnh trước khi tạo thêm')
         valid_from = data.get("valid_from") or "2000-01-01"
         eid=uuid.uuid4().hex
         with r._connect() as c:
             c.execute("BEGIN IMMEDIATE")
+            # Recheck while holding the write lock so simultaneous submissions
+            # cannot create two unnumbered profiles for the same name.
+            for other in c.execute('SELECT employee_id, display_name FROM employees WHERE active=1 AND employee_id IN (SELECT employee_id FROM memberships WHERE project_id=? UNION SELECT employee_id FROM legacy_sources WHERE project_id=?)', (p['project_id'], p['project_id'])).fetchall():
+                codes = {row[0] for row in c.execute('SELECT payroll_code FROM memberships WHERE project_id=? AND employee_id=? AND payroll_code<>?', (p['project_id'], other['employee_id'], ''))}
+                if (payroll_code and payroll_code in codes) or (normalize_vietnamese_name(other['display_name']) == normalize_vietnamese_name(name) and (not payroll_code or not codes)):
+                    raise ValueError('Hồ sơ cùng tên hoặc mã đã tồn tại; kiểm tra hồ sơ hiện có trước khi tạo thêm')
             c.execute("INSERT INTO employees(employee_id,display_name) VALUES(?,?)",(eid,name))
             internal_code, _ = r._ensure_internal_code(c, eid)
             r._assign(c,p["project_id"],eid,payroll_code,_day(valid_from),None)
@@ -184,7 +232,8 @@ def register_identity_routes(app, registry_provider, input_root):
     @bp.post("/api/portraits/import-file")
     def import_file():
         """Nhập danh sách nhân viên & mã từ file Excel (.xls/.xlsx) hoặc PDF."""
-        from src.employee_importer import extract_employees_from_file, sync_employees_to_project
+        from src.employee_importer import extract_employees_from_file
+        from src.employee_audit import save_roster, audit_project
         import tempfile
         r = registry()
 
@@ -230,30 +279,18 @@ def register_identity_routes(app, registry_provider, input_root):
 
             employees = extract_employees_from_file(target_path)
             if not employees:
-                return jsonify(
-                    success=True,
-                    project=p["storage_dir"],
-                    project_id=p["project_id"],
-                    total_found=0,
-                    bound_existing=0,
-                    created_new=0,
-                    updated_code=0,
-                    unchanged=0,
-                    details=[],
-                    message="Không tìm thấy nhân viên nào trong file"
-                )
+                raise ValueError('Không tìm thấy nhân viên trong file; bảng đối chiếu cũ chưa được thay đổi')
 
-            sync_results = sync_employees_to_project(
-                project_id=p["project_id"],
-                employees=employees,
-                identity_registry=r
-            )
+            filename = Path(file.filename if 'file' in request.files else target_path).name
+            save_roster(r, p['project_id'], filename, employees)
 
             return jsonify(
                 success=True,
                 project=p["storage_dir"],
                 project_id=p["project_id"],
-                **sync_results
+                total_found=len(employees),
+                audit=audit_project(r, p['project_id']),
+                message='Đã đọc bảng để đối chiếu. Hồ sơ và ảnh hiện có được giữ nguyên; chọn người từ bảng để tạo mới.'
             )
         finally:
             if temp_path and os.path.exists(temp_path):
@@ -261,6 +298,52 @@ def register_identity_routes(app, registry_provider, input_root):
                     os.remove(temp_path)
                 except Exception:
                     pass
+
+    @bp.post('/api/portraits/exclusive-project')
+    def set_exclusive_project():
+        from src.project_exclusivity import exclusive_assignment
+        data = payload()
+        p = project(data)
+        result = exclusive_assignment(registry(), p['project_id'], data.get('employee_id'),
+                                      data.get('apply') is True, data.get('confirmation_keys'))
+        return jsonify(success=True, **result)
+
+    @bp.post('/api/portraits/import-roster')
+    def bulk_import_roster():
+        from src.roster_import import import_roster
+        data = payload()
+        if not data.get('project_id'):
+            raise ValueError('Chọn dự án bằng ID')
+        p = project(data)
+        if data.get('authoritative') is True:
+            from src.roster_sync import sync_roster
+            result = sync_roster(registry(), p['project_id'], data.get('apply') is True,
+                                 data.get('roster_token'), data.get('effective_date'), data.get('selections'), data.get('skipped'))
+            return jsonify(success=True, **result)
+        result = import_roster(registry(), p['project_id'], apply=data.get('apply') is True,
+                               expected_token=data.get('roster_token'))
+        return jsonify(success=True, **result)
+
+    @bp.post('/api/portraits/roster-transfer')
+    def transfer_from_roster():
+        from src.roster_import import import_roster
+        data = payload()
+        p = project(data)
+        if not data.get('effective_date'):
+            raise ValueError('Chọn ngày chuyển dự án')
+        preview = import_roster(registry(), p['project_id'])
+        row = next((row for row in preview['rows'] if row['payroll_code'] == data.get('payroll_code')
+                    and row['action'] == 'transfer'), None)
+        candidate = next((e for e in (row or {}).get('transfer_candidates', [])
+                          if e['employee_id'] == data.get('employee_id')
+                          and e['source_project_id'] == data.get('source_project_id')), None)
+        if not candidate:
+            raise ValueError('Bảng hoặc hồ sơ đã thay đổi; đối chiếu lại trước khi chuyển')
+        registry().transfer_employee(candidate['source_project_id'], p['project_id'],
+                                     candidate['employee_id'], data['effective_date'],
+                                     row['payroll_code'], 'roster-confirmation')
+        return jsonify(success=True, message='Đã chuyển hồ sơ và ảnh, giữ lịch sử dự án nguồn',
+                       payroll_code=row['payroll_code'])
 
     @bp.post("/api/portraits/employee/upload")
     def upload():
@@ -376,6 +459,16 @@ def register_identity_routes(app, registry_provider, input_root):
             matched.unlink(missing_ok=True)
 
         return jsonify(success=True, message="Đã xóa ảnh chân dung thành công", deleted=relative)
+
+    @bp.post("/api/portraits/employees/delete-all")
+    def archive_project_employees():
+        data = payload()
+        if not data.get("project_id"):
+            raise ValueError("Chọn dự án bằng ID")
+        p = project(data)
+        count = registry().archive_project_employees(p["project_id"])
+        return jsonify(success=True, archived_count=count, project_id=p["project_id"],
+                       message=f"Đã lưu trữ {count} nhân viên; giữ nguyên ảnh và lịch sử")
 
     @bp.post("/api/portraits/employee/delete")
     def archive_employee():

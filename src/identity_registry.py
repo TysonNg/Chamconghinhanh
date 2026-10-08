@@ -8,7 +8,26 @@ import secrets
 import re
 import shutil
 import sqlite3
+import unicodedata
 import uuid
+
+
+def _casefold_unicode(value):
+    """Unicode-aware case-insensitive normalization.
+
+    SQLite COLLATE NOCASE only handles ASCII a-z/A-Z.
+    Vietnamese characters like Á/á are treated as different,
+    which causes duplicate projects on case-insensitive filesystems (Windows).
+    """
+    return unicodedata.normalize('NFC', value).casefold()
+
+def _is_uuid_like(value):
+    """Kiểm tra chuỗi có phải dạng UUID/hex kỹ thuật (không phải họ tên người)."""
+    if not isinstance(value, str):
+        return False
+    v = value.strip()
+    return bool(re.fullmatch(r"^[0-9a-fA-F]{32}$", v) or re.fullmatch(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", v))
+
 
 @dataclass(frozen=True)
 class IdentityResolution:
@@ -65,6 +84,10 @@ class IdentityRegistry:
                     employee_id TEXT NOT NULL REFERENCES employees(employee_id),
                     relative_path TEXT NOT NULL, valid_from TEXT NOT NULL,
                     PRIMARY KEY(project_id,employee_id,relative_path));
+                CREATE TABLE IF NOT EXISTS project_employee_archives (
+                    project_id TEXT NOT NULL REFERENCES projects(project_id),
+                    employee_id TEXT NOT NULL REFERENCES employees(employee_id),
+                    PRIMARY KEY(project_id, employee_id));
                 CREATE TABLE IF NOT EXISTS legacy_sources (
                     project_id TEXT NOT NULL REFERENCES projects(project_id),
                     employee_id TEXT NOT NULL REFERENCES employees(employee_id),
@@ -86,26 +109,51 @@ class IdentityRegistry:
     def register_project(self, display_name, storage_dir=None):
         name = _component(display_name)
         folder = _component(storage_dir or name)
+        folder_key = _casefold_unicode(folder)
         with self._connect() as c:
             c.execute("BEGIN IMMEDIATE")
-            found = c.execute("SELECT * FROM projects WHERE storage_dir=? COLLATE NOCASE", (folder,)).fetchone()
-            if found:
-                return dict(found)
+            # Use Python-side Unicode casefold instead of SQLite COLLATE NOCASE
+            # which only handles ASCII and fails for Vietnamese characters.
+            all_projects = c.execute("SELECT * FROM projects ORDER BY active DESC").fetchall()
+            for row in all_projects:
+                if _casefold_unicode(row["storage_dir"]) == folder_key or _casefold_unicode(row["display_name"]) == folder_key:
+                    return dict(row)
             pid = uuid.uuid4().hex
             c.execute("INSERT INTO projects(project_id,display_name,storage_dir) VALUES(?,?,?)", (pid,name,folder))
         return self.get_project(pid)
 
     def get_project(self, reference):
-        with self._connect() as c:
-            rows = c.execute("SELECT * FROM projects WHERE project_id=? OR storage_dir=? COLLATE NOCASE OR display_name=?",
-                             (reference,reference,reference)).fetchall()
-        if len(rows) != 1:
+        if not reference:
             raise ValueError("Dự án không tồn tại hoặc tên dự án không duy nhất")
-        return dict(rows[0])
+        ref_str = str(reference).strip()
+        ref_key = _casefold_unicode(ref_str)
+        with self._connect() as c:
+            row = c.execute("SELECT * FROM projects WHERE project_id=?", (ref_str,)).fetchone()
+            if row:
+                return dict(row)
+            all_p = c.execute("SELECT * FROM projects").fetchall()
+            matches = [dict(r) for r in all_p if _casefold_unicode(r["storage_dir"]) == ref_key or _casefold_unicode(r["display_name"]) == ref_key]
+            active_matches = [m for m in matches if m["active"]]
+            if len(active_matches) == 1:
+                return active_matches[0]
+            if len(matches) == 1:
+                return matches[0]
+            if not matches:
+                raise ValueError("Dự án không tồn tại hoặc tên dự án không duy nhất")
+            raise ValueError("Dự án không tồn tại hoặc tên dự án không duy nhất")
 
     def list_projects(self, include_archived=False):
         with self._connect() as c:
-            return [dict(r) for r in c.execute("SELECT * FROM projects" + ("" if include_archived else " WHERE active=1") + " ORDER BY display_name")]
+            rows = [dict(r) for r in c.execute("SELECT * FROM projects" + ("" if include_archived else " WHERE active=1") + " ORDER BY display_name")]
+            seen = {}
+            for r in rows:
+                key = _casefold_unicode(r["storage_dir"])
+                if key not in seen:
+                    seen[key] = r
+                else:
+                    if r["active"] and not seen[key]["active"]:
+                        seen[key] = r
+            return list(seen.values())
 
     def rename_project(self, project_id, name):
         name = _component(name)
@@ -282,21 +330,46 @@ class IdentityRegistry:
         root=self.project_portrait_dir(project_id)
         if not root.exists():
             return []
+        valid_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
         with self._connect() as c:
             c.execute("BEGIN IMMEDIATE")
             for path in sorted(root.iterdir()):
                 if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
                     continue
-                if not path.is_dir() and path.suffix.lower() not in {".jpg",".jpeg",".png",".bmp",".webp"}:
+                if not path.is_dir() and path.suffix.lower() not in valid_exts:
                     continue
+
                 rel=path.name
+                stem_or_name = path.name if path.is_dir() else path.stem
+
+                # Tuyệt đối không dùng mã hex/UUID kỹ thuật làm tên nhân viên hiển thị
+                if _is_uuid_like(stem_or_name):
+                    emp_row = c.execute("SELECT employee_id FROM employees WHERE employee_id=?", (stem_or_name,)).fetchone()
+                    if emp_row and path.is_dir():
+                        target_eid = emp_row["employee_id"]
+                        bound = c.execute("SELECT 1 FROM portrait_bindings WHERE project_id=? AND employee_id=?", (project_id, target_eid)).fetchone()
+                        if not bound and c.execute("SELECT 1 FROM memberships WHERE project_id=? AND employee_id=?", (project_id, target_eid)).fetchone():
+                            self._bind(c, project_id, target_eid, rel, "system")
+                    continue
+
                 if c.execute("SELECT 1 FROM legacy_sources WHERE project_id=? AND relative_path=?",(project_id,rel)).fetchone():
                     continue
                 bindings=c.execute("SELECT relative_path FROM portrait_bindings WHERE project_id=?",(project_id,)).fetchall()
                 if any(Path(binding[0]).parts[0] == rel for binding in bindings):
                     continue
-                eid=uuid.uuid4().hex
-                c.execute("INSERT INTO employees(employee_id,display_name) VALUES(?,?)",(eid,path.name if path.is_dir() else path.stem))
+                existing_emp = c.execute("""
+                    SELECT e.employee_id FROM employees e
+                    WHERE e.display_name=? AND e.employee_id IN (
+                        SELECT employee_id FROM memberships WHERE project_id=?
+                        UNION SELECT employee_id FROM portrait_bindings WHERE project_id=?
+                        UNION SELECT employee_id FROM legacy_sources WHERE project_id=?
+                    )
+                """, (stem_or_name, project_id, project_id, project_id)).fetchone()
+                if existing_emp:
+                    eid = existing_emp["employee_id"]
+                else:
+                    eid=uuid.uuid4().hex
+                    c.execute("INSERT INTO employees(employee_id,display_name) VALUES(?,?)",(eid,stem_or_name))
                 c.execute("INSERT INTO legacy_sources VALUES(?,?,?)",(project_id,eid,rel))
         return self.list_employees(project_id)
 
@@ -324,6 +397,9 @@ class IdentityRegistry:
             items=[]
             for row in rows:
                 item=dict(row)
+                if c.execute("SELECT 1 FROM project_employee_archives WHERE project_id=? AND employee_id=?",
+                             (project_id, item["employee_id"])).fetchone():
+                    item["active"] = 0
                 memberships=[dict(r) for r in c.execute("SELECT * FROM memberships WHERE project_id=? AND employee_id=? ORDER BY valid_from DESC",
                                                       (project_id,item["employee_id"]))]
                 sources=[r[0] for r in c.execute("SELECT relative_path FROM legacy_sources WHERE project_id=? AND employee_id=?",
@@ -429,3 +505,15 @@ class IdentityRegistry:
     def archive_employee(self,employee_id):
         with self._connect() as c:
             c.execute("UPDATE employees SET active=0 WHERE employee_id=?",(employee_id,))
+
+    def archive_project_employees(self, project_id):
+        self.get_project(project_id)
+        self.import_legacy(project_id)
+        with self._connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            cursor = c.execute("""INSERT OR IGNORE INTO project_employee_archives(project_id, employee_id)
+                SELECT ?, employee_id FROM employees WHERE active=1 AND employee_id IN
+                (SELECT employee_id FROM memberships WHERE project_id=?
+                 UNION SELECT employee_id FROM legacy_sources WHERE project_id=?)""",
+                (project_id, project_id, project_id))
+            return cursor.rowcount

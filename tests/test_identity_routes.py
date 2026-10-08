@@ -15,6 +15,58 @@ def client(tmp_path):
 def photo():
     b=io.BytesIO(); Image.new("RGB",(12,12),"blue").save(b,"PNG"); b.seek(0); return b
 
+
+def test_audit_reports_cross_project_candidates_and_name_mismatch(tmp_path):
+    from src.employee_audit import save_roster
+    c, r = client(tmp_path)
+    a, b = r.register_project('A'), r.register_project('B')
+    for p, name in [(a, 'Nguyễn Văn A'), (b, 'Nguyen Van A')]:
+        response = c.post('/api/portraits/employee/create', json={
+            'project_id': p['project_id'], 'name': name, 'payroll_code': '001'})
+        assert response.status_code == 200
+    save_roster(r, a['project_id'], 'roster.xlsx', [{'name': 'Different Name', 'payroll_code': '001'}])
+    data = c.get('/api/portraits/audit', query_string={'project_id': a['project_id']}).json['audit']
+    row = data['employees'][0]
+    assert 'Tên hồ sơ khác tên trong bảng' in row['issues']
+    assert row['other_projects'][0]['project'] == 'B'
+    assert not row['other_projects'][0]['same_identity']
+    assert r.list_employees(a['project_id'])[0]['display_name'] == 'Nguyễn Văn A'
+
+
+def test_audit_detects_shared_photo_even_when_names_differ(tmp_path):
+    c, r = client(tmp_path)
+    projects = [r.register_project('A'), r.register_project('B')]
+    for p, name in zip(projects, ['Person One', 'Different Person']):
+        res = c.post('/api/portraits/employee/create', json={
+            'project_id': p['project_id'], 'name': name, 'payroll_code': '001'})
+        assert res.status_code == 200
+        uploaded = c.post('/api/portraits/employee/upload', data={
+            'project_id': p['project_id'], 'employee_id': res.json['employee_id'],
+            'files': (photo(), 'portrait.png')})
+        assert uploaded.status_code == 200
+    result = c.get('/api/portraits/audit', query_string={'project_id': projects[0]['project_id'], 'images': '1'})
+    assert result.status_code == 200
+    assert len(result.json['audit']['shared_images']) == 1
+    assert len(result.json['audit']['shared_images'][0]) == 2
+
+
+def test_create_blocks_similar_pending_name_and_ambiguous_roster_code(tmp_path):
+    from src.employee_audit import save_roster
+    c, r = client(tmp_path)
+    p = r.register_project('A')
+    response = c.post('/api/portraits/employee/create', json={
+        'project_id': p['project_id'], 'name': 'Đặng Văn Minh'})
+    assert response.status_code == 200
+    blocked = c.post('/api/portraits/employee/create', json={
+        'project_id': p['project_id'], 'name': 'dang van minh', 'payroll_code': '0001'})
+    assert blocked.status_code == 400
+    save_roster(r, p['project_id'], 'roster.xlsx', [
+        {'name': 'One', 'payroll_code': '002'}, {'name': 'Two', 'payroll_code': '002'}])
+    blocked = c.post('/api/portraits/employee/create', json={
+        'project_id': p['project_id'], 'name': 'One', 'payroll_code': '002'})
+    assert blocked.status_code == 400
+    assert len(r.list_employees(p['project_id'])) == 1
+
 def test_existing_portraits_require_confirmation_and_use_ids(tmp_path):
     c,r=client(tmp_path)
     folder=r.portrait_root/"Site"/"Same Name"
@@ -268,3 +320,23 @@ def test_transfer_legacy_employee_removes_source_listing_and_keeps_history(tmp_p
     assert r.portrait_paths(sid, eid, yesterday) == [image]
     projects = c.get("/api/projects").json["projects"]
     assert next(p for p in projects if p["project_id"] == sid)["employee_count"] == 0
+
+
+def test_delete_all_employees_is_project_scoped_and_preserves_history(tmp_path):
+    c, r = client(tmp_path)
+    a, b = r.register_project('A'), r.register_project('B')
+    eid = c.post('/api/portraits/employee/create', json={
+        'project_id': a['project_id'], 'name': 'Shared Person', 'payroll_code': '001'}).json['employee_id']
+    with r._connect() as db:
+        r._assign(db, b['project_id'], eid, '002', '2020-01-01', None)
+    assert c.post('/api/portraits/employees/delete-all', json={}).status_code == 400
+    result = c.post('/api/portraits/employees/delete-all', json={'project_id': a['project_id']})
+    assert result.status_code == 200
+    assert result.json['archived_count'] == 1
+    assert r.list_employees(a['project_id'])[0]['active'] == 0
+    assert r.list_employees(b['project_id'])[0]['active'] == 1
+    assert r.get_employee(eid)['active'] == 1
+    assert r.list_employees(a['project_id'])[0]['memberships']
+    assert c.post('/api/portraits/employees/delete-all', json={'project_id': a['project_id']}).json['archived_count'] == 0
+    assert c.get('/api/portraits', query_string={'project_id': a['project_id']}).json['employees'] == []
+

@@ -128,3 +128,26 @@ def test_transfer_same_day_membership(registry):
     registry.transfer_employee(pa["project_id"], pb["project_id"], e["employee_id"], "2026-10-02", "B01", "Admin")
     assert registry.resolve_employee(pb["project_id"], "B01", date(2026, 10, 2)).employee_id == e["employee_id"]
 
+def test_import_legacy_ignores_uuid_directories_and_files(registry):
+    import uuid
+    p = registry.register_project("Project UUID Test")
+    root = registry.project_portrait_dir(p["project_id"])
+    
+    # 1. Folder with UUID name
+    uuid_dir = root / uuid.uuid4().hex
+    uuid_dir.mkdir(parents=True)
+    (uuid_dir / "test.jpg").write_bytes(b"dummy")
+    
+    # 2. File with UUID name
+    (root / f"{uuid.uuid4().hex}.jpg").write_bytes(b"dummy2")
+    
+    # 3. Legitimate human named folder
+    human_dir = root / "Trần Văn Thật"
+    human_dir.mkdir(parents=True)
+    (human_dir / "portrait.jpg").write_bytes(b"dummy3")
+    
+    emps = registry.import_legacy(p["project_id"])
+    assert len(emps) == 1
+    assert emps[0]["display_name"] == "Trần Văn Thật"
+
+

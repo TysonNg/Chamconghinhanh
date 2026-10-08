@@ -323,6 +323,8 @@ class PDFFaceAnalyzer:
             elif log_callback:
                 log_callback(f"⚠️ Không đọc được dữ liệu từ {f}", "warning")
 
+        from src.face_scan_period import filter_scan_people
+        persons = filter_scan_people(persons, report_options)
         final_persons = merge_attendance_people(
             persons, project_id=self.project_id, registry=self.identity_registry)
         total_persons = len(final_persons)

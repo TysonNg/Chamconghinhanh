@@ -6,6 +6,23 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../static/js/app.js'), 'utf8');
 
+test('uploaded Excel split button starts extraction for the selected file', async () => {
+  const nodes = {
+    'excel-filename': { textContent: '' },
+    'excel-selected-file': { style: {} },
+  };
+  const context = vm.createContext({
+    document: { getElementById: id => nodes[id] },
+    extractExcel: async () => vm.runInContext('excelFilename', context),
+  });
+  const start = source.indexOf('function selectExcelForExtract(');
+  const end = source.indexOf('async function loadExcelExtractedFiles(', start);
+  vm.runInContext('let excelFilename = null;\n' + source.slice(start, end), context);
+  assert.equal(await context.selectExcelForExtract('cham cong bv t9.26.xlsx'), 'cham cong bv t9.26.xlsx');
+  assert.equal(nodes['excel-filename'].textContent, 'cham cong bv t9.26.xlsx');
+  assert.equal(nodes['excel-selected-file'].style.display, 'block');
+});
+
 function functionSection(name, nextName) {
   const start = source.indexOf(`async function ${name}(`);
   const end = source.indexOf(`async function ${nextName}(`, start + 1);

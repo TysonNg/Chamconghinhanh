@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="/static/vendor/flatpickr/flatpickr.min.css">
     <link rel="stylesheet" href="/static/vendor/flatpickr/plugins/monthSelect.css">
-    <link rel="stylesheet" href="/static/css/style.css?v=20260930_3">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261008_batch_project_select">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
@@ -170,8 +170,8 @@
                                             <label for="excel-face-threshold">Ngưỡng match:</label>
                                             <input id="excel-face-threshold" type="number" step="0.01" min="0.20" max="0.80" value="0.40" style="width: 80px;">
                                         </div>
-                                        <button class="btn btn-secondary" onclick="syncEmployeesFromExcel()" id="btn-excel-sync-employees" title="Đồng bộ danh sách nhân viên và mã từ file Excel này vào dự án">
-                                            Đồng Bộ Nhân Viên
+                                        <button class="btn btn-secondary" onclick="syncEmployeesFromExcel()" id="btn-excel-sync-employees" title="Dùng file Excel này để đối chiếu tên và mã nhân viên trong dự án đã chọn">
+                                            Đối chiếu / Nhập nhân viên
                                         </button>
                                         <button class="btn btn-primary" onclick="extractExcel()" id="btn-excel-extract">
                                             Bắt Đầu Tách
@@ -315,8 +315,8 @@
                                             <label for="pdf-face-threshold">Ngưỡng match:</label>
                                             <input id="pdf-face-threshold" type="number" step="0.01" min="0.20" max="0.80" value="0.40" style="width: 80px;">
                                         </div>
-                                        <button class="btn btn-secondary" onclick="syncEmployeesFromPDF()" id="btn-pdf-sync-employees" title="Đồng bộ danh sách nhân viên và mã từ file PDF này vào dự án">
-                                            Đồng Bộ Nhân Viên
+                                        <button class="btn btn-secondary" onclick="syncEmployeesFromPDF()" id="btn-pdf-sync-employees" title="Dùng file PDF này để đối chiếu tên và mã nhân viên trong dự án đã chọn">
+                                            Đối chiếu / Nhập nhân viên
                                         </button>
                                         <button class="btn btn-primary" onclick="extractPDF()" id="btn-extract">
                                             Bắt Đầu Tách
@@ -672,6 +672,9 @@
                                 <span style="font-weight: normal; font-size: 13px; color: var(--text-muted); margin-left: 8px;" id="selected-day-subinfo">(0 ảnh)</span>
                             </h2>
                             <div class="card-header-actions">
+                                <button class="btn btn-primary btn-sm" onclick="exportDailyPhotosWord(this)" id="btn-export-day-photos-word" type="button">
+                                    Xuất Word ngày này
+                                </button>
                                 <button class="btn btn-danger btn-sm" onclick="confirmDeleteAllDayPhotos()" id="btn-delete-all-day-photos" style="display: none;">
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="3 6 5 6 21 6"></polyline>
@@ -724,44 +727,20 @@
                                     <input type="text" id="employee-search-input" placeholder="Tìm kiếm theo tên nhân viên..." oninput="onEmployeeSearch(this.value)">
                                 </div>
                             </div>
-                            <div class="card-header-actions">
-                                <button class="btn btn-primary btn-sm" onclick="openCreateEmployeeModal()">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                                        <circle cx="12" cy="7" r="4"></circle>
-                                        <line x1="20" y1="8" x2="20" y2="14"></line>
-                                        <line x1="23" y1="11" x2="17" y2="11"></line>
-                                    </svg>
-                                    <span>Thêm Nhân Viên</span>
-                                </button>
-                                <button class="btn btn-secondary btn-sm" onclick="triggerImportEmployeesFile()" title="Nhập danh sách nhân viên và mã từ file Excel (.xls/.xlsx) hoặc PDF">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                        <polyline points="17 8 12 3 7 8"></polyline>
-                                        <line x1="12" y1="3" x2="12" y2="15"></line>
-                                    </svg>
-                                    <span>Nhập từ Excel/PDF</span>
-                                </button>
-                                <button class="btn btn-secondary btn-sm" onclick="openProjectPortraitsFolder()" title="Mở thư mục ảnh chân dung của toàn bộ dự án trên máy tính">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                                    </svg>
-                                    <span>Mở Thư Mục Chân Dung</span>
-                                </button>
+                            <div class="card-header-actions employee-toolbar-actions">
+                                <button class="btn btn-primary btn-sm" onclick="triggerImportEmployeesFile()" title="Chọn bảng chấm công Excel/PDF để đối chiếu và nhập hàng loạt">Nhập từ bảng</button>
+                                <button class="btn btn-secondary btn-sm" onclick="openCreateEmployeeModal()">Thêm nhân viên</button>
+                                <button class="btn btn-secondary btn-sm" onclick="loadPortraits(this)">Làm mới</button>
+                                <details class="employee-more-actions">
+                                    <summary class="btn btn-secondary btn-sm">Thao tác khác ▾</summary>
+                                    <div class="employee-more-menu" onclick="if (event.target.closest('button')) this.closest('details').removeAttribute('open')">
+                                        <button class="btn btn-secondary btn-sm" onclick="openEmployeeAudit()">Kiểm tra hồ sơ / Trùng dự án</button>
+                                        <button class="btn btn-secondary btn-sm" onclick="openProjectPortraitsFolder()">Mở thư mục chân dung</button>
+                                        <button id="generate-internal-codes" class="btn btn-secondary btn-sm" onclick="generateInternalEmployeeCodes(this)" title="Tạo mã nội bộ cho nhân viên chưa có mã trên tất cả dự án">Tạo mã nội bộ hàng loạt</button>
+                                        <button id="delete-all-project-employees" class="btn btn-danger btn-sm" onclick="deleteAllProjectEmployees(this)">Xóa tất cả nhân viên</button>
+                                    </div>
+                                </details>
                                 <input type="file" id="import-employees-file-input" accept=".xls,.xlsx,.pdf" style="display: none;" onchange="handleImportEmployeesFile(this)">
-                                <button id="generate-internal-codes" class="btn btn-secondary btn-sm"
-                                    onclick="generateInternalEmployeeCodes(this)"
-                                    title="Tạo mã nội bộ cho mọi nhân viên đang hoạt động chưa có mã, trên tất cả dự án">
-                                    Tạo mã nội bộ hàng loạt
-                                </button>
-                                <button class="btn btn-secondary btn-sm" onclick="loadPortraits(this)">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="23 4 23 10 17 10"></polyline>
-                                        <polyline points="1 20 1 14 7 14"></polyline>
-                                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                                    </svg>
-                                    <span>Làm mới</span>
-                                </button>
                             </div>
                         </div>
                         <div class="card-body">
@@ -807,14 +786,6 @@
 
                         <!-- Actions right -->
                         <div class="zalo-status-actions">
-                            <button type="button" class="btn btn-secondary btn-sm" id="btn-zalo-auto-sync-modal" onclick="openZaloAutoSyncModal()" title="Cài đặt lịch tự động tải và tải bù ảnh" style="display: inline-flex; align-items: center; gap: 6px;">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <circle cx="12" cy="12" r="10"></circle>
-                                    <polyline points="12 6 12 12 16 14"></polyline>
-                                </svg>
-                                <span>Lịch Tự Động</span>
-                                <span id="zalo-header-sync-status-badge" class="badge" style="font-size: 10px; padding: 1px 5px; background: #e2e8f0; color: #475569;">Tắt</span>
-                            </button>
                             <button class="btn btn-primary" id="btn-zalo-login-qr" onclick="startZaloQrLogin()">
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <rect x="3" y="3" width="7" height="7"></rect>
@@ -979,44 +950,9 @@
                             <div class="form-group mb-3">
                                 <div class="d-flex justify-between align-center mb-1">
                                     <label for="zalo-target-project" style="font-weight: 600; font-size: 13px; margin: 0;">2. Lưu Vào Thư Mục Dự Án:</label>
-                                    <button type="button" class="btn-text-link" onclick="addCurrentSelectionToAutoSync()" style="font-size: 12px; font-weight: 600; color: var(--primary); cursor: pointer;" title="Thêm nhóm và dự án này vào lịch quét tự động hằng ngày">
-                                        + Thêm vào Lịch Tự Động
-                                    </button>
                                 </div>
                                 <select id="zalo-target-project" class="form-input"></select>
                                 <div class="text-hint mt-1">Ảnh sẽ được lưu tự động vào <code>input_images/{Dự án}/{Ngày}/</code> để sẵn sàng quét mặt.</div>
-                            </div>
-
-                            <!-- Smart Gap Alert (Chỉ hiện khi thiếu ảnh) -->
-                            <div id="zalo-smart-gap-alert" class="zalo-smart-alert mb-3" style="display: none;">
-                                <div class="d-flex justify-between align-center flex-wrap gap-2">
-                                    <div class="d-flex align-center gap-2">
-                                        <span style="font-size: 16px;">⚠️</span>
-                                        <div>
-                                            <div id="zalo-gap-alert-title" style="color: #9a3412; font-size: 13px; font-weight: 700;">Phát hiện thiếu ngày ảnh!</div>
-                                            <div id="zalo-gap-alert-desc" style="font-size: 11px; color: #78350f;">Dự án này thiếu ảnh trong các ngày gần đây.</div>
-                                        </div>
-                                    </div>
-                                    <div class="d-flex align-center gap-2">
-                                        <button type="button" class="btn btn-warning btn-sm" id="btn-zalo-backfill-now" onclick="triggerManualBackfillNow()" style="background: #f59e0b; color: white; border: none; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                                            <span>⚡ Tự Động Tải Bù</span>
-                                        </button>
-                                        <button type="button" class="btn-text-link" onclick="toggleZaloTimelineDetails()" style="font-size: 11px; color: #b45309; text-decoration: underline; cursor: pointer;">
-                                            Chi tiết
-                                        </button>
-                                    </div>
-                                </div>
-                                <!-- Chi tiết 10 ngày (ẩn mặc định, mở khi bấm chi tiết) -->
-                                <div id="zalo-timeline-details-collapse" style="display: none; margin-top: 10px; padding-top: 8px; border-top: 1px dashed #fed7aa;">
-                                    <div class="zalo-days-strip d-flex gap-2 flex-wrap" id="zalo-days-strip"></div>
-                                </div>
-                            </div>
-
-                            <!-- Smart Gap OK (Hiện khi đủ ảnh 10 ngày) -->
-                            <div id="zalo-smart-gap-ok" class="zalo-smart-alert-ok mb-3" style="display: none;">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                                <span>Dữ liệu ảnh 10 ngày qua đã đầy đủ.</span>
                             </div>
 
                             <!-- 3. Chọn khoảng thời gian -->
@@ -1401,6 +1337,9 @@
             </div>
             <div class="modal-body">
                 <div class="form-group">
+                    <label for="new-employee-roster">Chọn người từ bảng chấm công đã đối chiếu:</label>
+                    <select id="new-employee-roster" class="form-input" onchange="selectEmployeeRosterRow()"></select>
+                    <p id="new-employee-roster-hint" class="text-muted"></p>
                     <label for="new-employee-name">Họ và Tên Nhân Viên:</label>
                     <input type="text" id="new-employee-name" class="form-input" placeholder="Ví dụ: Nguyễn Văn A">
                 </div>
@@ -1649,117 +1588,31 @@
         </div>
     </div>
 
-    <!-- Modal Cài Đặt Lịch Tự Động Quét Ảnh & Tải Bù Zalo -->
-    <div class="modal-backdrop" id="modal-zalo-auto-sync" style="display: none;" onclick="closeZaloAutoSyncModal()">
-        <div class="modal-dialog" style="max-width: 720px;" onclick="event.stopPropagation()">
-            <div class="modal-header d-flex justify-between align-center" style="padding: 20px 28px; border-bottom: 1px solid var(--border);">
-                <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.2px;">Lập Lịch Tự Động &amp; Tải Bù Zalo</h3>
-                <button type="button" class="modal-header-btn-close" onclick="closeZaloAutoSyncModal()" title="Đóng cửa sổ">
-                    ✕
-                </button>
-            </div>
-            <div class="modal-body" style="padding: 26px 28px; display: flex; flex-direction: column; gap: 24px;">
-                <!-- Khung 1: Cấu hình khung giờ & chu kỳ -->
-                <div style="background: var(--bg-secondary, #f8fafc); border: 1px solid var(--border); border-radius: 12px; padding: 22px 24px;">
-                    <!-- Công tắc tổng Bật/Tắt -->
-                    <div class="d-flex justify-between align-center" style="border-bottom: 1px solid var(--border); padding-bottom: 18px; margin-bottom: 20px;">
-                        <div>
-                            <div style="font-weight: 700; font-size: 14.5px; color: var(--text-primary);">Bật Tự Động Quét &amp; Tải Hằng Ngày</div>
-                            <div class="text-muted" style="font-size: 12.5px; margin-top: 4px;">Hệ thống sẽ chạy ngầm định kỳ khi máy tính đang mở.</div>
-                        </div>
-                        <label class="switch">
-                            <input type="checkbox" id="modal-zalo-sync-enabled">
-                            <span class="switch-slider"></span>
-                        </label>
-                    </div>
-
-                    <!-- Lưới 2 cột: Giờ chạy & Đếm lùi -->
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-bottom: 20px;">
-                        <div>
-                            <label for="modal-zalo-sync-time" style="font-weight: 600; font-size: 13px; display: block; margin-bottom: 8px; color: var(--text-secondary);">
-                                Khung giờ chạy mỗi ngày:
-                            </label>
-                            <input type="time" id="modal-zalo-sync-time" class="form-input" style="width: 100%; height: 38px; font-weight: 600; font-size: 13.5px; text-align: center; padding: 6px 12px;" value="22:00">
-                            <div class="text-hint" style="font-size: 11.5px; margin-top: 6px; color: var(--text-muted);">Nên cài sau giờ làm việc (VD: 22:00).</div>
-                        </div>
-                        <div>
-                            <label for="modal-zalo-sync-lookback" style="font-weight: 600; font-size: 13px; display: block; margin-bottom: 8px; color: var(--text-secondary);">
-                                Đếm lùi kiểm tra ngày thiếu:
-                            </label>
-                            <select id="modal-zalo-sync-lookback" class="form-input" style="width: 100%; height: 38px; font-size: 13.5px; padding: 6px 12px;">
-                                <option value="5">5 ngày qua</option>
-                                <option value="7">7 ngày qua</option>
-                                <option value="10" selected>10 ngày qua (Chuẩn)</option>
-                                <option value="15">15 ngày qua</option>
-                            </select>
-                            <div class="text-hint" style="font-size: 11.5px; margin-top: 6px; color: var(--text-muted);">Tự dò tìm &amp; tải bù ảnh các ngày thiếu.</div>
-                        </div>
-                    </div>
-
-                    <!-- Checkbox bù khi khởi động -->
-                    <div style="border-top: 1px dashed var(--border); padding-top: 16px;">
-                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; margin: 0; user-select: none;">
-                            <input type="checkbox" id="modal-zalo-sync-startup" checked style="accent-color: var(--primary); width: 16px; height: 16px;">
-                            <span>Tự động quét &amp; tải bù khi mở phần mềm (bù ngày nghỉ, cúp điện)</span>
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Khung 2: Quản lý danh sách nhóm & dự án -->
-                <div style="background: #ffffff; border: 1px solid var(--border); border-radius: 12px; padding: 22px 24px;">
-                    <!-- Thanh tiêu đề & các nút hành động -->
-                    <div class="d-flex justify-between align-center flex-wrap" style="gap: 12px; margin-bottom: 16px;">
-                        <div class="d-flex align-center" style="gap: 10px;">
-                            <span style="font-weight: 700; font-size: 14.5px; color: var(--text-primary);">Danh Sách Nhóm Quét Tự Động</span>
-                            <span id="modal-mapping-count-badge" class="badge" style="font-size: 11px; background: #e0e7ff; color: #3730a3; padding: 3px 9px; border-radius: 12px; display: none;">0 nhóm</span>
-                        </div>
-                        <div class="d-flex" style="gap: 8px;">
-                            <button type="button" class="btn btn-secondary btn-sm" onclick="addAllZaloGroupsToAutoSync()" style="font-size: 12px; padding: 5px 12px;" title="Tự động thêm tất cả các nhóm Zalo hiện có vào lịch">
-                                Thêm tất cả nhóm
-                            </button>
-                            <button type="button" class="btn btn-secondary btn-sm" onclick="addCurrentSelectionToAutoSync()" style="font-size: 12px; padding: 5px 12px;">
-                                Thêm nhóm đang chọn
-                            </button>
-                            <button type="button" class="btn btn-danger btn-sm" onclick="clearAllZaloAutoSyncMappings()" style="font-size: 12px; padding: 5px 12px; background: #fee2e2; color: #b91c1c; border-color: #fca5a5;" title="Xóa toàn bộ nhóm khỏi lịch">
-                                Xóa tất cả
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Hàng thêm nhóm mới (Inline Add Bar) -->
-                    <div class="d-flex align-center" style="gap: 12px; background: var(--bg-secondary, #f8fafc); border-radius: 9px; border: 1px solid var(--border); padding: 14px 16px; margin-bottom: 16px;">
-                        <select id="modal-add-group-select" class="form-input" style="font-size: 13px; height: 38px; flex: 1.2; padding: 6px 12px;">
-                            <option value="">-- Chọn nhóm Zalo --</option>
-                        </select>
-                        <span style="color: var(--text-muted); font-size: 14px; flex-shrink: 0; padding: 0 2px;">➔</span>
-                        <select id="modal-add-project-select" class="form-input" style="font-size: 13px; height: 38px; flex: 1; padding: 6px 12px;">
-                            <option value="__AUTO__">[Theo tên nhóm]</option>
-                        </select>
-                        <button type="button" class="btn btn-primary btn-sm" onclick="addMappingFromModal()" style="font-size: 12.5px; height: 38px; white-space: nowrap; padding: 0 16px; font-weight: 600; flex-shrink: 0;">
-                            Thêm
-                        </button>
-                    </div>
-
-                    <!-- Danh sách các nhóm đã gán -->
-                    <div id="modal-zalo-mapping-list" style="max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 9px; padding: 12px; background: var(--bg-subtle, #f8fafc);">
-                        <div class="text-muted p-3 text-center" style="font-size: 12px;">Chưa có nhóm nào trong lịch tự động.</div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer d-flex justify-between align-center" style="padding: 18px 28px; border-top: 1px solid var(--border);">
-                <div class="text-muted" style="font-size: 12px;">
-                    <span id="modal-zalo-last-run-info">Lần chạy gần nhất: Chưa chạy</span>
-                </div>
-                <div class="d-flex" style="gap: 12px;">
-                    <button type="button" class="btn btn-secondary" onclick="closeZaloAutoSyncModal()" style="padding: 8px 18px; font-size: 13px;">Hủy bỏ</button>
-                    <button type="button" class="btn btn-primary" onclick="saveZaloSyncModalSettings()" style="padding: 8px 22px; font-size: 13px; font-weight: 600;">
-                        <span>Lưu Cấu Hình</span>
-                    </button>
-                </div>
-            </div>
+    <div class="modal-backdrop" id="modal-employee-audit" style="display:none;" onclick="closeModal('modal-employee-audit')">
+        <div class="modal-dialog" style="max-width:1100px;" onclick="event.stopPropagation()">
+            <div class="modal-header"><h3>Đối chiếu nhân viên và dự án</h3><button class="modal-close-btn" onclick="closeModal('modal-employee-audit')">&times;</button></div>
+            <div class="modal-body" id="employee-audit-content" style="max-height:70vh;overflow:auto;"></div>
         </div>
     </div>
-
+    <div class="modal-backdrop" id="modal-roster-sync" style="display:none;" onclick="closeModal('modal-roster-sync')">
+        <div class="modal-dialog" style="max-width:900px;" onclick="event.stopPropagation()">
+            <div class="modal-header"><h3>Đồng bộ nhân viên từ bảng</h3><button class="modal-close-btn" onclick="closeModal('modal-roster-sync')">&times;</button></div>
+            <div class="modal-body">
+                <p id="roster-sync-filename"></p>
+                <div class="roster-controls"><label for="roster-sync-project">Dự án nhận nhân viên</label><select class="form-input" id="roster-sync-project"></select><button class="btn btn-secondary" onclick="previewUploadedRoster()">Xem trước</button></div>
+                <div class="roster-controls" style="margin-top:10px"><label for="roster-sync-effective">Hiệu lực từ ngày</label><input type="date" class="form-input" id="roster-sync-effective"><span class="roster-muted">Chọn ngày bắt đầu kỳ chấm công để quét dữ liệu tháng đó.</span></div>
+                <div id="roster-sync-preview" style="max-height:55vh;overflow:auto;margin-top:16px;"></div>
+            </div>
+            <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modal-roster-sync')">Đóng</button><button class="btn btn-primary" id="roster-sync-apply" disabled onclick="applyUploadedRoster()">Xác nhận đồng bộ</button></div>
+        </div>
+    </div>
+    <div class="modal-backdrop" id="modal-extract-project" style="display:none;" onclick="closeModal('modal-extract-project')">
+        <div class="modal-dialog" style="max-width:560px" onclick="event.stopPropagation()">
+            <div class="modal-header"><h3>Chọn dự án để tách file</h3><button class="modal-close-btn" onclick="closeModal('modal-extract-project')">&times;</button></div>
+            <div class="modal-body"><p id="extract-project-filename"></p><label for="extract-project-select">Dự án của bảng chấm công</label><select class="form-input" id="extract-project-select" style="width:100%;margin-top:8px"></select></div>
+            <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modal-extract-project')">Hủy</button><button class="btn btn-primary" id="extract-project-confirm" onclick="confirmProjectExtraction()">Tách file</button></div>
+        </div>
+    </div>
     <!-- Toast Notification -->
     <div class="toast-container" id="toast-container"></div>
 
@@ -1768,7 +1621,7 @@
     <script src="/static/vendor/flatpickr/plugins/monthSelect.js"></script>
     <script src="/static/js/attendance-date.js"></script>
     <script src="/static/js/confirm-action.js"></script>
-    <script src="/static/js/app.js?v=20261004_personal_tool"></script>
+    <script src="/static/js/app.js?v=20261008_extract_selected_project"></script>
     <script src="/static/js/supplement-batches.js?v=20261004_personal_tool"></script>
 </body>
 

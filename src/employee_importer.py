@@ -31,7 +31,9 @@ def clean_person_name(name: str) -> str:
     prefix_pat = r"^(?:b[aả]o\s*v[eệ]|bvnx|bv|nv\s*v[eệ]\s*sinh)\s*(?:ttd|s[aả]nh\s*[a-z0-9]*|nx\s*[a-z0-9]*|nxav|an\s*kh[aá]ng|an\s*vi[eê]n)?\s*[-–:]*\s*"
     s = re.sub(prefix_pat, "", s, flags=re.I)
     # Loại bỏ tiền tố chung cư / sảnh / cổng nếu có
-    s = re.sub(r"^(?:cc|chung\s*c[uư]|s[aả]nh|nx|a\d|c\d)\s*[a-z0-9\s]*\s*[-–:]*\s*", "", s, flags=re.I)
+    # Consume location tokens only; never swallow the following person's name.
+    s = re.sub(r"^(?:nx[a-z0-9]*|s[aả]nh(?:\s+[a-z]\d+)?|a\d+|c\d+)\s+(?:[-–:]\s*)?", "", s, flags=re.I)
+    s = re.sub(r"^(?:cc|chung\s*c[uư])\s+[^-–:]+\s*[-–:]\s*", "", s, flags=re.I)
     # Loại bỏ các hậu tố vị trí / mã ca ở cuối như BVSAH4, BVNXST, BV151, C1, A3, NXAV, BV, vv.
     suffix_pat = r"\s+(?:bvsah\d*|bvnxst|bvnxav|bvsak|bv151|bvnx|bv\s*[-–]?\s*[a-z0-9]+|bv|nxav|av|c\d|a\d)\s*$"
     s = re.sub(suffix_pat, "", s, flags=re.I)
@@ -96,33 +98,25 @@ def extract_employees_from_excel(file_path: str) -> List[Dict[str, str]]:
         raise FileNotFoundError(f"Không tìm thấy file: {file_path}")
 
     ext = os.path.splitext(file_path)[1].lower()
-    rows = []
-
+    sheets = []
     if ext == ".xlsx":
         wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
-        sheet = wb.active
-        for r in sheet.iter_rows(values_only=True):
-            rows.append(list(r))
-        wb.close()
+        try:
+            sheets = [list(sheet.iter_rows(values_only=True)) for sheet in wb.worksheets]
+        finally:
+            wb.close()
     elif ext == ".xls":
         wb = xlrd.open_workbook(file_path)
-        sheet = wb.sheet_by_index(0)
-        for r_idx in range(sheet.nrows):
-            rows.append([sheet.cell_value(r_idx, c_idx) for c_idx in range(sheet.ncols)])
+        sheets = [[sheet.row_values(i) for i in range(sheet.nrows)] for sheet in wb.sheets()]
     else:
-        raise ValueError(f"Định dạng file không hỗ trợ: {ext}. Chỉ chấp nhận .xls hoặc .xlsx")
-
-    if not rows:
-        return []
-
-    # 1. Thử tìm theo cấu trúc dạng Pivot trước: 'ID:xxx Tên:yyy'
-    pivot_employees = _extract_pivot_format(rows)
-    if pivot_employees:
-        return pivot_employees
-
-    # 2. Thử tìm theo cấu trúc dạng Bảng cột (Header: Mã NV, Tên NV)
-    table_employees = _extract_table_format(rows)
-    return table_employees
+        raise ValueError("Chỉ chấp nhận .xls hoặc .xlsx")
+    found = {}
+    for rows in sheets:
+        for employee in (_extract_pivot_format(rows) or _extract_table_format(rows)):
+            # Retain different names sharing a code so the import can report conflicts.
+            key = (employee['payroll_code'], unicodedata.normalize('NFC', employee['name']).casefold())
+            found.setdefault(key, employee)
+    return list(found.values())
 
 
 def _extract_pivot_format(rows: List[List]) -> List[Dict[str, str]]:
@@ -145,7 +139,7 @@ def _extract_pivot_format(rows: List[List]) -> List[Dict[str, str]]:
                 emp_id = clean_payroll_code(match.group(1))
                 emp_name = clean_display_name(match.group(2))
                 if emp_name and len(emp_name) >= 2:
-                    key = (normalize_vietnamese_name(emp_name), emp_id)
+                    key = (unicodedata.normalize('NFC', emp_name).casefold(), emp_id)
                     if key not in found_dict:
                         found_dict[key] = {
                             'name': emp_name,
@@ -205,6 +199,8 @@ def _extract_table_format(rows: List[List]) -> List[Dict[str, str]]:
         row = rows[r_idx]
         if not row or name_col >= len(row):
             continue
+        if not isinstance(row[name_col], str) or not row[name_col].strip():
+            continue
         raw_name = clean_display_name(row[name_col])
         if not raw_name or len(raw_name) < 2:
             continue
@@ -213,7 +209,7 @@ def _extract_table_format(rows: List[List]) -> List[Dict[str, str]]:
             continue
 
         raw_id = clean_payroll_code(row[id_col]) if id_col is not None and id_col < len(row) else ""
-        key = (normalize_vietnamese_name(raw_name), raw_id)
+        key = (unicodedata.normalize('NFC', raw_name).casefold(), raw_id)
         if key not in found_dict:
             found_dict[key] = {
                 'name': raw_name,
@@ -277,7 +273,7 @@ def extract_employees_from_pdf(file_path: str) -> List[Dict[str, str]]:
                 break
 
         if emp_name and len(emp_name) >= 2:
-            key = (normalize_vietnamese_name(emp_name), emp_id)
+            key = (unicodedata.normalize('NFC', emp_name).casefold(), emp_id)
             if key not in found_dict:
                 found_dict[key] = {
                     'name': emp_name,
@@ -368,7 +364,7 @@ def sync_employees_to_project(
         for emp_item in employees:
             raw_name = clean_display_name(emp_item.get('name', ''))
             payroll_code = clean_payroll_code(emp_item.get('payroll_code', ''))
-            if not raw_name:
+            if not raw_name or re.fullmatch(r"^[0-9a-fA-F]{32}$|^[0-9a-fA-F-]{36}$", raw_name):
                 continue
 
             norm_name = normalize_vietnamese_name(raw_name)

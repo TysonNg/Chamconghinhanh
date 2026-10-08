@@ -484,6 +484,7 @@ async function handlePDFFile(file) {
             document.getElementById('pdf-selected-file').style.display = 'block';
             showToast(`Đã upload: ${result.filename}`, 'success');
             loadPDFUploads();
+            await syncUploadedRoster(result.filename, 'pdf');
         } else {
             showToast(result.error || 'Lỗi upload', 'error');
         }
@@ -492,7 +493,60 @@ async function handlePDFFile(file) {
     }
 }
 
-async function extractPDF() {
+function scanMonthControls() {
+    const year = new Date().getFullYear();
+    return `<label style="font-size:12px">Tháng quét <select class="face-scan-month form-input" aria-label="Tháng quét" style="width:130px;display:inline-block"><option value="">Theo bảng</option>${Array.from({length:12},(_,i) => `<option value="${String(i+1).padStart(2,'0')}">Tháng ${i+1}</option>`).join('')}</select></label><label style="font-size:12px">Năm <select class="face-scan-year form-input" aria-label="Năm quét" style="width:95px;display:inline-block">${Array.from({length:31},(_,i) => year-20+i).map(y => `<option value="${y}" ${y===year ? 'selected' : ''}>${y}</option>`).join('')}</select></label>`;
+}
+let extractionProjectFolder = null;
+async function assignBatchProject(folder, kind) {
+    extractionProjectKind = kind;
+    extractionProjectFolder = folder;
+    document.getElementById('extract-project-filename').textContent = folder;
+    const select = document.getElementById('extract-project-select');
+    select.replaceChildren(new Option('-- Chọn dự án của đợt tách --',''));
+    allProjectsList.forEach(p => select.add(new Option(p.name,p.project_id)));
+    document.getElementById('extract-project-confirm').textContent = 'Lưu dự án';
+    openModal('modal-extract-project');
+}
+let extractionProjectKind = null;
+function openExtractionProject(kind) {
+    const filename = kind === 'excel' ? excelFilename : pdfFilename;
+    if (!filename) return showToast('Chọn file trước khi tách', 'warning');
+    extractionProjectKind = kind;
+    extractionProjectFolder = null;
+    document.getElementById('extract-project-confirm').textContent = 'Tách file';
+    document.getElementById('extract-project-filename').textContent = filename;
+    const select = document.getElementById('extract-project-select');
+    select.replaceChildren(new Option('-- Chọn dự án của bảng chấm công --',''));
+    allProjectsList.forEach(p => select.add(new Option(p.name,p.project_id)));
+    openModal('modal-extract-project');
+}
+async function confirmProjectExtraction() {
+    const projectId = document.getElementById('extract-project-select').value;
+    if (!projectId) return showToast('Chọn dự án trước khi tách', 'warning');
+    const project = allProjectsList.find(p => p.project_id === projectId);
+    const select = document.getElementById(`${extractionProjectKind}-project-select`);
+    if (select && project) select.value = project.name;
+    if (extractionProjectFolder) {
+        const res = await apiPost('/api/extraction/project', {kind: extractionProjectKind, folder: extractionProjectFolder, project_id: projectId});
+        if (!res.success) return showToast(res.error, 'error');
+        closeModal('modal-extract-project');
+        await loadExcelExtractedFiles(); await loadPDFExtractedFiles();
+        return;
+    }
+    closeModal('modal-extract-project');
+    if (extractionProjectKind === 'excel') await extractExcel(projectId);
+    else await extractPDF(projectId);
+}
+
+function selectedExtractionProject(kind) {
+    const name = document.getElementById(`${kind}-project-select`)?.value;
+    return allProjectsList.find(p => p.name === name)?.project_id || null;
+}
+
+async function extractPDF(projectId = null) {
+    projectId = projectId || selectedExtractionProject('pdf');
+    if (!projectId) return openExtractionProject('pdf');
     if (!pdfFilename) {
         showToast('Vui lòng chọn file PDF trước', 'warning');
         return;
@@ -506,7 +560,7 @@ async function extractPDF() {
     progressSection.style.display = 'block';
 
     try {
-        const result = await apiPost('/api/pdf/extract', { filename: pdfFilename });
+        const result = await apiPost('/api/pdf/extract', { filename: pdfFilename, project_id: projectId });
 
         if (result.success) {
             pdfTaskId = result.task_id;
@@ -578,6 +632,7 @@ async function loadPDFUploads(btn) {
                             <td>
                                 <div style="display:flex;gap:6px;align-items:center;justify-content:center;">
                                     <button class="btn btn-success btn-sm" onclick="selectPDFForExtract('${safeName}')">Tách</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="syncUploadedRoster('${safeName}', 'pdf')">Đồng bộ nhân viên</button>
                                     <button class="btn btn-icon-danger btn-sm" title="Xóa file PDF này" onclick="deletePDFUpload('${safeName}')">
                                         ${TRASH_ICON_SVG}<span>Xóa</span>
                                     </button>
@@ -600,7 +655,7 @@ function selectPDFForExtract(filename) {
     pdfFilename = filename;
     document.getElementById('pdf-filename').textContent = filename;
     document.getElementById('pdf-selected-file').style.display = 'block';
-    showToast(`Đã chọn: ${filename}`, 'info');
+    return openExtractionProject('pdf');
 }
 
 async function loadPDFExtractedFiles(btn) {
@@ -619,8 +674,10 @@ async function loadPDFExtractedFiles(btn) {
                         <div class="card" style="margin-bottom: 16px;">
                             <div class="card-header">
                                 <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                                    <h3 style="margin:0;">${folder.folder} (${folder.count} files)</h3>
-                                    <button class="btn btn-primary btn-sm" onclick="startPDFFaceAnalyze('${safeFolder}')">Quét mặt</button>
+                                    <h3 style="margin:0;">${escapeHtml(folder.source_filename ? folder.source_filename.replace(/\.[^.]+$/, '') : folder.folder)} (${folder.count} files) · ${escapeHtml(folder.project_name || 'Chưa gán dự án')}</h3>
+                                    ${scanMonthControls()}
+                                    <button class="btn btn-primary btn-sm" onclick="startPDFFaceAnalyze('${safeFolder}', this, '${folder.project_id || ''}')">Quét mặt</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="assignBatchProject('${safeFolder}', 'pdf')">${folder.project_id ? 'Đổi dự án' : 'Gán dự án'}</button>
                                     <button class="btn btn-icon-danger btn-sm" title="Xóa đợt này" onclick="deletePDFExtractedFolder('${safeFolder}')">
                                         ${TRASH_ICON_SVG}<span>Xóa đợt</span>
                                     </button>
@@ -675,7 +732,9 @@ async function loadPDFExtractedFiles(btn) {
     });
 }
 
-async function startPDFFaceAnalyze(folder) {
+async function startPDFFaceAnalyze(folder, button = null, batchProjectId = '') {
+    const batchProject = allProjectsList.find(p => p.project_id === batchProjectId);
+    if (batchProject) document.getElementById('pdf-project-select').value = batchProject.name;
     if (!folder) {
         showToast('Vui lòng chọn thư mục đã tách', 'warning');
         return;
@@ -687,6 +746,13 @@ async function startPDFFaceAnalyze(folder) {
     const project = projSelect && projSelect.value ? projSelect.value : currentProjectName;
     const reportSettings = getAggregateReportSettings(project);
     if (!reportSettings) return;
+    const scanControls = button?.closest('div');
+    const monthValue = scanControls?.querySelector('.face-scan-month')?.value || '';
+    const yearValue = scanControls?.querySelector('.face-scan-year')?.value || '';
+    const scanMonth = monthValue && yearValue ? `${yearValue}-${monthValue}` : '';
+    if (scanMonth) reportSettings.scan_month = scanMonth;
+
+    if (!await checkRosterBeforeScan(folder, 'pdf', project)) return;
 
     const progressSection = document.getElementById('pdf-face-progress-section');
     progressSection.style.display = 'block';
@@ -1031,6 +1097,7 @@ async function handleExcelFile(file) {
             document.getElementById('excel-selected-file').style.display = 'block';
             showToast(`Đã upload: ${result.filename}`, 'success');
             loadExcelUploads();
+            await syncUploadedRoster(result.filename, 'excel');
         } else {
             showToast(result.error || 'Lỗi upload', 'error');
         }
@@ -1039,7 +1106,9 @@ async function handleExcelFile(file) {
     }
 }
 
-async function extractExcel() {
+async function extractExcel(projectId = null) {
+    projectId = projectId || selectedExtractionProject('excel');
+    if (!projectId) return openExtractionProject('excel');
     if (!excelFilename) {
         showToast('Vui lòng chọn file Excel trước', 'warning');
         return;
@@ -1054,7 +1123,7 @@ async function extractExcel() {
     document.getElementById('excel-progress-title').textContent = 'Đang khởi động...';
 
     try {
-        const result = await apiPost('/api/excel/extract', { filename: excelFilename });
+        const result = await apiPost('/api/excel/extract', { filename: excelFilename, project_id: projectId });
         if (result.success) {
             excelTaskId = result.task_id;
             showToast('Đã bắt đầu tách Excel...', 'info');
@@ -1125,6 +1194,7 @@ async function loadExcelUploads(btn) {
                             <td>
                                 <div style="display:flex;gap:6px;align-items:center;justify-content:center;">
                                     <button class="btn btn-success btn-sm" onclick="selectExcelForExtract('${safeName}')">Tách</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="syncUploadedRoster('${safeName}', 'excel')">Đồng bộ nhân viên</button>
                                     <button class="btn btn-icon-danger btn-sm" title="Xóa file này" onclick="deleteExcelUpload('${safeName}')">
                                         ${TRASH_ICON_SVG}<span>Xóa</span>
                                     </button>
@@ -1146,7 +1216,7 @@ function selectExcelForExtract(filename) {
     excelFilename = filename;
     document.getElementById('excel-filename').textContent = filename;
     document.getElementById('excel-selected-file').style.display = 'block';
-    showToast(`Đã chọn: ${filename}`, 'info');
+    return openExtractionProject('excel');
 }
 
 async function loadExcelExtractedFiles(btn) {
@@ -1164,8 +1234,10 @@ async function loadExcelExtractedFiles(btn) {
                         <div class="card" style="margin-bottom: 16px;">
                             <div class="card-header">
                                 <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                                    <h3 style="margin:0;">${folder.folder} (${folder.count} người)</h3>
-                                    <button class="btn btn-primary btn-sm" onclick="startExcelFaceAnalyze('${safeFolder}')">Quét mặt</button>
+                                    <h3 style="margin:0;">${escapeHtml(folder.source_filename ? folder.source_filename.replace(/\.[^.]+$/, '') : folder.folder)} (${folder.count} người) · ${escapeHtml(folder.project_name || 'Chưa gán dự án')}</h3>
+                                    ${scanMonthControls()}
+                                    <button class="btn btn-primary btn-sm" onclick="startExcelFaceAnalyze('${safeFolder}', this, '${folder.project_id || ''}')">Quét mặt</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="assignBatchProject('${safeFolder}', 'excel')">${folder.project_id ? 'Đổi dự án' : 'Gán dự án'}</button>
                                     <button class="btn btn-secondary btn-sm" onclick="openExcelExtractedFolder('${safeFolder}')" title="Mở thư mục chứa các file Word">
                                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M3 5h6l2 2h10v12H3z"></path>
@@ -1245,7 +1317,9 @@ async function openExcelExtractedFolder(folder) {
     }
 }
 
-async function startExcelFaceAnalyze(folder) {
+async function startExcelFaceAnalyze(folder, button = null, batchProjectId = '') {
+    const batchProject = allProjectsList.find(p => p.project_id === batchProjectId);
+    if (batchProject) document.getElementById('excel-project-select').value = batchProject.name;
     if (!folder) {
         showToast('Vui lòng chọn thư mục đã tách', 'warning');
         return;
@@ -1257,6 +1331,13 @@ async function startExcelFaceAnalyze(folder) {
     const project = projSelect && projSelect.value ? projSelect.value : currentProjectName;
     const reportSettings = getAggregateReportSettings(project);
     if (!reportSettings) return;
+    const scanControls = button?.closest('div');
+    const monthValue = scanControls?.querySelector('.face-scan-month')?.value || '';
+    const yearValue = scanControls?.querySelector('.face-scan-year')?.value || '';
+    const scanMonth = monthValue && yearValue ? `${yearValue}-${monthValue}` : '';
+    if (scanMonth) reportSettings.scan_month = scanMonth;
+
+    if (!await checkRosterBeforeScan(folder, 'excel', project)) return;
 
     const progressSection = document.getElementById('excel-face-progress-section');
     progressSection.style.display = 'block';
@@ -2073,6 +2154,50 @@ async function loadSelectedDayPhotos(day) {
     }
 }
 
+async function exportDailyPhotosWord(btn) {
+    if (btn && btn.disabled) return;
+    return withLoading(btn, async () => {
+        let objectUrl = null;
+        let link = null;
+        try {
+            const project = currentProjectName;
+            const date = selectedPhotoDate();
+            const query = new URLSearchParams({project, date});
+            const response = await fetch(`/api/photos/daily/export-word?${query}`, {cache: 'no-store'});
+            if (!response.ok) {
+                const result = await parseJsonResponse(response);
+                throw new Error(result.error || 'Không thể xuất Word');
+            }
+            const contentType = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+            if (contentType !== 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+                throw new Error('Máy chủ chưa trả về file Word. Vui lòng khởi động lại phần mềm rồi xuất lại.');
+            }
+            const blob = await response.blob();
+            const signature = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+            if (signature.length !== 4 || signature[0] !== 0x50 || signature[1] !== 0x4b || signature[2] !== 0x03 || signature[3] !== 0x04) {
+                throw new Error('File Word máy chủ trả về không hợp lệ. Vui lòng xuất lại.');
+            }
+            const disposition = response.headers.get('Content-Disposition') || '';
+            const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+            const plainName = disposition.match(/filename="([^"]+)"|filename=([^;]+)/i);
+            const filename = encodedName ? decodeURIComponent(encodedName[1])
+                : plainName ? (plainName[1] || plainName[2]).trim() : `Anh_${project}_${date}.docx`;
+            objectUrl = URL.createObjectURL(blob);
+            link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            showToast(`Đã xuất Word ảnh ngày ${date}`, 'success');
+        } catch (err) {
+            showToast(err.message || 'Không thể xuất Word', 'error');
+        } finally {
+            if (link) link.remove();
+            if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        }
+    });
+}
+
 async function handleDailyPhotosUpload(input) {
     if (!input.files || input.files.length === 0) return;
     const formData = new FormData();
@@ -2284,18 +2409,143 @@ function onEmployeeSearch(keyword) {
     renderEmployeeCards(filtered);
 }
 
-function openCreateEmployeeModal() {
+let employeeRosterRows = [];
+let employeeRosterProject = '';
+
+async function openCreateEmployeeModal() {
+    const project = currentProjectName;
     const nameInput = document.getElementById('new-employee-name');
     const codeInput = document.getElementById('new-employee-code');
     const fileInput = document.getElementById('new-employee-photos');
     if (nameInput) nameInput.value = '';
     if (codeInput) codeInput.value = '';
     if (fileInput) fileInput.value = '';
+    employeeRosterRows = [];
+    employeeRosterProject = project;
+    const select = document.getElementById('new-employee-roster');
+    select.replaceChildren(new Option('Đang đọc bảng đối chiếu...', ''));
+    nameInput.readOnly = true;
+    codeInput.readOnly = true;
     openModal('modal-create-employee');
-    if (nameInput) nameInput.focus();
+    try {
+        const res = await apiGet(`/api/portraits/audit?project=${encodeURIComponent(project)}`);
+        if (project !== currentProjectName) return;
+        if (!res.success) throw new Error(res.error);
+        employeeRosterRows = res.audit.rows;
+        select.replaceChildren(new Option('-- Chọn tên và mã trong bảng --', ''));
+        employeeRosterRows.forEach((row, index) => {
+            const option = new Option(`${row.payroll_code || 'Thiếu mã'} — ${row.name}`, String(index));
+            option.disabled = !row.payroll_code || employeeRosterRows.filter(r => r.payroll_code === row.payroll_code).length !== 1 || res.audit.employees.some(e => e.codes.includes(row.payroll_code));
+            select.add(option);
+        });
+        const loaded = !!res.audit.filename;
+        nameInput.readOnly = loaded;
+        codeInput.readOnly = loaded;
+        document.getElementById('new-employee-roster-hint').textContent = loaded
+            ? `Bảng: ${res.audit.filename}. Người đã có mã trong dự án được khóa để tránh tạo trùng. Kiểm tra ảnh đúng người trước khi lưu.`
+            : 'Chưa chọn bảng đối chiếu. Nhập tay chưa xác minh được với bảng; nên chọn bảng Excel/PDF trước.';
+    } catch (err) {
+        document.getElementById('new-employee-roster-hint').textContent = `Không đọc được bảng: ${err.message}. Đóng cửa sổ và thử lại.`;
+    }
+}
+
+function selectEmployeeRosterRow() {
+    const value = document.getElementById('new-employee-roster').value;
+    const row = value === '' ? null : employeeRosterRows[Number(value)];
+    document.getElementById('new-employee-name').value = row?.name || '';
+    document.getElementById('new-employee-code').value = row?.payroll_code || '';
+}
+
+async function openEmployeeAudit(project = currentProjectName) {
+    openModal('modal-employee-audit');
+    const content = document.getElementById('employee-audit-content');
+    content.textContent = 'Đang đối chiếu...';
+    try {
+        const res = await apiGet(`/api/portraits/audit?project=${encodeURIComponent(project)}`);
+        if (!res.success) throw new Error(res.error);
+        const audit = res.audit;
+        const esc = escapeHtml;
+        content.innerHTML = `<div class="roster-heading"><strong>${esc(project)}</strong><span>${esc(audit.filename || 'Chưa chọn bảng')}</span></div>
+            <div class="roster-controls"><input class="form-input" id="audit-search" placeholder="Tìm tên hoặc mã"><label><input type="checkbox" id="audit-only-issues"> Chỉ cần kiểm tra</label><button class="btn btn-primary btn-sm" id="bulk-import-roster-btn">Nhập từ bảng</button></div>
+            <p class="roster-muted">${audit.employees.length} hồ sơ hiện tại · ${audit.missing_profiles.length} dòng chưa có hồ sơ theo mã</p>
+            <div class="roster-table-wrap"><table class="data-table"><thead><tr><th>Nhân viên / Mã</th><th>Đối chiếu</th><th>Dự án khác</th><th>Thao tác</th></tr></thead><tbody id="audit-rows"></tbody></table></div>
+            <details><summary>Chưa có hồ sơ (${audit.missing_profiles.length})</summary><p>${esc(audit.missing_profiles.map(r => `${r.payroll_code || 'Thiếu mã'} — ${r.name}`).join('; ') || 'Không có')}</p></details>`;
+        const render = () => {
+            const term = document.getElementById('audit-search').value.toLocaleLowerCase();
+            const onlyIssues = document.getElementById('audit-only-issues').checked;
+            const rows = audit.employees.filter(e => `${e.name} ${e.codes.join(' ')}`.toLocaleLowerCase().includes(term) && (!onlyIssues || e.issues.length));
+            content.querySelector('#audit-rows').innerHTML = rows.map(e => {
+                const current = e.other_projects.filter(p => p.current);
+                const history = e.other_projects.filter(p => !p.current);
+                const matched = e.roster_rows.length === 1;
+                return `<tr><td><strong>${esc(e.name)}</strong><div class="roster-muted">${esc(e.codes.join(', ') || 'Chưa có mã')}</div></td>
+                    <td><span class="roster-badge ${e.issues.length ? 'needs-review' : ''}">${e.issues.length ? 'Cần kiểm tra' : 'Khớp bảng'}</span>${e.issues.length ? `<details><summary>Chi tiết</summary>${e.issues.map(i => `<div>${esc(i)}</div>`).join('')}</details>` : ''}</td>
+                    <td>${current.map(p => `<div>${esc(p.project)} <span class="roster-muted">· Hiện tại</span></div>`).join('') || '—'}${history.length ? `<details><summary>Lịch sử (${history.length})</summary>${history.map(p => `<div>${esc(p.project)} · Đã kết thúc</div>`).join('')}</details>` : ''}</td>
+                    <td><div class="roster-row-actions"><button class="btn btn-secondary btn-sm" data-audit-photos="${esc(e.employee_id)}">Ảnh</button>${matched ? `<button class="btn btn-secondary btn-sm" data-exclusive="${esc(e.employee_id)}">Chỉ thuộc dự án này</button>` : ''}</div></td></tr>`;
+            }).join('') || '<tr><td colspan="4">Không có hồ sơ phù hợp</td></tr>';
+            content.querySelectorAll('[data-audit-photos]').forEach(btn => btn.onclick = () => { if (currentProjectName !== project) return showToast('Chọn dự án này trong quản lý ảnh để xem ảnh', 'info'); closeModal('modal-employee-audit'); openEmployeePhotosModal(btn.dataset.auditPhotos); });
+            content.querySelectorAll('[data-exclusive]').forEach(btn => btn.onclick = () => confirmExclusiveProject(project, btn.dataset.exclusive));
+        };
+        content.querySelector('#audit-search').oninput = render;
+        content.querySelector('#audit-only-issues').onchange = render;
+        content.querySelector('#bulk-import-roster-btn').onclick = () => importAllRosterEmployees(project);
+        render();
+    } catch (err) { content.textContent = `Không kiểm tra được: ${err.message}`; }
+}
+
+async function confirmExclusiveProject(project, employeeId) {
+    const projectId = allProjectsList.find(p => p.name === project)?.project_id;
+    try {
+        const preview = await apiPost('/api/portraits/exclusive-project', {project_id: projectId, employee_id: employeeId});
+        if (!preview.success) throw new Error(preview.error);
+        if (!preview.affected.length) return showToast('Hồ sơ chỉ hoạt động tại dự án này', 'info');
+        if (!await confirmAction(`Giữ ${preview.name} (${preview.payroll_code}) tại ${project}.\nLưu trữ các phân công/hồ sơ sau:\n${preview.affected.map(e => `${e.project}: ${e.name}`).join('\n')}\nChỉ xác nhận nếu đây là cùng một người. Ảnh và lịch sử được giữ.`)) return;
+        const res = await apiPost('/api/portraits/exclusive-project', {project_id: projectId, employee_id: employeeId, apply: true, confirmation_keys: preview.confirmation_keys});
+        if (!res.success) throw new Error(res.error);
+        showToast('Đã giữ hồ sơ hoạt động tại dự án được chọn', 'success');
+        await loadProjects(); await loadPortraits(); await openEmployeeAudit(project);
+    } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
+}
+
+async function importAllRosterEmployees(projectName) {
+    const projectId = allProjectsList.find(p => p.name === projectName)?.project_id;
+    if (!projectId) return showToast('Vui lòng chọn dự án', 'warning');
+    const button = document.getElementById('bulk-import-roster-btn');
+    if (button) button.disabled = true;
+    try {
+        const preview = await apiPost('/api/portraits/import-roster', {project_id: projectId});
+        if (!preview.success) throw new Error(preview.error);
+        const c = preview.counts;
+        await reviewRosterTransfers(projectName, preview);
+        const conflicts = preview.rows.filter(r => r.action === 'conflict');
+        const message = `Dự án: ${projectName}\nBảng: ${preview.filename}\nTổng: ${preview.total} nhân viên\nThêm mới: ${c.create}; gắn mã hồ sơ cũ: ${c.assign}; khôi phục: ${c.restore}; đã có: ${c.existing}; cần kiểm tra: ${c.conflict}; chờ chuyển dự án: ${c.transfer || 0}.\n` +
+            conflicts.map(r => `${r.payroll_code || 'Thiếu mã'} — ${r.name}: ${r.reason}`).join('\n');
+        if (!c.create && !c.assign && !c.restore) {
+            await confirmAction(message + '\nKhông có hồ sơ nào đủ điều kiện để thêm.');
+            return;
+        }
+        if (!await confirmAction(message + '\nNhập các hồ sơ đủ điều kiện vào dự án này? Các dòng cần kiểm tra sẽ được giữ lại để đối chiếu.')) return;
+        const result = await apiPost('/api/portraits/import-roster', {project_id: projectId, apply: true});
+        if (!result.success) throw new Error(result.error);
+        const n = result.counts;
+        showToast(`Đã thêm ${n.create}, gắn mã ${n.assign}, khôi phục ${n.restore}. Đã có ${n.existing}; cần kiểm tra ${n.conflict}.`, n.conflict ? 'warning' : 'success');
+        await loadProjects();
+        await loadPortraits();
+        await openEmployeeAudit(projectName);
+        const refreshed = await apiPost('/api/portraits/import-roster', {project_id: projectId});
+        if (refreshed.success) await reviewRosterTransfers(projectName, refreshed);
+    } catch (err) {
+        showToast('Lỗi: ' + err.message, 'error');
+    } finally {
+        if (button) button.disabled = false;
+    }
 }
 
 async function submitCreateEmployee() {
+    if (employeeRosterProject !== currentProjectName) {
+        showToast('Dự án đã thay đổi; mở lại cửa sổ thêm nhân viên', 'warning');
+        return;
+    }
     const nameInput = document.getElementById('new-employee-name');
     const codeInput = document.getElementById('new-employee-code');
     const fileInput = document.getElementById('new-employee-photos');
@@ -2361,126 +2611,160 @@ function triggerImportEmployeesFile() {
 }
 
 async function handleImportEmployeesFile(input) {
-    if (!input || !input.files || input.files.length === 0) return;
-    const file = input.files[0];
-    const project = currentProjectName;
-    const proj = allProjectsList.find(p => p.name === project);
-    const projectId = proj ? proj.project_id : '';
+    const file = input?.files?.[0];
+    if (!file) return;
+    await syncUploadedRoster(file.name, file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'excel');
+    uploadedRosterSync.localFile = file;
+    input.value = '';
+}
 
-    showToast(`Đang quét nhân viên từ file: ${file.name}...`, 'info');
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('project', project);
-    formData.append('project_id', projectId);
-
+async function checkRosterBeforeScan(folder, kind, projectName) {
     try {
-        const res = await fetch('/api/portraits/import-file', {
-            method: 'POST',
-            body: formData
-        }).then(r => r.json());
-
-        if (!res.success) {
-            throw new Error(res.error || 'Lỗi khi nhập file');
+        const [files, batches] = await Promise.all([apiGet(`/api/${kind}/uploads`), apiGet(`/api/${kind}/files`)]);
+        const sourceName = (batches.folders || []).find(b => b.folder === folder)?.source_filename;
+        const matches = (files.files || []).filter(f => sourceName ? f.name === sourceName : f.name.replace(/\.[^.]+$/, '') === folder);
+        if (matches.length !== 1) {
+            showToast('Không tìm thấy file nguồn để đối chiếu; tiếp tục quét dữ liệu đã tách.', 'info');
+            return true;
         }
-
-        let msg = res.message;
-        if (!msg) {
-            msg = `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh`;
-            if (res.internal_codes_created) {
-                msg += `, Cấp mới ${res.internal_codes_created} mã nội bộ`;
-            }
-            msg += '.';
+        const projectId = allProjectsList.find(p => p.name === projectName)?.project_id;
+        if (!projectId) throw new Error('Chọn dự án đích trước khi quét');
+        const imported = await apiPost('/api/portraits/import-file', {filename: matches[0].name, project_id: projectId});
+        if (!imported.success) throw new Error(imported.error);
+        const preview = await apiPost('/api/portraits/import-roster', {project_id: projectId, authoritative: true});
+        if (!preview.success) throw new Error(preview.error);
+        if (preview.sync_approved) return true;
+        if (preview.counts.transfer || preview.counts.create || preview.counts.assign || preview.counts.restore || preview.counts.conflict || preview.renamed || preview.outside_roster?.length) {
+            showToast('Bảng còn thay đổi nhân viên chưa đồng bộ. Quét vẫn tiếp tục với hồ sơ hiện có.', 'info', 'Đồng bộ nhân viên', () => syncUploadedRoster(matches[0].name, kind));
         }
-        showToast(msg, 'success');
-        await loadPortraits();
-        await loadProjects();
+        return true;
     } catch (err) {
-        showToast('Lỗi: ' + err.message, 'error');
-    } finally {
-        input.value = '';
+        showToast('Không đối chiếu được danh sách: ' + err.message + '. Quét vẫn tiếp tục với hồ sơ hiện có.', 'warning');
+        return true;
     }
+}
+
+let uploadedRosterSync = null;
+async function syncUploadedRoster(filename, kind) {
+    uploadedRosterSync = {filename, kind, preview: null, selections: {}, skipped: []};
+    document.getElementById('roster-sync-filename').textContent = filename;
+    const now = new Date();
+    document.getElementById('roster-sync-effective').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const select = document.getElementById('roster-sync-project');
+    select.replaceChildren(new Option('-- Chọn dự án nhận nhân viên --', ''));
+    allProjectsList.forEach(p => select.add(new Option(p.name, p.project_id)));
+    select.onchange = () => { uploadedRosterSync.selections = {}; uploadedRosterSync.skipped = []; uploadedRosterSync.preview = null; document.getElementById('roster-sync-preview').textContent = 'Bấm Xem trước để đối chiếu với dự án này.'; document.getElementById('roster-sync-apply').disabled = true; };
+    document.getElementById('roster-sync-preview').textContent = 'Chọn dự án để xem trước. Hồ sơ nhân viên chưa được thay đổi.';
+    document.getElementById('roster-sync-apply').disabled = true;
+    document.getElementById('roster-sync-effective').onchange = () => { uploadedRosterSync.preview = null; document.getElementById('roster-sync-apply').disabled = true; };
+    openModal('modal-roster-sync');
+}
+
+async function previewUploadedRoster() {
+    const state = uploadedRosterSync;
+    const projectId = document.getElementById('roster-sync-project').value;
+    if (!projectId) return showToast('Chọn dự án nhận nhân viên', 'warning');
+    const content = document.getElementById('roster-sync-preview');
+    state.preview = null;
+    document.getElementById('roster-sync-apply').disabled = true;
+    content.textContent = 'Đang đọc bảng...';
+    try {
+        let imported;
+        if (state.localFile) {
+            const form = new FormData(); form.append('file', state.localFile); form.append('project_id', projectId);
+            imported = await fetch('/api/portraits/import-file', {method:'POST', body:form}).then(r => r.json());
+        } else {
+            imported = await apiPost('/api/portraits/import-file', {filename: state.filename, project_id: projectId});
+        }
+        if (!imported.success) throw new Error(imported.error);
+        const preview = await apiPost('/api/portraits/import-roster', {project_id: projectId, authoritative: true, selections: state.selections, skipped: state.skipped, effective_date: document.getElementById('roster-sync-effective').value});
+        if (!preview.success) throw new Error(preview.error);
+        if (state !== uploadedRosterSync || projectId !== document.getElementById('roster-sync-project').value) return;
+        state.preview = preview;
+        const c = preview.counts;
+        const labels = {create:'Bổ sung mới', assign:'Cập nhật mã', restore:'Khôi phục', existing:'Đã có', conflict:'Cần chọn hồ sơ', transfer:'Chuyển về dự án', skip:'Không đồng bộ'};
+        content.innerHTML = `<div class="roster-summary">${Object.entries(labels).map(([k,v]) => `<span class="roster-badge">${v}: ${c[k] || 0}</span>`).join('')}</div><div class="roster-table-wrap"><table class="data-table"><thead><tr><th>Mã trong bảng</th><th>Nhân viên</th><th>Kết quả</th><th>Đồng bộ</th></tr></thead><tbody>${[...preview.rows].sort((a,b) => Number(b.action === 'conflict')-Number(a.action === 'conflict')).map(r => `<tr><td>${escapeHtml(r.payroll_code || '—')}</td><td>${escapeHtml(r.name)}</td><td>${r.action === 'conflict' && !r.candidates?.length ? 'Kiểm tra dữ liệu' : labels[r.action]}${r.rename ? `<div class="roster-muted">Đổi tên: ${escapeHtml(r.previous_name)} → ${escapeHtml(r.name)}</div>` : ''}${r.source_projects?.length ? `<div class="roster-muted">Từ ${escapeHtml(r.source_projects.join(', '))}</div>` : ''}${r.action === 'conflict' ? `<div class="roster-muted">${escapeHtml(r.reason)}</div>${r.candidates?.length ? `<select class="form-input" data-roster-code="${escapeHtml(r.payroll_code)}"><option value="">-- Chọn hồ sơ đúng người --</option>${r.candidates.map(e => `<option value="${escapeHtml(e.employee_id)}">${escapeHtml(e.name)} · ${escapeHtml(e.projects.join(', '))}</option>`).join('')}</select>` : ''}` : ''}</td><td><input type="checkbox" data-sync-row="${escapeHtml(r.row_key)}" ${r.action === 'skip' ? '' : 'checked'} aria-label="Đồng bộ ${escapeHtml(r.name)}"><span class="roster-muted"> ${r.action === 'skip' ? 'Không đồng bộ' : 'Đồng bộ'}</span></td></tr>`).join('')}</tbody></table></div>`;
+        content.querySelectorAll('[data-sync-row]').forEach(input => input.onchange = async () => {
+            const key = input.dataset.syncRow;
+            state.skipped = input.checked ? state.skipped.filter(k => k !== key) : [...new Set([...state.skipped, key])];
+            await previewUploadedRoster();
+        });
+        content.insertAdjacentHTML('beforeend', `<p class="roster-muted">${preview.outside_roster.length} hồ sơ ngoài bảng sẽ được lưu trữ: ${escapeHtml(preview.outside_roster.map(e => e.name).join(', ') || 'Không có')}. Ảnh và lịch sử được giữ.</p>`);
+        content.querySelectorAll('[data-roster-code]').forEach(select => select.onchange = async () => {
+            if (!select.value) return;
+            state.selections[select.dataset.rosterCode] = select.value;
+            await previewUploadedRoster();
+        });
+        if (c.conflict) content.insertAdjacentHTML('afterbegin', `<p class="roster-sync-blocked">Còn ${c.conflict} dòng cần xử lý bên dưới. Chọn hồ sơ nếu có danh sách, hoặc kiểm tra lỗi cụ thể trong bảng.</p>`);
+        document.getElementById('roster-sync-apply').disabled = !!c.conflict;
+
+    } catch (err) { content.textContent = err.message; }
+}
+
+async function applyUploadedRoster() {
+    const state = uploadedRosterSync;
+    if (!state?.preview) return;
+    const button = document.getElementById('roster-sync-apply'); button.disabled = true;
+    try {
+        const res = await apiPost('/api/portraits/import-roster', {project_id: state.preview.project_id, apply: true, authoritative: true, roster_token: state.preview.roster_token, effective_date: state.preview.effective_date, selections: state.selections, skipped: state.skipped});
+        if (!res.success) throw new Error(res.error);
+        showToast(`Đã đồng bộ: bổ sung ${res.counts.create + res.counts.restore}, chuyển ${res.counts.transfer}, cập nhật mã ${res.counts.assign}, đổi tên ${res.renamed || 0}`, 'success');
+        await loadProjects(); await loadPortraits(); closeModal('modal-roster-sync');
+        showToast('Đã lưu quyết định đồng bộ. Bạn có thể bấm Quét mặt.', 'success');
+    } catch (err) { button.disabled = false; showToast(err.message, 'error'); }
+}
+
+async function reviewRosterTransfers(projectName, preview, targetContent = null) {
+    const rows = preview.rows.filter(r => r.action === 'transfer');
+    if (!rows.length) return;
+    const content = targetContent || document.getElementById('employee-audit-content');
+    content.querySelector('#roster-transfer-review')?.remove();
+    const panel = document.createElement('div');
+    panel.id = 'roster-transfer-review';
+    const today = new Date();
+    const dateValue = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    panel.innerHTML = `<h4>Nhân viên có hồ sơ ở dự án khác</h4><p>Chọn đúng hồ sơ và ngày chuyển. Dự án đích dùng mã trong bảng; dự án nguồn giữ lịch sử đến ngày chuyển.</p>`;
+    for (const row of rows) {
+        const item = document.createElement('div');
+        item.style.cssText = 'padding:12px 0;border-bottom:1px solid var(--border-color);display:flex;gap:8px;flex-wrap:wrap;align-items:center';
+        const label = document.createElement('strong');
+        label.textContent = `${row.name} — Mã đích: ${row.payroll_code}`;
+        const select = document.createElement('select');
+        select.className = 'form-input';
+        select.add(new Option('-- Chọn hồ sơ nguồn --', ''));
+        row.transfer_candidates.forEach((c,i) => select.add(new Option(`${c.source_project}: ${c.name} (mã ${c.source_codes.join(', ') || 'chưa có'})`, String(i))));
+        const date = document.createElement('input');
+        date.type = 'date'; date.value = dateValue; date.className = 'form-input'; date.setAttribute('aria-label', 'Ngày chuyển dự án');
+        const button = document.createElement('button');
+        button.className = 'btn btn-primary btn-sm'; button.textContent = 'Xác nhận chuyển';
+        button.onclick = async () => {
+            const candidate = select.value === '' ? null : row.transfer_candidates[Number(select.value)];
+            if (!candidate || !date.value) return showToast('Chọn hồ sơ nguồn và ngày chuyển', 'warning');
+            if (!await confirmAction(`Chuyển ${candidate.name} từ ${candidate.source_project} sang ${projectName} ngày ${date.value}, dùng mã ${row.payroll_code} từ bảng? Xác nhận ảnh là đúng người trước khi chuyển.`)) return;
+            button.disabled = true;
+            try {
+                const res = await apiPost('/api/portraits/roster-transfer', {project_id: preview.project_id, source_project_id: candidate.source_project_id, employee_id: candidate.employee_id, payroll_code: row.payroll_code, effective_date: date.value});
+                if (!res.success) throw new Error(res.error);
+                button.textContent = 'Đã chuyển'; select.disabled = true; date.disabled = true;
+                showToast(res.message, 'success'); await loadProjects(); await loadPortraits();
+            } catch (err) { button.disabled = false; showToast('Lỗi: ' + err.message, 'error'); }
+        };
+        item.append(label, select, date, button); panel.append(item);
+    }
+    content.prepend(panel);
+    panel.scrollIntoView({block: 'nearest'});
 }
 
 async function syncEmployeesFromExcel() {
-    const filenameEl = document.getElementById('excel-filename');
-    const filename = filenameEl ? filenameEl.textContent.trim() : '';
-    if (!filename) {
-        showToast('Vui lòng chọn hoặc tải lên file Excel trước', 'warning');
-        return;
-    }
-
-    const selectEl = document.getElementById('excel-project-select');
-    const projectName = selectEl && selectEl.value ? selectEl.value : currentProjectName;
-    const proj = allProjectsList.find(p => p.name === projectName);
-    const projectId = proj ? proj.project_id : '';
-
-    showToast(`Đang đồng bộ nhân viên từ file Excel: ${filename}...`, 'info');
-    try {
-        const res = await apiPost('/api/portraits/import-file', {
-            filename: filename,
-            project: projectName,
-            project_id: projectId
-        });
-
-        if (!res.success) {
-            throw new Error(res.error || 'Lỗi đồng bộ nhân viên');
-        }
-
-        let msg = res.message;
-        if (!msg) {
-            msg = `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh`;
-            if (res.internal_codes_created) {
-                msg += `, Cấp mới ${res.internal_codes_created} mã nội bộ`;
-            }
-            msg += '.';
-        }
-        showToast(msg, 'success');
-        await loadPortraits();
-        await loadProjects();
-    } catch (err) {
-        showToast('Lỗi: ' + err.message, 'error');
-    }
+    const filename = document.getElementById('excel-filename')?.textContent.trim();
+    if (!filename) return showToast('Chọn file trước khi đồng bộ', 'warning');
+    await syncUploadedRoster(filename, 'excel');
 }
 
 async function syncEmployeesFromPDF() {
-    const filenameEl = document.getElementById('pdf-filename');
-    const filename = filenameEl ? filenameEl.textContent.trim() : '';
-    if (!filename) {
-        showToast('Vui lòng chọn hoặc tải lên file PDF trước', 'warning');
-        return;
-    }
-
-    const selectEl = document.getElementById('pdf-project-select');
-    const projectName = selectEl && selectEl.value ? selectEl.value : currentProjectName;
-    const proj = allProjectsList.find(p => p.name === projectName);
-    const projectId = proj ? proj.project_id : '';
-
-    showToast(`Đang đồng bộ nhân viên từ file PDF: ${filename}...`, 'info');
-    try {
-        const res = await apiPost('/api/portraits/import-file', {
-            filename: filename,
-            project: projectName,
-            project_id: projectId
-        });
-
-        if (!res.success) {
-            throw new Error(res.error || 'Lỗi đồng bộ nhân viên');
-        }
-
-        let msg = res.message;
-        if (!msg) {
-            msg = `Đã tìm thấy ${res.total_found} nhân viên: Ghép ${res.bound_existing} người có ảnh, Tạo mới ${res.created_new} người chưa có ảnh`;
-            if (res.internal_codes_created) {
-                msg += `, Cấp mới ${res.internal_codes_created} mã nội bộ`;
-            }
-            msg += '.';
-        }
-        showToast(msg, 'success');
-        await loadPortraits();
-        await loadProjects();
-    } catch (err) {
-        showToast('Lỗi: ' + err.message, 'error');
-    }
+    const filename = document.getElementById('pdf-filename')?.textContent.trim();
+    if (!filename) return showToast('Chọn file trước khi đồng bộ', 'warning');
+    await syncUploadedRoster(filename, 'pdf');
 }
 
 function openTransferModal(empName) {
@@ -2655,6 +2939,28 @@ async function deleteEmployeePhoto(filename) {
     }
 }
 
+async function deleteAllProjectEmployees(button) {
+    const projectName = currentProjectName;
+    const projectId = allProjectsList.find(p => p.name === projectName)?.project_id;
+    if (!projectId) {
+        showToast('Vui lòng chọn dự án', 'warning');
+        return;
+    }
+    if (!await confirmAction(`Xóa tất cả nhân viên khỏi danh sách hoạt động của dự án "${projectName}"? Ảnh và lịch sử vẫn được giữ. Các dự án khác không bị ảnh hưởng.`)) return;
+    button.disabled = true;
+    try {
+        const res = await apiPost('/api/portraits/employees/delete-all', {project_id: projectId});
+        if (!res.success) throw new Error(res.error || 'Lỗi xóa nhân viên');
+        showToast(res.message, 'success');
+        await loadProjects();
+        await loadPortraits();
+    } catch (err) {
+        showToast('Lỗi: ' + err.message, 'error');
+    } finally {
+        button.disabled = false;
+    }
+}
+
 async function deleteEmployee(empName) {
     if (!await confirmAction(`Bạn có chắc chắn muốn xóa nhân viên "${empName}" khỏi danh sách hoạt động? Ảnh và lịch sử vẫn được giữ.`)) return;
     try {
@@ -2821,7 +3127,6 @@ function initZaloTab() {
     setZaloDatePreset('today');
     loadProjectsForZalo();
     checkZaloStatus();
-    initZaloAutoSync();
     checkActiveZaloDownload();
 
     // Re-render cached groups & restore selected group UI when switching tabs
@@ -3406,7 +3711,6 @@ function selectZaloGroup(groupId, groupName, memberCount) {
     showToast(`Đã chọn nhóm: ${groupName}`, 'success');
 
     renderZaloGroupItems(zaloGroupsList);
-    refreshZaloTimelineGaps();
 }
 
 function filterZaloGroups() {
@@ -3452,7 +3756,6 @@ async function loadZaloGroups(manual = false) {
 async function loadProjectsForZalo() {
     const projectSel = document.getElementById('zalo-target-project');
     if (!projectSel) return;
-    projectSel.onchange = () => refreshZaloTimelineGaps();
 
     try {
         const res = await fetch('/api/projects');
@@ -3996,535 +4299,10 @@ async function navigateToPhotosTab(targetDay, targetProject) {
     }
 }
 
-// ==================== ZALO AUTO-SYNC & GAP BACKFILL ====================
-
-let zaloSyncConfig = {
-    enabled: false,
-    scheduleTime: '22:00',
-    lookbackDays: 10,
-    autoBackfillOnStartup: true,
-    lastRun: null,
-    mappings: []
-};
-
-// Cập nhật nhãn trạng thái Lịch Tự Động trên header
-function updateZaloHeaderSyncBadge() {
-    const badge = document.getElementById('zalo-header-sync-status-badge');
-    if (!badge) return;
-    if (zaloSyncConfig.enabled) {
-        badge.className = 'badge badge-success';
-        badge.style.background = '#dcfce7';
-        badge.style.color = '#15803d';
-        badge.textContent = `Bật (${zaloSyncConfig.scheduleTime || '22:00'})`;
-    } else {
-        badge.className = 'badge';
-        badge.style.background = '#e2e8f0';
-        badge.style.color = '#475569';
-        badge.textContent = 'Tắt';
-    }
-}
-
-// Khởi tạo tab Auto-Sync khi mở tab Zalo
-async function initZaloAutoSync() {
-    try {
-        const res = await fetch('/api/zalo/sync/config');
-        const data = await res.json();
-        if (data.success && data.data) {
-            zaloSyncConfig = data.data;
-            updateZaloHeaderSyncBadge();
-        }
-    } catch (err) {
-        console.warn('Lỗi nạp cấu hình Auto-Sync Zalo:', err);
-    }
-
-    // Tự động kiểm tra các ngày thiếu ảnh cho dự án hiện tại
-    refreshZaloTimelineGaps();
-}
-
-// Mở modal cài đặt Lập Lịch Tự Động
-function openZaloAutoSyncModal() {
-    const enabledInput = document.getElementById('modal-zalo-sync-enabled');
-    const timeInput = document.getElementById('modal-zalo-sync-time');
-    const lookbackSelect = document.getElementById('modal-zalo-sync-lookback');
-    const startupCheckbox = document.getElementById('modal-zalo-sync-startup');
-    const lastRunInfo = document.getElementById('modal-zalo-last-run-info');
-
-    if (enabledInput) enabledInput.checked = !!zaloSyncConfig.enabled;
-    if (timeInput && zaloSyncConfig.scheduleTime) timeInput.value = zaloSyncConfig.scheduleTime;
-    if (lookbackSelect && zaloSyncConfig.lookbackDays) lookbackSelect.value = String(zaloSyncConfig.lookbackDays);
-    if (startupCheckbox) startupCheckbox.checked = zaloSyncConfig.autoBackfillOnStartup !== false;
-
-    if (lastRunInfo) {
-        let lastRunStr = 'Chưa chạy';
-        if (zaloSyncConfig.lastRun) {
-            try {
-                lastRunStr = new Date(zaloSyncConfig.lastRun).toLocaleString('vi-VN');
-            } catch {
-                lastRunStr = zaloSyncConfig.lastRun;
-            }
-        }
-        lastRunInfo.textContent = `Lần chạy gần nhất: ${lastRunStr}`;
-    }
-
-    // Nạp danh sách nhóm Zalo vào dropdown thêm nhanh trong modal
-    const groupSel = document.getElementById('modal-add-group-select');
-    const projSel = document.getElementById('modal-add-project-select');
-    if (groupSel) {
-        groupSel.innerHTML = '<option value="">-- Chọn nhóm Zalo để thêm --</option>';
-        (zaloGroupsList || []).forEach(g => {
-            const opt = document.createElement('option');
-            opt.value = g.id;
-            opt.textContent = g.name || g.id;
-            groupSel.appendChild(opt);
-        });
-    }
-    if (projSel) {
-        projSel.innerHTML = '<option value="__AUTO__">[Tự tạo theo tên nhóm]</option>';
-        (allProjectsList || []).forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.name;
-            opt.textContent = `Dự án: ${p.name}`;
-            projSel.appendChild(opt);
-        });
-    }
-    if (groupSel && projSel) {
-        groupSel.onchange = () => {
-            const selectedText = groupSel.options[groupSel.selectedIndex]?.text || '';
-            if (!selectedText) return;
-            for (let i = 0; i < projSel.options.length; i++) {
-                if (projSel.options[i].text.toLowerCase().includes(selectedText.toLowerCase()) ||
-                    projSel.options[i].value.toLowerCase() === selectedText.toLowerCase()) {
-                    projSel.selectedIndex = i;
-                    break;
-                }
-            }
-        };
-    }
-
-    renderZaloAutoSyncModalMappings();
-    openModal('modal-zalo-auto-sync');
-}
-
-// Thêm nhóm & dự án trực tiếp từ trong popup Modal
-function addMappingFromModal() {
-    const groupSel = document.getElementById('modal-add-group-select');
-    const projectSel = document.getElementById('modal-add-project-select');
-    if (!groupSel || !groupSel.value) {
-        showToast('Vui lòng chọn 1 nhóm Zalo trong danh sách!', 'warning');
-        return;
-    }
-    const groupId = groupSel.value;
-    const groupName = groupSel.options[groupSel.selectedIndex]?.text || groupId;
-    let projectName = projectSel ? projectSel.value : '__AUTO__';
-    if (projectName === '__AUTO__' || !projectName) {
-        projectName = groupName;
-    }
-
-    if (!zaloSyncConfig.mappings) zaloSyncConfig.mappings = [];
-
-    const existingIndex = zaloSyncConfig.mappings.findIndex(m => m.groupId === groupId);
-    if (existingIndex >= 0) {
-        zaloSyncConfig.mappings[existingIndex].projectName = projectName;
-        zaloSyncConfig.mappings[existingIndex].active = true;
-    } else {
-        zaloSyncConfig.mappings.push({
-            groupId,
-            groupName,
-            projectName,
-            active: true
-        });
-    }
-
-    zaloSyncConfig.enabled = true;
-    const modalSwitch = document.getElementById('modal-zalo-sync-enabled');
-    if (modalSwitch) modalSwitch.checked = true;
-
-    renderZaloAutoSyncModalMappings();
-    showToast(`Đã thêm "${groupName}" ➔ Dự án "${projectName}" vào lịch!`, 'success');
-    groupSel.value = '';
-}
-
-// Tự động thêm TẤT CẢ các nhóm Zalo hiện có vào lịch tự động
-function addAllZaloGroupsToAutoSync() {
-    if (!zaloGroupsList || zaloGroupsList.length === 0) {
-        showToast('Chưa có danh sách nhóm Zalo (vui lòng đảm bảo đã đăng nhập)', 'warning');
-        return;
-    }
-    if (!zaloSyncConfig.mappings) zaloSyncConfig.mappings = [];
-
-    let count = 0;
-    zaloGroupsList.forEach(g => {
-        const existingIndex = zaloSyncConfig.mappings.findIndex(m => m.groupId === g.id);
-        let matchedProject = g.name;
-        if (allProjectsList && allProjectsList.length > 0) {
-            const found = allProjectsList.find(p => p.name.toLowerCase() === g.name.toLowerCase() || g.name.toLowerCase().includes(p.name.toLowerCase()));
-            if (found) matchedProject = found.name;
-        }
-
-        if (existingIndex >= 0) {
-            zaloSyncConfig.mappings[existingIndex].active = true;
-        } else {
-            zaloSyncConfig.mappings.push({
-                groupId: g.id,
-                groupName: g.name,
-                projectName: matchedProject,
-                active: true
-            });
-            count++;
-        }
-    });
-
-    zaloSyncConfig.enabled = true;
-    const modalSwitch = document.getElementById('modal-zalo-sync-enabled');
-    if (modalSwitch) modalSwitch.checked = true;
-
-    renderZaloAutoSyncModalMappings();
-    showToast(`Đã thêm & kích hoạt ${zaloGroupsList.length} nhóm Zalo vào lịch tự động!`, 'success');
-}
-
-// Đóng modal cài đặt
-function closeZaloAutoSyncModal() {
-    closeModal('modal-zalo-auto-sync');
-}
-
-// Hiển thị danh sách nhóm trong modal
-function renderZaloAutoSyncModalMappings() {
-    const listEl = document.getElementById('modal-zalo-mapping-list');
-    const badgeEl = document.getElementById('modal-mapping-count-badge');
-    if (!listEl) return;
-    const mappings = zaloSyncConfig.mappings || [];
-
-    if (badgeEl) {
-        badgeEl.textContent = `${mappings.length} nhóm`;
-        badgeEl.style.display = mappings.length > 0 ? 'inline-block' : 'none';
-    }
-
-    if (mappings.length === 0) {
-        listEl.innerHTML = `
-            <div class="text-center p-3 text-muted" style="font-size: 12px;">
-                <div style="font-weight: 500;">Chưa có nhóm nào trong lịch tự động.</div>
-                <div style="font-size: 11px; margin-top: 4px; color: var(--text-muted);">Hãy chọn nhóm ở ô trên rồi bấm "Thêm" hoặc "Thêm tất cả nhóm".</div>
-            </div>`;
-        return;
-    }
-
-    listEl.innerHTML = '';
-    mappings.forEach((m, idx) => {
-        const row = document.createElement('div');
-        row.className = 'zalo-mapping-item';
-        row.innerHTML = `
-            <div class="zalo-mapping-info">
-                <div class="zalo-mapping-title" title="${escapeHtml(m.groupName || m.groupId)}">
-                    ${escapeHtml(m.groupName || m.groupId)}
-                </div>
-                <div class="zalo-mapping-sub">
-                    Lưu vào dự án: <strong style="color: var(--text-primary); font-weight: 600;">${escapeHtml(m.projectName || 'Mặc định')}</strong>
-                </div>
-            </div>
-            <div class="zalo-mapping-actions">
-                <label class="zalo-mapping-toggle" title="${m.active !== false ? 'Đang bật quét tự động' : 'Đang tạm dừng'}">
-                    <input type="checkbox" ${m.active !== false ? 'checked' : ''} onchange="toggleZaloMappingActive(${idx}, this.checked)">
-                    <span>${m.active !== false ? 'Bật' : 'Tắt'}</span>
-                </label>
-                <button type="button" class="zalo-mapping-delete-btn" onclick="removeZaloAutoSyncMapping(${idx})" title="Xóa nhóm này khỏi lịch">
-                    ✕
-                </button>
-            </div>
-        `;
-        listEl.appendChild(row);
-    });
-}
-
-// Xóa tất cả các nhóm khỏi lịch tự động
-function clearAllZaloAutoSyncMappings() {
-    const mappings = zaloSyncConfig.mappings || [];
-    if (mappings.length === 0) {
-        showToast('Danh sách nhóm tự động hiện đang trống!', 'info');
-        return;
-    }
-    const count = mappings.length;
-    zaloSyncConfig.mappings = [];
-    renderZaloAutoSyncModalMappings();
-    showToast(`Đã xóa toàn bộ ${count} nhóm khỏi Lịch Tự Động!`, 'success');
-}
-
-// Bật/tắt 1 nhóm trong danh sách
-function toggleZaloMappingActive(idx, active) {
-    if (zaloSyncConfig.mappings && zaloSyncConfig.mappings[idx]) {
-        zaloSyncConfig.mappings[idx].active = active;
-        renderZaloAutoSyncModalMappings();
-    }
-}
-
-// Xóa 1 nhóm khỏi lịch
-function removeZaloAutoSyncMapping(idx) {
-    if (zaloSyncConfig.mappings && zaloSyncConfig.mappings[idx]) {
-        const removed = zaloSyncConfig.mappings.splice(idx, 1);
-        renderZaloAutoSyncModalMappings();
-        showToast(`Đã xóa "${removed[0]?.groupName || 'nhóm'}" khỏi Lịch Tự Động`, 'info');
-    }
-}
-
-// Lưu cấu hình từ Modal
-async function saveZaloSyncModalSettings() {
-    const enabled = document.getElementById('modal-zalo-sync-enabled')?.checked || false;
-    const scheduleTime = document.getElementById('modal-zalo-sync-time')?.value || '22:00';
-    const lookbackDays = parseInt(document.getElementById('modal-zalo-sync-lookback')?.value || '10', 10);
-    const autoBackfillOnStartup = document.getElementById('modal-zalo-sync-startup')?.checked !== false;
-
-    zaloSyncConfig.enabled = enabled;
-    zaloSyncConfig.scheduleTime = scheduleTime;
-    zaloSyncConfig.lookbackDays = lookbackDays;
-    zaloSyncConfig.autoBackfillOnStartup = autoBackfillOnStartup;
-
-    try {
-        const res = await fetch('/api/zalo/sync/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(zaloSyncConfig)
-        });
-        const data = await res.json();
-        if (data.success) {
-            updateZaloHeaderSyncBadge();
-            closeZaloAutoSyncModal();
-            showToast(`Đã lưu lịch tự động: ${scheduleTime} mỗi ngày (${enabled ? 'Đang BẬT' : 'Đang TẮT'})`, 'success');
-            appendZaloLog(`[Lịch tự động] Đã cập nhật cấu hình: ${scheduleTime} mỗi ngày, tự động: ${enabled ? 'BẬT' : 'TẮT'}`, 'info');
-        } else {
-            showToast('Lỗi lưu cấu hình: ' + (data.error || 'Thất bại'), 'error');
-        }
-    } catch (err) {
-        showToast('Lỗi kết nối: ' + err.message, 'error');
-    }
-}
-
-// Lấy tên dự án hiện đang được chọn trên giao diện Zalo
-function getSelectedZaloProjectName() {
-    const projectSel = document.getElementById('zalo-target-project');
-    if (projectSel && projectSel.value && projectSel.value !== '__AUTO__') {
-        return projectSel.value;
-    }
-    const hidTitle = document.getElementById('zalo-selected-group-title')?.value || selectedZaloGroupName;
-    if (hidTitle) return hidTitle;
-    return currentProjectName || '';
-}
-
-// Ẩn/Hiện chi tiết 10 ngày trong Smart Gap Alert
-function toggleZaloTimelineDetails() {
-    const el = document.getElementById('zalo-timeline-details-collapse');
-    if (!el) return;
-    const isHidden = el.style.display === 'none' || !el.style.display;
-    el.style.display = isHidden ? 'block' : 'none';
-}
-
-// Kiểm tra và hiển thị tình trạng ảnh 10 ngày gần nhất (Timeline & Smart Alert)
-async function refreshZaloTimelineGaps() {
-    const projectName = getSelectedZaloProjectName();
-    const alertEl = document.getElementById('zalo-smart-gap-alert');
-    const okEl = document.getElementById('zalo-smart-gap-ok');
-
-    if (!projectName) {
-        if (alertEl) alertEl.style.display = 'none';
-        if (okEl) okEl.style.display = 'none';
-        return;
-    }
-
-    const lookback = zaloSyncConfig.lookbackDays || 10;
-
-    try {
-        const res = await fetch(`/api/zalo/sync/gaps?projectName=${encodeURIComponent(projectName)}&lookbackDays=${lookback}`);
-        const data = await res.json();
-
-        if (data.success && data.data) {
-            renderZalo10DayTimeline(data.data);
-        } else {
-            if (alertEl) alertEl.style.display = 'none';
-            if (okEl) okEl.style.display = 'none';
-        }
-    } catch (err) {
-        console.warn('Lỗi kiểm tra ngày thiếu ảnh:', err);
-    }
-}
-
-// Vẽ Smart Gap Alert và các thẻ ngày chi tiết
-function renderZalo10DayTimeline(gaps) {
-    const alertEl = document.getElementById('zalo-smart-gap-alert');
-    const okEl = document.getElementById('zalo-smart-gap-ok');
-    const titleEl = document.getElementById('zalo-gap-alert-title');
-    const descEl = document.getElementById('zalo-gap-alert-desc');
-    const btnBackfill = document.getElementById('btn-zalo-backfill-now');
-    const stripEl = document.getElementById('zalo-days-strip');
-
-    if (!gaps || !Array.isArray(gaps.dates)) {
-        if (alertEl) alertEl.style.display = 'none';
-        if (okEl) okEl.style.display = 'none';
-        return;
-    }
-
-    const missingCount = (gaps.missingDates || []).length;
-    const projectName = gaps.projectName || getSelectedZaloProjectName();
-
-    if (missingCount > 0) {
-        if (alertEl) alertEl.style.display = 'block';
-        if (okEl) okEl.style.display = 'none';
-
-        if (titleEl) {
-            titleEl.textContent = `Phát hiện thiếu ${missingCount} ngày ảnh!`;
-        }
-
-        if (descEl) {
-            const formattedDates = (gaps.missingDates || []).slice(-3).map(d => {
-                const parts = d.split('-');
-                return parts.length === 3 ? `${parts[2]}/${parts[1]}` : d;
-            });
-            const datesStr = formattedDates.join(', ') + (missingCount > 3 ? '...' : '');
-            descEl.textContent = `Dự án "${projectName}" thiếu ảnh ngày: ${datesStr}.`;
-        }
-
-        if (btnBackfill) {
-            btnBackfill.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg> <span>⚡ Tự Động Tải Bù (${missingCount} ngày)</span>`;
-        }
-
-        // Render dải thẻ chi tiết
-        if (stripEl) {
-            stripEl.innerHTML = '';
-            gaps.dates.forEach(d => {
-                const pill = document.createElement('div');
-                pill.className = `zalo-day-pill ${d.status}`;
-                pill.title = `Ngày ${d.date}: ${d.photoCount} ảnh`;
-
-                let statusText = 'Đủ';
-                if (d.status === 'missing') statusText = 'Thiếu';
-                else if (d.status === 'today_pending') statusText = 'Hôm nay';
-                else if (d.isToday) statusText = 'Hôm nay';
-
-                pill.innerHTML = `
-                    <span class="day-date">${escapeHtml(d.displayDate)}</span>
-                    <span class="day-count">${d.photoCount} ảnh</span>
-                    <span class="day-status">${statusText}</span>
-                `;
-                stripEl.appendChild(pill);
-            });
-        }
-    } else {
-        // Đầy đủ ảnh
-        if (alertEl) alertEl.style.display = 'none';
-        if (okEl) okEl.style.display = 'flex';
-        if (stripEl) stripEl.innerHTML = '';
-    }
-}
-
-// Thêm nhóm & dự án đang chọn vào danh sách Auto-Sync
-async function addCurrentSelectionToAutoSync() {
-    const groupId = document.getElementById('zalo-selected-group-id')?.value || selectedZaloGroupId;
-    const groupName = document.getElementById('zalo-selected-group-title')?.value || selectedZaloGroupName;
-    const projectName = getSelectedZaloProjectName();
-
-    if (!groupId || !groupName) {
-        showToast('Vui lòng chọn 1 nhóm Zalo trước!', 'warning');
-        toggleZaloGroupDropdown(true);
-        return;
-    }
-
-    if (!zaloSyncConfig.mappings) zaloSyncConfig.mappings = [];
-
-    // Kiểm tra xem mapping đã tồn tại chưa
-    const existingIndex = zaloSyncConfig.mappings.findIndex(m => m.groupId === groupId);
-    if (existingIndex >= 0) {
-        zaloSyncConfig.mappings[existingIndex].projectName = projectName;
-        zaloSyncConfig.mappings[existingIndex].active = true;
-    } else {
-        zaloSyncConfig.mappings.push({
-            groupId,
-            groupName,
-            projectName,
-            active: true
-        });
-    }
-
-    // Tự động bật enabled nếu chưa bật
-    zaloSyncConfig.enabled = true;
-    const modalSwitch = document.getElementById('modal-zalo-sync-enabled');
-    if (modalSwitch) modalSwitch.checked = true;
-
-    try {
-        await fetch('/api/zalo/sync/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(zaloSyncConfig)
-        });
-        updateZaloHeaderSyncBadge();
-        renderZaloAutoSyncModalMappings();
-        showToast(`Đã thêm "${groupName}" -> Dự án "${projectName}" vào Lịch Tự Động!`, 'success');
-        appendZaloLog(`[Lịch tự động] Đã thêm nhóm "${groupName}" -> Dự án "${projectName}"`, 'success');
-    } catch (err) {
-        showToast('Lỗi lưu cấu hình: ' + err.message, 'error');
-    }
-}
-
-// Bấm nút "⚡ Tự Động Tải Bù"
-async function triggerManualBackfillNow() {
-    const btn = document.getElementById('btn-zalo-backfill-now');
-    const originalHtml = btn ? btn.innerHTML : '';
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '<div class="spinner spinner-sm"></div> <span>Đang Quét & Tải Bù...</span>';
-    }
-
-    const projectName = getSelectedZaloProjectName();
-    const groupId = document.getElementById('zalo-selected-group-id')?.value || selectedZaloGroupId;
-
-    if (!groupId) {
-        showToast('Vui lòng chọn nhóm Zalo trước khi tải bù!', 'warning');
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = originalHtml;
-        }
-        return;
-    }
-
-    try {
-        const gapRes = await fetch(`/api/zalo/sync/gaps?projectName=${encodeURIComponent(projectName)}&lookbackDays=10`);
-        const gapData = await gapRes.json();
-        
-        let fromDate = null;
-        if (gapData.success && gapData.data && gapData.data.earliestMissingDate) {
-            fromDate = gapData.data.earliestMissingDate;
-            appendZaloLog(`[Tải bù ngày thiếu] Phát hiện ngày thiếu cũ nhất là: ${fromDate}. Bắt đầu tải bù tới hôm nay...`, 'info');
-            showToast(`Bắt đầu tải bù ảnh từ ngày ${fromDate} đến nay...`, 'info');
-        } else {
-            appendZaloLog(`[Tải bù ngày thiếu] Không có ngày thiếu trong quá khứ, sẽ quét ảnh 3 ngày gần nhất.`, 'info');
-        }
-
-        // Tự động set date range trên UI và kích hoạt download
-        const fromInput = document.getElementById('zalo-date-from');
-        const toInput = document.getElementById('zalo-date-to');
-        if (fromInput && fromDate) setDatePickerValue(fromInput, fromDate);
-        if (toInput) {
-            const today = new Date();
-            const y = today.getFullYear();
-            const m = String(today.getMonth() + 1).padStart(2, '0');
-            const d = String(today.getDate()).padStart(2, '0');
-            setDatePickerValue(toInput, `${y}-${m}-${d}`);
-        }
-
-        // Gọi startZaloDownload
-        await startZaloDownload();
-    } catch (err) {
-        showToast('Lỗi tải bù: ' + err.message, 'error');
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = originalHtml;
-        }
-        setTimeout(refreshZaloTimelineGaps, 3000);
-    }
-}
-
 // Tự động kiểm tra trạng thái Zalo khi mở trang web
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {
         checkZaloStatus();
-        initZaloAutoSync();
     }, 1000);
 });
 

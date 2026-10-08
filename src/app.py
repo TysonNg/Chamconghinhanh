@@ -59,7 +59,11 @@ def _build_report_options(data, fallback_project_name):
 
     # Kỳ báo cáo luôn được suy ra từ ngày nhỏ nhất/lớn nhất trong các file
     # nhân viên của chính đợt quét; không dùng khoảng ngày cũ từ giao diện.
-    return {'project_name': project_name}
+    options = {'project_name': project_name}
+    if data.get('scan_month'):
+        from src.face_scan_period import month_limits
+        options['from_date'], options['to_date'] = month_limits(data['scan_month'])
+    return options
 
 def _normalize_folder_name(name: str) -> str:
     import unicodedata
@@ -647,6 +651,14 @@ def pdf_extract():
         }), 400
     
     data = request.json or {}
+    try:
+        if not data.get('project_id'):
+            raise ValueError('Chọn dự án trước khi tách file')
+        batch_project = get_identity_registry().get_project(data['project_id'])
+        if not batch_project['active']:
+            raise ValueError('Dự án đã lưu trữ')
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
     filename = data.get('filename')
     
     if not filename:
@@ -664,6 +676,9 @@ def pdf_extract():
     # Bắt đầu task trong background
     task_id = pdf_extractor.start_extraction_task(filepath, output_dir)
     output_dir = pdf_extractor.get_task(task_id).output_dir
+    from src.extraction_project import write_batch_project
+    write_batch_project(output_dir, batch_project, filename)
+
     
     return jsonify({
         'success': True,
@@ -684,9 +699,42 @@ def pdf_status(task_id):
     
     return jsonify(task.to_dict())
 
+@app.post('/api/extraction/project')
+def assign_extraction_project():
+    from pathlib import Path
+    from src.extraction_project import write_batch_project, read_batch_project
+    data=request.get_json() or {}
+    kind=data.get('kind'); folder=data.get('folder','')
+    if kind not in ('excel','pdf') or not isinstance(folder,str) or not folder or '..' in folder or '/' in folder or '\\' in folder:
+        return jsonify(success=False,error='Đợt tách không hợp lệ'),400
+    try:
+        if not data.get('project_id'):
+            raise ValueError('Chọn dự án')
+        project=get_identity_registry().get_project(data['project_id'])
+        if not project['active']:
+            raise ValueError('Dự án đã lưu trữ')
+        root=EXCEL_OUTPUT_DIR if kind=='excel' else PDF_OUTPUT_DIR
+        target=Path(root)/folder
+        if not target.is_dir() or target.is_symlink() or not target.resolve().is_relative_to(Path(root).resolve()):
+            raise ValueError('Không tìm thấy đợt tách')
+        source=read_batch_project(target)['source_filename']
+        if not source:
+            uploads=Path(EXCEL_UPLOAD_DIR if kind=='excel' else PDF_UPLOAD_DIR)
+            matches=[p.name for p in uploads.iterdir() if p.is_file() and (p.stem==folder or folder.startswith(p.stem+'__') or folder.startswith(p.stem+'_'))]
+            source=matches[0] if len(matches)==1 else ''
+        write_batch_project(target,project,source)
+        if kind=='excel':
+            person=Path(EXCEL_PERSON_DIR)/folder
+            if person.is_dir() and not person.is_symlink():
+                write_batch_project(person,project,source)
+        return jsonify(success=True,project_id=project['project_id'],project_name=project['display_name'])
+    except ValueError as exc:
+        return jsonify(success=False,error=str(exc)),400
+
 @app.route('/api/pdf/files')
 def pdf_list_files():
     """Liệt kê các file Word đã tách"""
+    from src.extraction_project import read_batch_project
     files = []
     
     if os.path.exists(PDF_OUTPUT_DIR):
@@ -695,6 +743,7 @@ def pdf_list_files():
             if os.path.isdir(folder_path):
                 folder_files = pdf_extractor.list_extracted_files(folder_path) if PDF_EXTRACTOR_AVAILABLE else []
                 files.append({
+                    **read_batch_project(folder_path),
                     'folder': folder,
                     'path': folder_path,
                     'files': folder_files,
@@ -804,6 +853,10 @@ def pdf_face_analyze():
             report_options = _build_report_options(data, selected_project['display_name'])
         except ValueError as exc:
             return jsonify({'success': False, 'error': str(exc)}), 400
+        if data.get('scan_month'):
+            folder = folder + '__' + data['scan_month']
+            output_dir = os.path.join(PDF_FACE_OUTPUT_DIR, folder)
+            os.makedirs(output_dir, exist_ok=True)
         p_dir = str(identity_registry.project_portrait_dir(project_id))
         i_dir = os.path.join(INPUT_IMAGES_DIR, project_name)
 
@@ -973,6 +1026,19 @@ os.makedirs(EXCEL_FACE_OUTPUT_DIR, exist_ok=True)
 excel_tasks = {}
 excel_face_tasks = {}
 
+
+def sanitize_batch_folder_name(name: str, fallback: str = "batch") -> str:
+    """Sanitize folder/batch name for Windows filesystem compatibility.
+
+    Windows forbids trailing dots and spaces in directory names, as well as characters < > : " / \\ | ? *.
+    """
+    if not name:
+        return fallback
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', str(name))
+    cleaned = cleaned.strip().strip('.').strip()
+    cleaned = cleaned.rstrip('. ')
+    return cleaned or fallback
+
 class ExcelTask:
     def __init__(self, task_id):
         self.task_id = task_id
@@ -1039,8 +1105,11 @@ def excel_upload():
     if ext not in ('.xls', '.xlsx'):
         return jsonify({'success': False, 'error': 'Chỉ chấp nhận file .xls hoặc .xlsx'}), 400
 
-    # Giữ tên gốc (có tiếng Việt)
-    filename = file.filename
+    # Giữ tên gốc (có tiếng Việt) nhưng loại bỏ ký tự cấm và dấu chấm/khoảng trắng thừa ở đuôi
+    raw_name = os.path.basename(file.filename)
+    stem, ext = os.path.splitext(raw_name)
+    clean_stem = sanitize_batch_folder_name(stem, fallback=f"excel_{int(time.time())}")
+    filename = f"{clean_stem}{ext.lower()}"
     filepath = os.path.join(EXCEL_UPLOAD_DIR, filename)
     file.save(filepath)
 
@@ -1056,21 +1125,42 @@ def excel_extract():
     """Bat dau tach Excel -> file Excel theo nguoi + file Word de in"""
     try:
         data = request.json or {}
+        try:
+            if not data.get('project_id'):
+                raise ValueError('Chọn dự án trước khi tách file')
+            batch_project = get_identity_registry().get_project(data['project_id'])
+            if not batch_project['active']:
+                raise ValueError('Dự án đã lưu trữ')
+        except ValueError as exc:
+            return jsonify(success=False, error=str(exc)), 400
         filename = data.get('filename')
         if not filename:
             return jsonify({'success': False, 'error': 'Thiếu tên file'}), 400
 
         filepath = os.path.join(EXCEL_UPLOAD_DIR, filename)
         if not os.path.exists(filepath):
-            return jsonify({'success': False, 'error': 'File Excel không tồn tại'}), 404
+            # Check alternative sanitized name if original had trailing dots/spaces
+            raw_stem, ext = os.path.splitext(os.path.basename(filename))
+            clean_name = f"{sanitize_batch_folder_name(raw_stem)}{ext.lower()}"
+            alt_path = os.path.join(EXCEL_UPLOAD_DIR, clean_name)
+            if os.path.exists(alt_path):
+                filepath = alt_path
+                filename = clean_name
+            else:
+                return jsonify({'success': False, 'error': 'File Excel không tồn tại'}), 404
 
-        # Tạo thư mục output riêng
-        base_name = os.path.splitext(filename)[0]
+        # Tạo thư mục output riêng (loại bỏ dấu chấm/khoảng trắng thừa tránh lỗi Windows Errno 2)
+        raw_base_name = os.path.splitext(filename)[0]
+        base_name = sanitize_batch_folder_name(raw_base_name, fallback=f"excel_{int(time.time())}")
+        base_name += '__' + batch_project['project_id'][:8]
         person_dir = os.path.join(EXCEL_PERSON_DIR, base_name)
         output_dir = os.path.join(EXCEL_OUTPUT_DIR, base_name)
         os.makedirs(person_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
 
+        from src.extraction_project import write_batch_project
+        write_batch_project(output_dir, batch_project, filename)
+        write_batch_project(person_dir, batch_project, filename)
         task_id = f"excel_{int(time.time() * 1000)}"
         task = ExcelTask(task_id)
         excel_tasks[task_id] = task
@@ -1146,6 +1236,7 @@ def excel_status(task_id):
 @app.route('/api/excel/files')
 def excel_list_files():
     """Liệt kê các file Word chi tiết chấm công đã tạo từ Excel"""
+    from src.extraction_project import read_batch_project
     folders = []
     if os.path.exists(EXCEL_OUTPUT_DIR):
         for folder in os.listdir(EXCEL_OUTPUT_DIR):
@@ -1163,6 +1254,7 @@ def excel_list_files():
                 ]
                 word_files.sort(key=lambda x: x['name'])
                 folders.append({
+                    **read_batch_project(folder_path),
                     'folder': folder,
                     'files': word_files,
                     'count': len(word_files)
@@ -1203,11 +1295,16 @@ def excel_face_analyze():
         if not folder:
             return jsonify({'success': False, 'error': 'Thiếu tên thư mục'}), 400
 
-        input_dir = os.path.join(EXCEL_PERSON_DIR, folder)
+        safe_folder = sanitize_batch_folder_name(folder)
+        input_dir = os.path.join(EXCEL_PERSON_DIR, safe_folder)
         if not os.path.exists(input_dir):
-            return jsonify({'success': False, 'error': 'Thư mục Excel đã tách không tồn tại'}), 404
+            if os.path.exists(os.path.join(EXCEL_PERSON_DIR, folder)):
+                input_dir = os.path.join(EXCEL_PERSON_DIR, folder)
+                safe_folder = folder
+            else:
+                return jsonify({'success': False, 'error': 'Thư mục Excel đã tách không tồn tại'}), 404
 
-        output_dir = os.path.join(EXCEL_FACE_OUTPUT_DIR, folder)
+        output_dir = os.path.join(EXCEL_FACE_OUTPUT_DIR, safe_folder)
         os.makedirs(output_dir, exist_ok=True)
 
         try:
@@ -1220,6 +1317,10 @@ def excel_face_analyze():
             report_options = _build_report_options(data, selected_project['display_name'])
         except ValueError as exc:
             return jsonify({'success': False, 'error': str(exc)}), 400
+        if data.get('scan_month'):
+            folder = folder + '__' + data['scan_month']
+            output_dir = os.path.join(EXCEL_FACE_OUTPUT_DIR, folder)
+            os.makedirs(output_dir, exist_ok=True)
         p_dir = str(identity_registry.project_portrait_dir(project_id))
         i_dir = os.path.join(INPUT_IMAGES_DIR, project_name)
 
@@ -1649,16 +1750,24 @@ def excel_delete_folder():
         folder = data.get('folder', '')
         if not folder:
             return jsonify({'success': False, 'error': 'Tên thư mục không hợp lệ'}), 400
-        safe_folder = os.path.basename(folder)
-        folder_path = os.path.join(EXCEL_OUTPUT_DIR, safe_folder)
+        safe_folder = sanitize_batch_folder_name(os.path.basename(folder))
         deleted = False
-        if os.path.exists(folder_path) and os.path.isdir(folder_path):
-            shutil.rmtree(folder_path)
-            deleted = True
-        person_path = os.path.join(EXCEL_PERSON_DIR, safe_folder)
-        if os.path.exists(person_path) and os.path.isdir(person_path):
-            shutil.rmtree(person_path)
-            deleted = True
+        candidates = {safe_folder, folder, os.path.basename(folder)}
+        for fld in candidates:
+            if not fld:
+                continue
+            folder_path = os.path.join(EXCEL_OUTPUT_DIR, fld)
+            if os.path.exists(folder_path) and os.path.isdir(folder_path):
+                shutil.rmtree(folder_path, ignore_errors=True)
+                deleted = True
+            person_path = os.path.join(EXCEL_PERSON_DIR, fld)
+            if os.path.exists(person_path) and os.path.isdir(person_path):
+                shutil.rmtree(person_path, ignore_errors=True)
+                deleted = True
+            face_path = os.path.join(EXCEL_FACE_OUTPUT_DIR, fld)
+            if os.path.exists(face_path) and os.path.isdir(face_path):
+                shutil.rmtree(face_path, ignore_errors=True)
+                deleted = True
         if deleted:
             return jsonify({'success': True, 'message': f'Đã xóa đợt {safe_folder}'})
         return jsonify({'success': False, 'error': 'Thư mục không tồn tại'}), 404

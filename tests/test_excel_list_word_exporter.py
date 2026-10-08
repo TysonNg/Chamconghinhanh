@@ -79,3 +79,20 @@ def test_monthly_word_table_uses_compact_fixed_widths(tmp_path):
     assert sum(grid_widths) <= printable_width
 
     assert [paragraph.text for paragraph in document.paragraphs] == ["CHI TIẾT CHẤM CÔNG"]
+
+
+def test_excel_split_and_export_handles_trailing_dots(tmp_path):
+    from src.excel_splitter import ExcelAttendanceSplitter
+    source = tmp_path / "attendance.xlsx"
+    _make_monthly_attendance(source)
+
+    # Output dir with trailing dots, like "T9.2026....."
+    splitter_out = str(tmp_path / "split_persons.....")
+    splitter = ExcelAttendanceSplitter(str(source))
+    person_files, summaries = splitter.split(splitter_out)
+    assert len(person_files) == 1
+    assert Path(person_files[0]).exists()
+
+    word_out = str(tmp_path / "word_extracted.....")
+    word_file = ExcelListWordExporter(word_out).export_from_excel(person_files[0])
+    assert Path(word_file).exists()
