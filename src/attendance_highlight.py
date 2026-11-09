@@ -23,7 +23,7 @@ def _seconds(value, last=False):
 
 
 def should_highlight_attendance(row, columns):
-    """Highlight dated rows with missing punches or a duration of at most 3h."""
+    """Highlight missing punches or times within 3h, including reversed punches."""
     if not all(key in columns for key in ('date', 'gio_vao', 'gio_ra')):
         return False
 
@@ -43,4 +43,7 @@ def should_highlight_attendance(row, columns):
     start_seconds, end_seconds = _seconds(start), _seconds(end, last=True)
     if start_seconds is None or end_seconds is None:
         return False
-    return (end_seconds - start_seconds) % 86400 <= 3 * 3600
+    difference = end_seconds - start_seconds
+    # Nearby punches can be reversed in the source. Do not mistake a small
+    # negative difference for an almost 24-hour overnight shift.
+    return abs(difference) <= 3 * 3600 or difference % 86400 <= 3 * 3600

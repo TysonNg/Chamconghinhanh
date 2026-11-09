@@ -5,6 +5,7 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -23,6 +24,8 @@ def safe_component(value):
 
 def register_daily_photo_routes(app, input_root, project_resolver=None, evidence_service_provider=None):
     bp = Blueprint("daily_photos", __name__)
+    word_exports = {}
+    word_exports_lock = threading.Lock()
 
     def evidence_write_guard(action):
         from functools import wraps
@@ -142,6 +145,74 @@ def register_daily_photo_routes(app, input_root, project_resolver=None, evidence
         return send_file(output, as_attachment=True, download_name=filename,
                          mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                          max_age=0)
+
+    @bp.get("/api/photos/daily/export-month-word")
+    def export_month_word():
+        from src.daily_photo_word_exporter import export_monthly_photo_word
+        project, root = project_path(request.args)
+        period = request.args.get("period", "")
+        if not re.fullmatch(r"\d{4}-\d{2}", period):
+            raise ValueError("Chọn tháng/năm theo định dạng YYYY-MM")
+        first = parse_attendance_date(period + "-01")
+        days = []
+        for number in range(1, calendar.monthrange(first.year, first.month)[1] + 1):
+            day = date(first.year, first.month, number)
+            result = resolve_day_folder(root, day)
+            if result.status not in ("found", "missing"):
+                raise RuntimeError(f'{day.strftime("%d/%m/%Y")}: {result.reason}')
+            photos = [{"path": p, **shift_info(p)} for p in images(result.path)] if result.path else []
+            days.append((day, photos))
+        if not any(photos for _, photos in days):
+            raise ValueError("Tháng đang chọn không có ảnh để xuất Word")
+        display_name = project
+        if project_resolver:
+            selected = project_resolver(request.args.get("project_id") or request.args.get("project", ""))
+            display_name = selected["display_name"]
+        export_id = request.args.get('export_id')
+        if export_id and not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', export_id):
+            raise ValueError('Mã xuất Word không hợp lệ')
+        def progress(done, total, status=None, error=None):
+            if not export_id:
+                return
+            with word_exports_lock:
+                word_exports[export_id] = dict(project=project, period=period, completed_days=done,
+                    total_days=total, status=status or ('saving' if done == total else 'running'),
+                    error=error, updated=time.monotonic())
+        if export_id:
+            with word_exports_lock:
+                now = time.monotonic()
+                for old_id, item in list(word_exports.items()):
+                    if now - item['updated'] > 3600:
+                        del word_exports[old_id]
+                if export_id in word_exports:
+                    raise ValueError('Lượt xuất này đã được gửi. Vui lòng chờ hoặc thử lại.')
+                if len(word_exports) >= 64:
+                    raise ValueError('Có nhiều lượt xuất Word. Vui lòng thử lại sau.')
+                word_exports[export_id] = dict(project=project, period=period, completed_days=0,
+                    total_days=len(days), status='running', error=None, updated=now)
+        try:
+            output, filename = export_monthly_photo_word(display_name, period, days, progress_callback=progress)
+            progress(len(days), len(days), 'completed')
+        except ValueError as exc:
+            progress(0, len(days), 'failed', str(exc))
+            raise
+        except Exception:
+            progress(0, len(days), 'failed', 'Không thể tạo file Word. Vui lòng thử lại.')
+            app.logger.exception("Monthly daily-Word ZIP export failed")
+            return jsonify(success=False, error="Không thể tạo file Word. Vui lòng thử lại."), 500
+        return send_file(output, as_attachment=True, download_name=filename,
+                         mimetype="application/zip",
+                         max_age=0)
+
+    @bp.get('/api/photos/daily/export-progress')
+    def export_progress():
+        project, _ = project_path(request.args)
+        with word_exports_lock:
+            item = word_exports.get(request.args.get('export_id'))
+            if not item or item['project'] != project:
+                return jsonify(success=False, error='Chưa có trạng thái xuất Word'), 404
+            snapshot = {key: value for key, value in item.items() if key not in ('project', 'updated')}
+        return jsonify(success=True, **snapshot)
 
     @bp.get("/api/photos/view/daily")
     def view():

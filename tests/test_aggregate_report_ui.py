@@ -22,6 +22,8 @@ def test_face_scan_payload_does_not_send_a_ui_date_range():
     settings_end = app_js.index("// ==================== Toast Notifications", settings_start)
     settings = app_js[settings_start:settings_end]
     assert "report_project_name: reportProjectName" in settings
+    assert "(projectFallback || '').trim()" in settings
+    assert "projectInput.value.trim()" not in settings
     assert "from_date:" not in settings
     assert "to_date:" not in settings
 

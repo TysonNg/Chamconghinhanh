@@ -9,9 +9,9 @@ def test_build_report_options_uses_employee_files_instead_of_ui_range():
             "from_date": "2026-07-01",
             "to_date": "2026-07-31",
         },
-        "Dự án mặc định",
+        "Dự Án EHome3",
     ) == {
-        "project_name": "Chung cư Tân Thuận Đông",
+        "project_name": "Dự Án EHome3",
     }
 
 
@@ -20,6 +20,14 @@ def test_build_report_options_ignores_stale_or_invalid_ui_dates():
         {"from_date": "invalid", "to_date": "also-invalid"},
         "Dự án",
     ) == {"project_name": "Dự án"}
+
+
+def test_report_options_snapshot_saved_employee_order_and_leave():
+    order, paused = ['b', 'a'], ['b']
+    options = _build_report_options({}, 'Dự án', order, paused)
+    order.reverse()
+    paused.clear()
+    assert options == {'project_name': 'Dự án', 'employee_order': ['b', 'a'], 'paused_employee_ids': ['b']}
 
 
 def test_face_task_status_exposes_aggregate_report():

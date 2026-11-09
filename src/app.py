@@ -51,15 +51,19 @@ DATABASE_DIR = os.path.join(BASE_DIR, "database")
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 
 
-def _build_report_options(data, fallback_project_name):
+def _build_report_options(data, fallback_project_name, employee_order=None, paused_employee_ids=None):
     """Chuẩn hóa thông tin báo cáo tổng hợp nhận từ giao diện/API."""
-    project_name = str(data.get('report_project_name') or fallback_project_name or '').strip()
+    project_name = str(fallback_project_name or '').strip()
     if not project_name:
         raise ValueError('Thiếu tên dự án cho báo cáo tổng hợp')
 
     # Kỳ báo cáo luôn được suy ra từ ngày nhỏ nhất/lớn nhất trong các file
     # nhân viên của chính đợt quét; không dùng khoảng ngày cũ từ giao diện.
     options = {'project_name': project_name}
+    if employee_order is not None:
+        options['employee_order'] = list(employee_order)
+    if paused_employee_ids is not None:
+        options['paused_employee_ids'] = list(paused_employee_ids)
     if data.get('scan_month'):
         from src.face_scan_period import month_limits
         options['from_date'], options['to_date'] = month_limits(data['scan_month'])
@@ -243,8 +247,10 @@ from src.supplement_batches import register_batches
 register_batches(app, SUPPLEMENT_DIR, registry_provider=lambda: get_identity_registry(),
                  matcher_provider=lambda: get_face_matcher())
 
+from src.face_inference import FaceInferenceRunner
 from src.task_manager import TaskManager
 task_manager = TaskManager(BASE_DIR)
+face_inference_runner = FaceInferenceRunner(base_dir=BASE_DIR)
 
 # Global state
 database = {}
@@ -534,7 +540,7 @@ def get_face_matcher():
         if _face_matcher is None:
             send_log("⏳ Dang khoi tao Face Matcher (DeepFace)...", "info")
             portrait_dir = resolve_portrait_dir(BASE_DIR)
-            _face_matcher = FaceMatcher(portrait_dir, log_callback=send_log, identity_registry=get_identity_registry())
+            _face_matcher = FaceMatcher(portrait_dir, log_callback=send_log, identity_registry=get_identity_registry(), inference_runner=face_inference_runner)
             send_log(
                 f"✅ Face Matcher san sang. PortraitDir={portrait_dir} "
                 f"(n={len(_face_matcher.portrait_cache)}, imgs={_count_images_in_dir(portrait_dir)})",
@@ -548,7 +554,7 @@ def get_face_matcher():
                     f"🔁 Cache rong, thu lai PortraitDir={alt_dir} (imgs={_count_images_in_dir(alt_dir)})",
                     "warning"
                 )
-                _face_matcher = FaceMatcher(alt_dir, log_callback=send_log, identity_registry=get_identity_registry())
+                _face_matcher = FaceMatcher(alt_dir, log_callback=send_log, identity_registry=get_identity_registry(), inference_runner=face_inference_runner)
                 send_log(
                     f"✅ Face Matcher san sang. PortraitDir={alt_dir} "
                     f"(n={len(_face_matcher.portrait_cache)})",
@@ -850,7 +856,9 @@ def pdf_face_analyze():
                 raise ValueError('Dự án đã được lưu trữ')
             project_name = selected_project['storage_dir']
             project_id = selected_project['project_id']
-            report_options = _build_report_options(data, selected_project['display_name'])
+            report_options = _build_report_options(data, selected_project['display_name'],
+                [e['employee_id'] for e in identity_registry.report_order(project_id)],
+                identity_registry.paused_employee_ids(project_id))
         except ValueError as exc:
             return jsonify({'success': False, 'error': str(exc)}), 400
         if data.get('scan_month'):
@@ -888,7 +896,7 @@ def pdf_face_analyze():
                     p_dir,
                     i_dir,
                     matcher,
-                    accuracy_mode=True,
+                    accuracy_mode=False,
                     match_distance_threshold=threshold,
                     log_detail=True,
                     project_id=project_id,
@@ -908,6 +916,7 @@ def pdf_face_analyze():
                     progress_callback=_progress,
                     report_options=report_options,
                     cancel_check=cancel_check,
+                    activity_callback=lambda worker, detail: task_manager.update_activity(task_rec.task_id, worker, detail),
                 )
                 aggregate_path = next(
                     (path for path in files if os.path.basename(path).startswith('GIAI_TRINH_')),
@@ -947,6 +956,7 @@ def pdf_face_analyze():
             'success': True,
             'task_id': task_id,
             'status': task.status,
+            **task_manager.queue_info(task_id),
             'message': f'Đã bắt đầu phân tích {folder}' if task.status == 'running' else f'Đã xếp hàng chờ phân tích {folder}',
         })
     except Exception as e:
@@ -960,7 +970,7 @@ def pdf_face_status(task_id):
     task = task_manager.get_task(task_id) or pdf_face_tasks.get(task_id)
     if not task:
         return jsonify({'error': 'Task không tồn tại'}), 404
-    return jsonify(task.to_dict())
+    return jsonify({**task.to_dict(), **task_manager.queue_info(task_id)})
 
 
 @app.route('/api/pdf/face/files')
@@ -1314,7 +1324,9 @@ def excel_face_analyze():
                 raise ValueError('Dự án đã được lưu trữ')
             project_name = selected_project['storage_dir']
             project_id = selected_project['project_id']
-            report_options = _build_report_options(data, selected_project['display_name'])
+            report_options = _build_report_options(data, selected_project['display_name'],
+                [e['employee_id'] for e in identity_registry.report_order(project_id)],
+                identity_registry.paused_employee_ids(project_id))
         except ValueError as exc:
             return jsonify({'success': False, 'error': str(exc)}), 400
         if data.get('scan_month'):
@@ -1352,7 +1364,7 @@ def excel_face_analyze():
                     p_dir,
                     i_dir,
                     matcher,
-                    accuracy_mode=True,
+                    accuracy_mode=False,
                     match_distance_threshold=threshold,
                     log_detail=True,
                     project_id=project_id,
@@ -1372,6 +1384,7 @@ def excel_face_analyze():
                     progress_callback=_progress,
                     report_options=report_options,
                     cancel_check=cancel_check,
+                    activity_callback=lambda worker, detail: task_manager.update_activity(task_rec.task_id, worker, detail),
                 )
                 aggregate_path = next(
                     (path for path in files if os.path.basename(path).startswith('GIAI_TRINH_')),
@@ -1411,6 +1424,7 @@ def excel_face_analyze():
             'success': True,
             'task_id': task_id,
             'status': task.status,
+            **task_manager.queue_info(task_id),
             'message': f'Đã bắt đầu phân tích {folder}' if task.status == 'running' else f'Đã xếp hàng chờ phân tích {folder}',
         })
     except Exception as e:
@@ -1424,7 +1438,7 @@ def excel_face_status(task_id):
     task = task_manager.get_task(task_id) or excel_face_tasks.get(task_id)
     if not task:
         return jsonify({'error': 'Task không tồn tại'}), 404
-    return jsonify(task.to_dict())
+    return jsonify({**task.to_dict(), **task_manager.queue_info(task_id)})
 
 
 @app.route('/api/task/cancel/<task_id>', methods=['POST'])
@@ -1434,6 +1448,8 @@ def cancel_task(task_id):
     task = task_manager.get_task(task_id)
     if not task:
         return jsonify({'success': False, 'error': 'Task không tồn tại'}), 404
+    if not success:
+        return jsonify({'success': False, 'error': 'Tác vụ đã kết thúc, không thể hủy', 'status': task.status}), 409
     send_log(f"🛑 Đã gửi lệnh hủy tác vụ {task_id} ({task.target_folder})", "warning")
     return jsonify({
         'success': True,
@@ -1449,6 +1465,8 @@ def retry_task(task_id):
     old_task = task_manager.get_task(task_id)
     if not old_task:
         return jsonify({'success': False, 'error': 'Task không tồn tại'}), 404
+    if old_task.status not in ('failed', 'cancelled', 'interrupted'):
+        return jsonify({'success': False, 'error': 'Chỉ quét lại tác vụ lỗi, đã hủy hoặc bị gián đoạn'}), 409
 
     payload = old_task.payload or {}
     if not payload:
@@ -1464,6 +1482,15 @@ def retry_task(task_id):
     p_dir = payload.get('p_dir', '')
     i_dir = payload.get('i_dir', '')
     identity_reg = get_identity_registry()
+    if report_options is not None:
+        try:
+            selected_project = identity_reg.get_project(project_id or project_name)
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
+        report_options = {**report_options, 'project_name': selected_project['display_name'],
+                          'employee_order': [e['employee_id'] for e in identity_reg.report_order(selected_project['project_id'])],
+                          'paused_employee_ids': identity_reg.paused_employee_ids(selected_project['project_id'])}
+        payload = {**payload, 'report_options': report_options}
 
     if old_task.task_type == 'excel_face':
         new_tid = f"excel_face_{int(time.time() * 1000)}"
@@ -1474,7 +1501,7 @@ def retry_task(task_id):
                 matcher = get_face_matcher()
                 from src.excel_face_analyzer import ExcelFaceAnalyzer
                 analyzer = ExcelFaceAnalyzer(
-                    p_dir, i_dir, matcher, accuracy_mode=True,
+                    p_dir, i_dir, matcher, accuracy_mode=False,
                     match_distance_threshold=threshold, log_detail=True,
                     project_id=project_id, identity_registry=identity_reg
                 )
@@ -1487,6 +1514,7 @@ def retry_task(task_id):
                     input_dir, output_dir, log_callback=_log,
                     progress_callback=_progress, report_options=report_options,
                     cancel_check=cancel_check,
+                    activity_callback=lambda worker, detail: task_manager.update_activity(task_rec.task_id, worker, detail),
                 )
                 aggregate_path = next(
                     (path for path in files if os.path.basename(path).startswith('GIAI_TRINH_')),
@@ -1537,7 +1565,7 @@ def retry_task(task_id):
                 matcher = get_face_matcher()
                 from src.pdf_face_analyzer import PDFFaceAnalyzer
                 analyzer = PDFFaceAnalyzer(
-                    p_dir, i_dir, matcher, accuracy_mode=True,
+                    p_dir, i_dir, matcher, accuracy_mode=False,
                     match_distance_threshold=threshold, log_detail=True,
                     project_id=project_id, identity_registry=identity_reg
                 )
@@ -1550,6 +1578,7 @@ def retry_task(task_id):
                     input_dir, output_dir, log_callback=_log,
                     progress_callback=_progress, report_options=report_options,
                     cancel_check=cancel_check,
+                    activity_callback=lambda worker, detail: task_manager.update_activity(task_rec.task_id, worker, detail),
                 )
                 aggregate_path = next(
                     (path for path in files if os.path.basename(path).startswith('GIAI_TRINH_')),
@@ -1597,10 +1626,33 @@ def retry_task(task_id):
 @app.route('/api/tasks/recent')
 def get_recent_tasks():
     """Lấy danh sách các tác vụ gần nhất từ TaskManager"""
-    limit = request.args.get('limit', default=20, type=int)
+    limit = max(1, min(request.args.get('limit', default=20, type=int), 100))
     task_type = request.args.get('type', default=None, type=str)
     tasks = task_manager.get_recent_tasks(limit=limit, task_type=task_type)
     return jsonify({'success': True, 'tasks': tasks})
+
+
+@app.route('/api/tasks/scans')
+def get_scan_tasks():
+    limit = max(1, min(request.args.get('limit', default=20, type=int), 100))
+    return jsonify({'success': True, **task_manager.scan_snapshot(limit=limit), 'inference': face_inference_runner.status()})
+
+
+@app.route('/api/tasks/ai-config', methods=['GET', 'POST'])
+def configure_scan_ai():
+    if request.method == 'GET':
+        return jsonify({'success': True, 'inference': face_inference_runner.status()})
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or 'mode' not in data:
+        return jsonify({'success': False, 'error': 'Thiếu chế độ số lượt AI'}), 400
+    try:
+        status = face_inference_runner.configure(data['mode'])
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except OSError:
+        return jsonify({'success': False, 'error': 'Không lưu được cấu hình AI. Hãy kiểm tra quyền ghi thư mục data.'}), 500
+    send_log(f"⚙️ Số lượt AI: {data['mode']} (tối đa theo máy: {status['hardware_max']})", 'info')
+    return jsonify({'success': True, 'inference': status})
 
 
 @app.route('/api/cache/face/clear', methods=['POST'])

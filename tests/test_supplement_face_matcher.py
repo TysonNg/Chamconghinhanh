@@ -166,6 +166,26 @@ def test_downstream_uncommitted_supplement_is_not_a_candidate(setup,monkeypatch)
     assert result.status!='matched'
 
 
+@pytest.mark.parametrize('fast_mode,expected_calls', [(True, 1), (False, 2)])
+def test_downstream_stops_after_matching_supplement(setup, monkeypatch, fast_mode, expected_calls):
+    import json
+    import src.supplement_evidence as evidence
+    second = setup.camera.with_name('second.jpg')
+    second.write_bytes(b'second')
+    for path in (setup.camera, second):
+        path.with_suffix('.jpg.json').write_text(json.dumps({'source': 'supplement_original'}))
+    monkeypatch.setattr(evidence, 'evidence_is_visible', lambda path: True)
+    calls = []
+    def match(**kwargs):
+        calls.append(kwargs['image_path'])
+        return fm.MatchResult('matched', kwargs['image_path'], .35, setup.scope[0], setup.scope[1])
+    monkeypatch.setattr(setup.matcher, 'match_employee_in_photo', match)
+    result = setup.matcher.match_employee_in_images(project_id=setup.scope[0], employee_id=setup.scope[1],
+        attendance_date=setup.scope[2], camera_images=[str(setup.camera), str(second)], fast_mode=fast_mode)
+    assert result.status == 'matched'
+    assert len(calls) == expected_calls
+
+
 @pytest.mark.parametrize('target,status', [(b'camera00', 'no_face'), (b'portrait', 'no_portrait')])
 def test_specific_face_not_detected_is_empty_detection(setup, monkeypatch, target, status):
     import sys

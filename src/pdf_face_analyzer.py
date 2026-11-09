@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Tuple
 
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from src.scan_runtime import scan_context, ScanCancelled, report_scan_activity
+from src.face_inference import FaceInferenceError
 
 from docx import Document
 
@@ -278,7 +280,7 @@ class PDFFaceAnalyzer:
         portrait_dir: str,
         input_images_dir: str,
         matcher,
-        accuracy_mode: bool = True,
+        accuracy_mode: bool = False,
         match_distance_threshold: Optional[float] = None,
         log_detail: bool = False,
         project_id: str = "",
@@ -307,6 +309,7 @@ class PDFFaceAnalyzer:
         progress_callback=None,
         report_options=None,
         cancel_check=None,
+        activity_callback=None,
     ) -> List[str]:
         os.makedirs(output_dir, exist_ok=True)
 
@@ -327,7 +330,17 @@ class PDFFaceAnalyzer:
         persons = filter_scan_people(persons, report_options)
         final_persons = merge_attendance_people(
             persons, project_id=self.project_id, registry=self.identity_registry)
+        from src.report_order import filter_paused_persons
+        before_pause_filter = len(final_persons)
+        final_persons = filter_paused_persons(final_persons, (report_options or {}).get('paused_employee_ids'))
+        if log_callback and before_pause_filter != len(final_persons):
+            log_callback(f'⏸ Bỏ qua {before_pause_filter - len(final_persons)} nhân viên tạm nghỉ (không quét và không xuất báo cáo).', 'info')
+        if report_options and report_options.get('employee_order'):
+            from src.report_order import sort_report_persons
+            final_persons = sort_report_persons(final_persons, report_options['employee_order'])
         total_persons = len(final_persons)
+        if progress_callback:
+            progress_callback(0, total_persons, '', None)
         if log_callback:
             log_callback(f"📌 Tổng số người sẽ xử lý từ PDF: {total_persons}", "info")
 
@@ -348,13 +361,17 @@ class PDFFaceAnalyzer:
 
         # Tự động tính số luồng tối ưu (50% - 75% CPU)
         cpu_cores = os.cpu_count() or 4
-        workers = max(2, min(6, int(cpu_cores * 0.75)))
+        workers = max(2, min(6, int(cpu_cores * 0.75)),
+                      getattr(getattr(self.matcher, 'inference_runner', None), 'hardware_max', 1))
         if log_callback:
             log_callback(f"🚀 Kích hoạt quét song song đa luồng ({workers} workers / {cpu_cores} nhân CPU)", "info")
 
         results = []
         completed_count = 0
         lock = threading.Lock()
+        abort = threading.Event()
+        original_cancel_check = cancel_check
+        cancel_check = lambda: abort.is_set() or bool(original_cancel_check and original_cancel_check())
 
         def _process_one_person(person):
             nonlocal completed_count
@@ -366,7 +383,28 @@ class PDFFaceAnalyzer:
                 if r.get("is_absent") or r.get("missing_checkout") or r.get("missing_checkin") or r.get("same_in_out") or r.get("under_3h")
             )
             try:
-                out_path = exporter.export_person(person, log_callback=None)
+                worker_id = str(threading.get_ident())
+                def activity(detail):
+                    if detail.get('result_status') and log_callback:
+                        status = detail['result_status']
+                        distance = detail.get('distance')
+                        message = f"[{status}] {name} · Mã {person.get('id') or '—'} · Ngày {detail.get('day', '')} · {detail['stage']}"
+                        if detail.get('image'):
+                            message += f" · Ảnh {detail['image']}"
+                        if distance is not None:
+                            message += f" · Khoảng cách {distance:.4f}"
+                        if detail.get('reason'):
+                            message += f" · {detail['reason']}"
+                        log_callback(message, 'success' if status == 'matched' else 'error' if status == 'error' else 'warning')
+                    if activity_callback:
+                        activity_callback(worker_id, {'person': name, 'employee_code': str(person.get('id') or ''), **detail})
+                with scan_context(activity, cancel_check):
+                    report_scan_activity('Đang tạo báo cáo', day='', image='')
+                    try:
+                        out_path = exporter.export_person(person, log_callback=None)
+                    finally:
+                        if activity_callback:
+                            activity_callback(worker_id, None)
                 with lock:
                     completed_count += 1
                     pct = int((completed_count / total_persons) * 100)
@@ -375,6 +413,10 @@ class PDFFaceAnalyzer:
                     if progress_callback:
                         progress_callback(completed_count, total_persons, name, out_path)
                 return out_path
+            except ScanCancelled:
+                return None
+            except FaceInferenceError as exc:
+                raise FaceInferenceError(f'{name}: {exc}') from exc
             except Exception as e:
                 with lock:
                     completed_count += 1
@@ -394,7 +436,13 @@ class PDFFaceAnalyzer:
                 future_to_person[executor.submit(_process_one_person, p)] = p
 
             for future in as_completed(future_to_person):
-                p_path = future.result()
+                try:
+                    p_path = future.result()
+                except FaceInferenceError:
+                    abort.set()
+                    for pending in future_to_person:
+                        pending.cancel()
+                    raise
                 if p_path:
                     results.append(p_path)
                 if cancel_check and cancel_check():

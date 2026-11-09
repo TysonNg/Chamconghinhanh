@@ -61,14 +61,14 @@ def test_collect_issue_rows_filters_normal_and_out_of_range_records():
             "name": "Nguyễn Văn A",
             "date": "05/07/2026",
             "date_value": date(2026, 7, 5),
-            "explanation": "Thiếu giờ vào, bổ sung hình ảnh thực tế",
+            "explanation": "Nhân viên có trực, bổ sung hình",
             "note": "Giờ ra: 19:03",
             "image_path": "camera-05.jpg",
         }
     ]
 
 
-def test_collect_issue_rows_labels_absence_as_absence():
+def test_collect_issue_rows_uses_requested_explanation():
     rows = collect_issue_rows([
         {
             "name": "Nguyễn Văn A",
@@ -84,7 +84,7 @@ def test_collect_issue_rows_labels_absence_as_absence():
         }
     ])
 
-    assert rows[0]["explanation"] == "Vắng mặt, cần giải trình"
+    assert rows[0]["explanation"] == "Nhân viên có trực, bổ sung hình"
 
 
 def test_export_aggregate_report_creates_print_ready_a4_document(tmp_path):
@@ -103,6 +103,7 @@ def test_export_aggregate_report_creates_print_ready_a4_document(tmp_path):
                     "missing_checkout": False,
                     "same_in_out": False,
                     "matched_image_path": str(image_path),
+                    "review_reason": "Đối soát theo ngày gửi Zalo; chưa xác định ngày chụp gốc",
                 },
                 {
                     "date": "06/07/2026",
@@ -149,9 +150,12 @@ def test_export_aggregate_report_creates_print_ready_a4_document(tmp_path):
     ]
     assert len(data_table.rows) == 2
     assert data_table.cell(1, 0).text == "Nguyễn Văn A"
+    assert all(run.bold for run in data_table.cell(1, 0).paragraphs[0].runs)
+    assert data_table.cell(1, 2).text == "Nhân viên có trực, bổ sung hình"
     assert data_table.rows[0]._tr.get_or_add_trPr().find(qn("w:tblHeader")) is not None
     assert data_table.rows[1]._tr.get_or_add_trPr().find(qn("w:cantSplit")) is not None
     assert len(doc.inline_shapes) == 1
+    assert round(doc.inline_shapes[0].width.cm, 1) == 5.6
     signature_table = doc.tables[-1]
     for row in signature_table.rows[:3]:
         for cell in row.cells:

@@ -99,6 +99,18 @@ def register_identity_routes(app, registry_provider, input_root):
                           "camera_days_count":len({x.parent.name for x in photos}),"camera_total_images":len(photos)})
         return jsonify(success=True,projects=items,default_project=items[0]["name"] if items else "")
 
+    @bp.get("/api/projects/report-order")
+    def report_order():
+        p = project(request.args)
+        return jsonify(success=True, project_id=p['project_id'], employees=registry().report_order(p['project_id']))
+
+    @bp.post("/api/projects/report-order")
+    def save_report_order():
+        data = payload()
+        p = project(data)
+        employees = registry().save_report_order(p['project_id'], data.get('employee_ids'))
+        return jsonify(success=True, project_id=p['project_id'], employees=employees)
+
     @bp.post("/api/projects/create")
     def create_project():
         p=registry().register_project(payload().get("name"))
@@ -150,6 +162,14 @@ def register_identity_routes(app, registry_provider, input_root):
                           "identity_status":e["status"],"images":images,"image_urls":urls,
                           "image_count":len(images),"avatar_url":urls[images[0]] if images else ""})
         return jsonify(success=True,project=p["storage_dir"],project_id=p["project_id"],employees=items,total=len(items))
+
+    @bp.post('/api/portraits/employee/scan-pause')
+    def scan_pause():
+        data = payload()
+        p = project(data)
+        e = employee(data, p)
+        registry().set_scan_paused(p['project_id'], e['employee_id'], data.get('paused'))
+        return jsonify(success=True, project_id=p['project_id'], employee_id=e['employee_id'], scan_paused=data['paused'])
 
     @bp.post("/api/portraits/employee/confirm")
     def confirm():

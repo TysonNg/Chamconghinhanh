@@ -1,6 +1,39 @@
 from datetime import date
 import numpy as np
+import pytest
+from types import SimpleNamespace
 from src.face_matcher import FaceMatcher
+
+
+@pytest.mark.parametrize('fast_mode,distances,expected_index,expected_calls', [
+    (True, [.6, .35, .1], 1, 2),
+    (False, [.6, .35, .1], 2, 3),
+    (True, [.6, .4, .1], 1, 2),
+    (True, [.6, .5, .45], None, 3),
+])
+def test_stop_at_first_accepted_image(tmp_path, monkeypatch, fast_mode, distances,
+                                      expected_index, expected_calls):
+    portrait = tmp_path / 'portrait.jpg'
+    images = [tmp_path / f'{i}.jpg' for i in range(3)]
+    for path in [portrait, *images]:
+        path.write_bytes(b'image')
+    registry = SimpleNamespace(is_member=lambda *args: True,
+                               portrait_paths=lambda *args: [portrait])
+    matcher = FaceMatcher(str(tmp_path), identity_registry=registry)
+    calls = []
+    def embedding(path):
+        if str(path) != str(portrait):
+            calls.append(str(path))
+        return np.array([1., 0.])
+    measured = iter(distances)
+    monkeypatch.setattr(matcher, '_get_embedding', embedding)
+    monkeypatch.setattr(matcher, '_cosine_distance', lambda *args: next(measured))
+    result = matcher.match_employee_in_images(project_id='p', employee_id='e',
+        attendance_date=date(2026, 10, 31), camera_images=list(map(str, images)),
+        distance_threshold=.4, fast_mode=fast_mode)
+    assert len(calls) == expected_calls
+    assert result.status == ('no_match' if expected_index is None else 'matched')
+    assert result.image_path == (None if expected_index is None else str(images[expected_index]))
 
 def test_no_fuzzy_or_cross_project_portrait_fallback(tmp_path):
     for project, name in (("A","Nguyen Van An"),("B","Nguyen Van Anh")):

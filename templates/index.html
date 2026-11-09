@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="/static/vendor/flatpickr/flatpickr.min.css">
     <link rel="stylesheet" href="/static/vendor/flatpickr/plugins/monthSelect.css">
-    <link rel="stylesheet" href="/static/css/style.css?v=20261008_batch_project_select">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261104_month_word_progress">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
@@ -82,6 +82,10 @@
             <header class="header">
                 <h1 class="page-title">Xử Lý Chấm Công</h1>
                 <div class="header-actions">
+                    <button class="btn btn-secondary btn-sm scan-status-button" id="scan-status-button" type="button" onclick="openScanDrawer()" aria-controls="scan-drawer" aria-haspopup="dialog" aria-expanded="false">
+                        <span class="scan-status-dot" aria-hidden="true"></span>
+                        <span id="scan-status-text">Quét mặt · Đang tải…</span>
+                    </button>
                     <button class="btn btn-secondary btn-sm" id="btn-refresh-all" onclick="refreshData(this)">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="23 4 23 10 17 10"></polyline>
@@ -92,6 +96,56 @@
                     </button>
                 </div>
             </header>
+
+            <dialog id="scan-drawer" class="scan-drawer" aria-labelledby="scan-drawer-title">
+            <section class="card scan-manager" aria-label="Quản lý quét mặt">
+                <div class="card-header">
+                    <h2 id="scan-drawer-title">Quản lý quét mặt</h2>
+                    <div class="card-header-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="refreshScanTasks()">Cập nhật</button>
+                        <button class="btn btn-secondary btn-sm" id="scan-drawer-close" type="button" onclick="closeScanDrawer()" aria-label="Đóng quản lý quét mặt" autofocus>Đóng ×</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="scan-task-summary" role="status">Đang tải trạng thái quét…</div>
+                    <p id="scan-task-error" role="alert" hidden></p>
+                    <div class="scan-workspace">
+                    <section class="scan-management-panel" aria-label="Lượt quét và tiến độ">
+                    <h3>Lượt quét và tiến độ</h3>
+                    <div class="scan-task-table-wrap scan-active-wrap">
+                        <table class="data-table">
+                            <thead><tr><th>Nguồn / Mã lượt</th><th>Dự án / Đợt quét</th><th>Trạng thái</th><th>Tiến độ</th><th>Thao tác</th></tr></thead>
+                            <tbody id="scan-task-active"><tr><td colspan="5">Đang tải…</td></tr></tbody>
+                        </table>
+                    </div>
+                    <details id="scan-task-history-details">
+                        <summary>Lịch sử quét gần đây</summary>
+                        <div class="scan-task-table-wrap"><table class="data-table">
+                            <thead><tr><th>Nguồn / Mã lượt</th><th>Dự án / Đợt quét</th><th>Trạng thái</th><th>Tiến độ</th><th>Thao tác</th></tr></thead>
+                            <tbody id="scan-task-history"></tbody>
+                        </table></div>
+                    </details>
+                    </section>
+                    <details class="scan-drawer-details" id="scan-journal-details">
+                        <summary>Nhật ký quét trực tiếp</summary>
+                        <div id="scan-journal-host"></div>
+                    </details>
+                    <details class="scan-drawer-details" id="scan-ai-details">
+                        <summary>Cấu hình AI</summary>
+                        <p class="text-hint">Máy xử lý lần lượt 1 lượt quét. Lượt đang dừng vẫn giữ chỗ đến khi xử lý xong bước hiện tại.</p>
+                        <div class="scan-ai-controls">
+                            <label for="scan-ai-mode">Số ảnh AI nhận diện cùng lúc</label>
+                            <select id="scan-ai-mode" class="form-input" disabled><option value="auto">Tự động theo máy</option></select>
+                            <button class="btn btn-secondary btn-sm" id="scan-ai-save" onclick="saveScanAIConfig()" disabled>Áp dụng</button>
+                            <span id="scan-ai-hardware" class="text-hint"></span>
+                        </div>
+                        <p id="scan-ai-state" class="text-hint" role="status">Đang đọc cấu hình bộ nhận diện…</p>
+                    </details>
+                    </div>
+                </div>
+            </section>
+            <div class="toast-container" id="scan-drawer-toast-container"></div>
+            </dialog>
 
             <!-- ==================== TAB 1: XỬ LÝ CHẤM CÔNG (EXCEL & PDF SUB-TABS) ==================== -->
             <div class="tab-content active" id="tab-process">
@@ -165,6 +219,7 @@
                                         <div class="control-group">
                                             <label for="excel-project-select">Dự án:</label>
                                             <select id="excel-project-select" class="form-input project-dropdown" style="min-width: 170px; height: 32px; padding: 2px 8px;"></select>
+                                            <button class="btn btn-secondary btn-sm" type="button" onclick="openReportOrderSettings(document.getElementById('excel-project-select').value)">Sắp xếp báo cáo</button>
                                         </div>
                                         <div class="control-group">
                                             <label for="excel-face-threshold">Ngưỡng match:</label>
@@ -310,6 +365,7 @@
                                         <div class="control-group">
                                             <label for="pdf-project-select">Dự án:</label>
                                             <select id="pdf-project-select" class="form-input project-dropdown" style="min-width: 170px; height: 32px; padding: 2px 8px;"></select>
+                                            <button class="btn btn-secondary btn-sm" type="button" onclick="openReportOrderSettings(document.getElementById('pdf-project-select').value)">Sắp xếp báo cáo</button>
                                         </div>
                                         <div class="control-group">
                                             <label for="pdf-face-threshold">Ngưỡng match:</label>
@@ -527,6 +583,23 @@
                         </div>
                     </div>
 
+                    <div class="card" id="report-order-section">
+                        <div class="card-header">
+                            <h2>Thứ tự nhân viên trong báo cáo</h2>
+                            <div class="card-header-actions">
+                                <button class="btn btn-secondary btn-sm" type="button" onclick="loadReportOrder()">Tải lại danh sách</button>
+                                <button class="btn btn-primary btn-sm" id="report-order-save" type="button" onclick="saveReportOrder()" disabled>Lưu thứ tự</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <label for="report-order-project">Dự án</label>
+                            <select id="report-order-project" class="form-input" onchange="loadReportOrder()"></select>
+                            <p class="text-hint">Kéo thả, dùng nút lên/xuống hoặc nhập số vị trí để sắp xếp rồi bấm “Lưu thứ tự”. Thứ tự dùng lại cho các lượt quét Excel/PDF sau; nhân viên mới được thêm cuối danh sách. “Tạm nghỉ / Cho quét lại” lưu ngay: nhân viên tạm nghỉ được bỏ qua cả quét mặt và báo cáo, vẫn giữ vị trí đã sắp xếp.</p>
+                            <p id="report-order-state" role="status">Chọn dự án để sắp xếp nhân viên.</p>
+                            <ol id="report-order-list" class="report-order-list" aria-label="Thứ tự nhân viên"></ol>
+                        </div>
+                    </div>
+
                     <!-- Export Settings -->
                     <div class="card">
                         <div class="card-header">
@@ -536,7 +609,7 @@
                             <div style="display: flex; gap: 24px; flex-wrap: wrap;">
                                 <div class="form-group" style="flex: 1.4; min-width: 260px;">
                                     <label for="project-name">Tên Dự Án:</label>
-                                    <input type="text" id="project-name" class="form-input" value="Chung cư Tân Thuận Đông">
+                                    <input type="text" id="project-name" class="form-input" value="" readonly placeholder="Tự động lấy theo dự án được chọn khi quét">
                                 </div>
                             </div>
                             <p class="form-help" style="margin: 4px 0 0;">
@@ -638,6 +711,9 @@
                             <label>Tháng/năm <input type="text" id="photo-period" class="form-input vn-month-picker" placeholder="Tháng MM/YYYY" autocomplete="off" onchange="loadDailyPhotosStats()"></label>
                             <button class="btn btn-secondary btn-sm" onclick="mapLegacyPhotoDay()">Gán ngày thư mục cũ</button>
                             <div class="card-header-actions">
+                                <button class="btn btn-primary btn-sm" onclick="exportMonthlyPhotosWord(this)" id="btn-export-month-photos-word" type="button" title="Tải ZIP chứa thư mục tháng, mỗi ngày một file Word">
+                                    Xuất Word cả tháng
+                                </button>
                                 <button class="btn btn-secondary btn-sm" onclick="loadDailyPhotosStats(this)">
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="23 4 23 10 17 10"></polyline>
@@ -656,6 +732,11 @@
                             </div>
                         </div>
                         <div class="card-body">
+                            <div id="monthly-word-export-status" class="monthly-word-export-status" role="status" hidden>
+                                <p id="monthly-word-export-message"></p>
+                                <progress id="monthly-word-export-progress" aria-label="Tiến độ tạo Word cả tháng" hidden></progress>
+                                <a id="monthly-word-export-download" hidden>Tải file Word</a>
+                            </div>
                             <!-- 31 Days Grid -->
                             <div class="days-picker-grid" id="days-picker-grid">
                                 <!-- Generated 01 to 31 buttons -->
@@ -1621,7 +1702,10 @@
     <script src="/static/vendor/flatpickr/plugins/monthSelect.js"></script>
     <script src="/static/js/attendance-date.js"></script>
     <script src="/static/js/confirm-action.js"></script>
-    <script src="/static/js/app.js?v=20261008_extract_selected_project"></script>
+    <script src="/static/js/app.js?v=20261104_month_daily_zip"></script>
+    <script src="/static/js/report-order.js?v=20261104_scan_order_leave"></script>
+    <script src="/static/js/scan-logs.js?v=20261016_results"></script>
+    <script src="/static/js/scan-tasks.js?v=20261107_scan_progress"></script>
     <script src="/static/js/supplement-batches.js?v=20261004_personal_tool"></script>
 </body>
 

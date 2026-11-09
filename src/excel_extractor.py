@@ -668,7 +668,9 @@ class ExcelToWordExporter:
 
         # Data rows
         absent_days = []
+        from src.scan_runtime import check_scan_cancelled
         for stt, rec in enumerate(records, 1):
+            check_scan_cancelled()
             row = table.add_row()
             cells = row.cells
 
@@ -732,7 +734,7 @@ class ExcelToWordExporter:
                         p.add_run("[Lỗi ảnh]").font.size = Pt(8)
                         if log_callback:
                             log_callback(str(exc), "warning")
-                elif rec.get("review_reason"):
+                if rec.get("review_reason"):
                     p.add_run(rec["review_reason"]).font.size = Pt(8)
                 if rec.get("record_conflict"):
                     cells[5].paragraphs[0].add_run(" — Cần kiểm tra nguồn chấm công")

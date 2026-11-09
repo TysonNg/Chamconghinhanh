@@ -75,3 +75,24 @@ def test_modified_image_metadata_cannot_confirm_capture_date(tmp_path):
     Image.new("RGB", (10,10)).save(p, exif=exif)
     p.with_suffix(".jpg.json").write_text(json.dumps({"derived": True, "requested_date": "2026-09-01"}))
     assert image_date_status(p, date(2026,9,1)) == "unknown"
+
+
+@pytest.mark.parametrize("metadata,capture,expected", [
+    ({"date_source": "message", "send_date": "2026-09-01"}, None, "message_date"),
+    ({"date_source": "message", "send_date": "2026-08-01"}, None, "mismatch"),
+    ({"date_source": "message", "send_date": "bad"}, None, "unknown"),
+    ({"send_date": "2026-09-01"}, None, "unknown"),
+    ({"date_source": "message", "send_date": "2026-09-01", "derived": True}, None, "unknown"),
+    ({"date_source": "message", "send_date": "2026-09-01"}, "2026:08:01 08:00:00", "mismatch"),
+    ({"date_source": "message", "send_date": "2026-09-01"}, "2026:09:01 08:00:00", "consistent"),
+])
+def test_attendance_message_date_keeps_capture_evidence(tmp_path, metadata, capture, expected):
+    from PIL import Image
+    from src.attendance_dates import attendance_image_date_status
+    image = tmp_path / "zalo.jpg"
+    exif = Image.Exif()
+    if capture:
+        exif[36867] = capture
+    Image.new("RGB", (20, 20)).save(image, exif=exif)
+    image.with_suffix(".jpg.json").write_text(json.dumps(metadata))
+    assert attendance_image_date_status(image, date(2026, 9, 1)) == expected

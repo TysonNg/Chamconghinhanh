@@ -138,9 +138,8 @@ function initVietnameseDatePickers() {
 
 function getAggregateReportSettings(projectFallback) {
     const projectInput = document.getElementById('project-name');
-    const reportProjectName = projectInput && projectInput.value.trim()
-        ? projectInput.value.trim()
-        : projectFallback;
+    const reportProjectName = (projectFallback || '').trim();
+    if (projectInput) projectInput.value = reportProjectName;
 
     if (!reportProjectName) {
         showToast('Vui lòng nhập tên dự án cho báo cáo tổng hợp', 'warning');
@@ -154,7 +153,8 @@ function getAggregateReportSettings(projectFallback) {
 // ==================== Toast Notifications ====================
 
 function showToast(message, type = 'info', actionText = null, actionCallback = null) {
-    const container = document.getElementById('toast-container');
+    const container = document.getElementById(document.getElementById('scan-drawer')?.open
+        ? 'scan-drawer-toast-container' : 'toast-container');
     if (!container) return;
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
@@ -777,15 +777,16 @@ async function startPDFFaceAnalyze(folder, button = null, batchProjectId = '') {
                 btnCancel.textContent = 'Dừng quét';
             }
             if (result.status === 'queued') {
-                showToast('Đã thêm vào hàng đợi (đang có đợt khác quét)...', 'info');
+                showToast(scanQueueMessage(result), 'info');
                 const badge = document.getElementById('pdf-face-queue-badge');
-                if (badge) badge.style.display = 'inline-block';
-                document.getElementById('pdf-face-progress-title').textContent = 'Đang chờ lượt...';
+                if (badge) { badge.style.display = 'inline-block'; badge.textContent = result.ahead_count > 0 ? 'Đang chờ lượt…' : 'Chuẩn bị quét…'; }
+                document.getElementById('pdf-face-progress-title').textContent = scanQueueMessage(result);
             } else {
                 showToast('Đã bắt đầu quét mặt từ PDF...', 'info');
                 const badge = document.getElementById('pdf-face-queue-badge');
                 if (badge) badge.style.display = 'none';
             }
+            refreshScanTasks();
             checkPDFFaceProgress();
         } else {
             showToast(result.error || 'Lỗi quét mặt từ PDF', 'error');
@@ -804,16 +805,16 @@ async function checkPDFFaceProgress() {
         const btnCancel = document.getElementById('btn-cancel-pdf-face');
 
         if (result.status === 'queued') {
-            if (queueBadge) queueBadge.style.display = 'inline-block';
+            if (queueBadge) { queueBadge.style.display = 'inline-block'; queueBadge.textContent = result.ahead_count > 0 ? 'Đang chờ lượt…' : 'Chuẩn bị quét…'; }
             if (btnCancel) {
                 btnCancel.style.display = 'inline-block';
                 btnCancel.disabled = false;
                 btnCancel.textContent = 'Hủy chờ';
             }
-            document.getElementById('pdf-face-progress-title').textContent = 'Đang chờ lượt (có đợt khác đang quét)...';
+            document.getElementById('pdf-face-progress-title').textContent = scanQueueMessage(result);
             document.getElementById('pdf-face-progress-percent').textContent = '0%';
             document.getElementById('pdf-face-progress-fill').style.width = '0%';
-            document.getElementById('pdf-face-progress-detail').textContent = 'Hàng đợi tuần tự';
+            document.getElementById('pdf-face-progress-detail').textContent = 'Xem và quản lý các lượt quét ở bảng Quản lý quét mặt phía trên.';
             setTimeout(checkPDFFaceProgress, 1500);
             return;
         }
@@ -1362,15 +1363,16 @@ async function startExcelFaceAnalyze(folder, button = null, batchProjectId = '')
                 btnCancel.textContent = 'Dừng quét';
             }
             if (result.status === 'queued') {
-                showToast('Đã thêm vào hàng đợi (đang có đợt khác quét)...', 'info');
+                showToast(scanQueueMessage(result), 'info');
                 const badge = document.getElementById('excel-face-queue-badge');
-                if (badge) badge.style.display = 'inline-block';
-                document.getElementById('excel-face-progress-title').textContent = 'Đang chờ lượt...';
+                if (badge) { badge.style.display = 'inline-block'; badge.textContent = result.ahead_count > 0 ? 'Đang chờ lượt…' : 'Chuẩn bị quét…'; }
+                document.getElementById('excel-face-progress-title').textContent = scanQueueMessage(result);
             } else {
                 showToast('Đã bắt đầu quét mặt...', 'info');
                 const badge = document.getElementById('excel-face-queue-badge');
                 if (badge) badge.style.display = 'none';
             }
+            refreshScanTasks();
             checkExcelFaceProgress();
         } else {
             showToast(result.error || 'Lỗi quét mặt', 'error');
@@ -1389,16 +1391,16 @@ async function checkExcelFaceProgress() {
         const btnCancel = document.getElementById('btn-cancel-excel-face');
 
         if (result.status === 'queued') {
-            if (queueBadge) queueBadge.style.display = 'inline-block';
+            if (queueBadge) { queueBadge.style.display = 'inline-block'; queueBadge.textContent = result.ahead_count > 0 ? 'Đang chờ lượt…' : 'Chuẩn bị quét…'; }
             if (btnCancel) {
                 btnCancel.style.display = 'inline-block';
                 btnCancel.disabled = false;
                 btnCancel.textContent = 'Hủy chờ';
             }
-            document.getElementById('excel-face-progress-title').textContent = 'Đang chờ lượt (có đợt khác đang quét)...';
+            document.getElementById('excel-face-progress-title').textContent = scanQueueMessage(result);
             document.getElementById('excel-face-progress-percent').textContent = '0%';
             document.getElementById('excel-face-progress-fill').style.width = '0%';
-            document.getElementById('excel-face-progress-detail').textContent = 'Hàng đợi tuần tự';
+            document.getElementById('excel-face-progress-detail').textContent = 'Xem và quản lý các lượt quét ở bảng Quản lý quét mặt phía trên.';
             setTimeout(checkExcelFaceProgress, 1500);
             return;
         }
@@ -1842,6 +1844,7 @@ async function loadProjects() {
             
             updateProjectDropdowns();
             updateProjectMetrics();
+            globalThis.reportOrderEditor?.setProjects(allProjectsList, currentProjectName);
         }
     } catch (e) {
         console.error('Lỗi nạp danh sách dự án:', e);
@@ -2155,43 +2158,116 @@ async function loadSelectedDayPhotos(day) {
 }
 
 async function exportDailyPhotosWord(btn) {
+    return exportPhotosWord(btn, false);
+}
+
+async function exportMonthlyPhotosWord(btn) {
+    return exportPhotosWord(btn, true);
+}
+
+async function exportPhotosWord(btn, monthly) {
     if (btn && btn.disabled) return;
     return withLoading(btn, async () => {
         let objectUrl = null;
         let link = null;
+        let polling = false;
+        let pollTimer = null;
+        const originalLabel = monthly ? btn?.textContent : undefined;
+        const statusBox = monthly ? document.getElementById?.('monthly-word-export-status') : null;
+        const statusText = monthly ? document.getElementById?.('monthly-word-export-message') : null;
+        const progressBar = monthly ? document.getElementById?.('monthly-word-export-progress') : null;
+        const downloadLink = monthly ? document.getElementById?.('monthly-word-export-download') : null;
         try {
             const project = currentProjectName;
-            const date = selectedPhotoDate();
-            const query = new URLSearchParams({project, date});
-            const response = await fetch(`/api/photos/daily/export-word?${query}`, {cache: 'no-store'});
+            const date = monthly ? selectedPhotoPeriod() : selectedPhotoDate();
+            const query = new URLSearchParams(monthly ? {project, period: date} : {project, date});
+            if (monthly) {
+                const exportId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                query.set('export_id', exportId);
+                if (btn) btn.textContent = 'Đang tạo Word…';
+                if (statusBox) { statusBox.hidden = false; statusBox.dataset.state = 'running'; }
+                if (statusText) statusText.textContent = `Đang tạo mỗi ngày một file Word cho tháng ${date} · ${project}. Các file sẽ nằm trong thư mục ${date} của file ZIP tải xuống.`;
+                if (downloadLink) downloadLink.hidden = true;
+                if (progressBar) { progressBar.hidden = false; progressBar.removeAttribute('value'); }
+                if (statusText) {
+                    polling = true;
+                    const pollProgress = async () => {
+                        if (!polling) return;
+                        try {
+                            const progressQuery = new URLSearchParams({project, export_id: exportId});
+                            const response = await fetch(`/api/photos/daily/export-progress?${progressQuery}`, {cache: 'no-store'});
+                            if (response.ok) {
+                                const state = await response.json();
+                                if (!polling || !state.success) return;
+                                const done = Number(state.completed_days) || 0;
+                                const total = Number(state.total_days) || 1;
+                                if (progressBar) { progressBar.max = total; progressBar.value = done; }
+                                statusText.textContent = state.status === 'completed' ? 'Đã tạo xong các file Word theo ngày. Đang nhận file ZIP từ máy chủ…'
+                                    : state.status === 'saving' ? `Đã xử lý ${done}/${total} ngày. Đang đóng gói thư mục tháng vào ZIP…`
+                                    : state.status === 'failed' ? state.error || 'Không thể tạo file Word.'
+                                    : `Đang tạo Word tháng ${date} · ${project}: ${done}/${total} ngày (${Math.round(done / total * 100)}%).`;
+                            }
+                        } catch (_) { /* The file request remains active if progress polling fails. */ }
+                        if (polling) pollTimer = setTimeout(pollProgress, 1000);
+                    };
+                    pollTimer = setTimeout(pollProgress, 1000);
+                }
+            }
+            const endpoint = monthly ? 'export-month-word' : 'export-word';
+            const response = await fetch(`/api/photos/daily/${endpoint}?${query}`, {cache: 'no-store'});
             if (!response.ok) {
                 const result = await parseJsonResponse(response);
                 throw new Error(result.error || 'Không thể xuất Word');
             }
             const contentType = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
-            if (contentType !== 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-                throw new Error('Máy chủ chưa trả về file Word. Vui lòng khởi động lại phần mềm rồi xuất lại.');
+            const expectedType = monthly ? 'application/zip' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            if (contentType !== expectedType) {
+                throw new Error(`Máy chủ chưa trả về ${monthly ? 'file ZIP chứa Word từng ngày' : 'file Word'}. Vui lòng khởi động lại phần mềm rồi xuất lại.`);
             }
             const blob = await response.blob();
             const signature = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
             if (signature.length !== 4 || signature[0] !== 0x50 || signature[1] !== 0x4b || signature[2] !== 0x03 || signature[3] !== 0x04) {
-                throw new Error('File Word máy chủ trả về không hợp lệ. Vui lòng xuất lại.');
+                throw new Error(`File ${monthly ? 'ZIP' : 'Word'} máy chủ trả về không hợp lệ. Vui lòng xuất lại.`);
             }
             const disposition = response.headers.get('Content-Disposition') || '';
             const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i);
             const plainName = disposition.match(/filename="([^"]+)"|filename=([^;]+)/i);
             const filename = encodedName ? decodeURIComponent(encodedName[1])
-                : plainName ? (plainName[1] || plainName[2]).trim() : `Anh_${project}_${date}.docx`;
+                : plainName ? (plainName[1] || plainName[2]).trim() : `Anh_${project}_${date}.${monthly ? 'zip' : 'docx'}`;
             objectUrl = URL.createObjectURL(blob);
             link = document.createElement('a');
             link.href = objectUrl;
             link.download = filename;
             document.body.appendChild(link);
-            link.click();
-            showToast(`Đã xuất Word ảnh ngày ${date}`, 'success');
+            if (monthly) {
+                if (statusBox) statusBox.dataset.state = 'completed';
+                if (statusText) statusText.textContent = `File ${filename} đã sẵn sàng. Giải nén để mở thư mục ${date}, mỗi ngày một file Word. Nếu chưa thấy tải xuống, bấm đường dẫn bên dưới.`;
+                if (progressBar) progressBar.hidden = true;
+                if (downloadLink) {
+                    if (globalThis.monthlyPhotoWordDownloadUrl) URL.revokeObjectURL(globalThis.monthlyPhotoWordDownloadUrl);
+                    globalThis.monthlyPhotoWordDownloadUrl = objectUrl;
+                    downloadLink.href = objectUrl;
+                    downloadLink.download = filename;
+                    downloadLink.textContent = `Tải ZIP chứa Word từng ngày: ${filename}`;
+                    downloadLink.hidden = false;
+                    objectUrl = null;
+                }
+            }
+            if (monthly && downloadLink) {
+                try { link.click(); } catch (_) { /* The visible link remains available for a direct user click. */ }
+            } else {
+                link.click();
+            }
+            showToast(monthly ? `Đã xuất thư mục Word từng ngày của tháng ${date} (ZIP)` : `Đã xuất Word ảnh ngày ${date}`, 'success');
         } catch (err) {
+            if (statusBox) statusBox.dataset.state = 'error';
+            if (statusText) statusText.textContent = `Không xuất được Word: ${err.message || 'Vui lòng thử lại.'}`;
+            if (progressBar) progressBar.hidden = true;
             showToast(err.message || 'Không thể xuất Word', 'error');
         } finally {
+            polling = false;
+            if (pollTimer !== null) clearTimeout(pollTimer);
+            if (originalLabel !== undefined && btn) btn.textContent = originalLabel;
             if (link) link.remove();
             if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
         }
@@ -2386,7 +2462,11 @@ function renderEmployeeCards(list) {
                     Mã chấm công: ${escapeHtml(emp.payroll_code || "Chưa có")}
                 </div>
                 <div class="employee-badge">Mã nội bộ: ${escapeHtml(emp.internal_code || "Chưa tạo")}</div>
+                ${emp.scan_paused ? '<div class="employee-badge scan-paused-badge">⏸ Tạm nghỉ · Bỏ qua quét và báo cáo</div>' : ''}
                 <div class="employee-card-actions">
+                    <button class="btn btn-secondary btn-sm employee-scan-pause-button" type="button" onclick="setEmployeeScanPaused('${safeName}', ${!emp.scan_paused}, currentProjectName, this)" title="${emp.scan_paused ? 'Cho phép quét mặt và đưa vào báo cáo trở lại' : 'Tạm bỏ qua nhân viên trong các lượt quét và báo cáo sau'}">
+                        ${emp.scan_paused ? '▶ Cho quét lại' : '⏸ Tạm nghỉ'}
+                    </button>
                     <button class="btn btn-secondary btn-sm" onclick="openEmployeePhotosModal('${safeName}')" title="Xem hoặc thêm ảnh chân dung">
                         Xem / Thêm ảnh
                     </button>

@@ -49,6 +49,7 @@ a = Analysis(
         # src modules
         'src', 'src.app', 'src.config', 'src.face_detector',
         'src.face_matcher', 'src.pdf_extractor',
+        'src.face_inference', 'src.scan_runtime',
         'src.text_extractor',
         'src.database_manager', 'src.excel_extractor',
         'src.aggregate_report_exporter',

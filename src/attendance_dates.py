@@ -117,3 +117,21 @@ def image_date_status(image_path: Path, attendance_date: date) -> str:
     if any(value != attendance_date for value in observed):
         return "mismatch"
     return "consistent" if observed else "unknown"
+
+
+def attendance_image_date_status(image_path: Path, attendance_date: date) -> str:
+    """Allow message dates for attendance, preserving capture-date provenance."""
+    status = image_date_status(image_path, attendance_date)
+    if status != "unknown":
+        return status
+    try:
+        path = Path(image_path)
+        metadata = json.loads(path.with_suffix(path.suffix + ".json").read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict) or metadata.get("derived"):
+            return "unknown"
+        if metadata.get("date_source") != "message":
+            return "unknown"
+        sent = parse_attendance_date(metadata.get("send_date"))
+        return "message_date" if sent == attendance_date else "mismatch"
+    except (ValueError, OSError, TypeError):
+        return "unknown"

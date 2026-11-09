@@ -5,6 +5,7 @@ from PIL import Image
 import pytest
 from src.identity_registry import IdentityRegistry
 from src.attendance_matching import match_attendance_record
+import json
 
 @pytest.mark.parametrize("observed,status,matched,candidate", [
     ("2026:09:01 08:00:00","consistent",True,False),
@@ -32,6 +33,7 @@ def test_pipeline_scopes_identity_and_original_date(tmp_path, observed, status, 
             assert kwargs["project_id"]==a["project_id"]
             assert kwargs["employee_id"]==employees[0]["employee_id"]
             assert kwargs["camera_images"]==[str(image)]
+            assert kwargs["fast_mode"] is True
             return SimpleNamespace(status="matched",image_path=str(image),distance=0.1,reason="")
     record={"date":"01/09/2026"}
     match_attendance_record(record,{"id":"001"},project_id=a["project_id"],registry=r,matcher=Matcher(),input_images_dir=day.parent)
@@ -40,3 +42,31 @@ def test_pipeline_scopes_identity_and_original_date(tmp_path, observed, status, 
     assert bool(record["candidate_image_path"])==candidate
     assert len(calls)==(0 if status=="mismatch" else 1)
     assert record["employee_id"]==employees[0]["employee_id"]
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_zalo_message_date_matches_without_losing_conflict(tmp_path, conflict):
+    registry = IdentityRegistry(tmp_path / "ids.db", tmp_path / "portraits")
+    project = registry.register_project("A")["project_id"]
+    employee = registry.create_employee("Trantrungut")["employee_id"]
+    registry.assign_employee(project, employee, "20240350", "2026-01-01")
+    folder = tmp_path / "camera" / "2026-10-01"
+    folder.mkdir(parents=True)
+    image = folder / "zalo.jpg"
+    Image.new("RGB", (20, 20)).save(image)
+    image.with_suffix(".jpg.json").write_text(json.dumps({
+        "date_source": "message", "send_date": "2026-10-01", "derived": False,
+    }))
+    class Matcher:
+        def match_employee_in_images(self, **kwargs):
+            assert kwargs["camera_images"] == [str(image)]
+            return SimpleNamespace(status="matched", image_path=str(image), distance=0.1, reason="")
+    record = {"date": "01/10/2026", "record_conflict": conflict,
+              "gio_vao": "05:46", "gio_ra": "17:52"}
+    match_attendance_record(record, {"id": "20240350"}, project_id=project,
+                            registry=registry, matcher=Matcher(), input_images_dir=folder.parent)
+    assert record["matched_image_path"] == str(image)
+    assert record["date_status"] == "message_date"
+    assert "ngày gửi Zalo" in record["review_reason"]
+    assert ("mâu thuẫn" in record["review_reason"]) == conflict
+    assert record["gio_vao"] == "05:46" and record["gio_ra"] == "17:52"

@@ -60,6 +60,7 @@ class TaskRecord:
         self.end_time = end_time
         self.created_at = created_at or datetime.now().isoformat()
         self.cancel_requested = False
+        self.active_workers = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -77,6 +78,8 @@ class TaskRecord:
             "start_time": self.start_time,
             "end_time": self.end_time,
             "created_at": self.created_at,
+            "active_workers": [dict(item, idle_seconds=max(0, int((datetime.now() - datetime.fromisoformat(item['updated_at'])).total_seconds())))
+                               for item in list(self.active_workers.values())],
         }
 
 
@@ -312,6 +315,9 @@ class TaskManager:
                 self._save_task_to_db(task)
                 return True
 
+            if task.status == "cancelling":
+                return True
+
             if task.status == "running" and self._current_running_id == task_id:
                 task.cancel_requested = True
                 task.status = "cancelling"
@@ -320,6 +326,47 @@ class TaskManager:
                 return True
 
         return False
+
+    def queue_info(self, task_id: str) -> Dict:
+        """Read queue position under the same lock used by the worker."""
+        with self._lock:
+            queued = [t for t in self._tasks.values() if t.status == "queued"]
+            for position, task in enumerate(queued, 1):
+                if task.task_id == task_id:
+                    running = any(t.status in ("running", "cancelling") for t in self._tasks.values())
+                    return {"queue_position": position, "ahead_count": position - 1 + int(running)}
+            return {"queue_position": None, "ahead_count": 0}
+
+    def scan_snapshot(self, limit: int = 20) -> Dict:
+        """Always include every active scan, independently of the history limit."""
+        with self._lock:
+            active = []
+            counts = {"running": 0, "queued": 0, "cancelling": 0}
+            for task in self._tasks.values():
+                if task.task_type not in ("excel_face", "pdf_face") or task.status not in counts:
+                    continue
+                counts[task.status] += 1
+                active.append({**task.to_dict(), **self.queue_info(task.task_id)})
+            # Active tasks first, with waiting scans in FIFO order.
+            active.sort(key=lambda t: (t["status"] == "queued", t["created_at"]))
+            history = self.get_recent_tasks(limit=limit)
+            history = [t for t in history if t["task_type"] in ("excel_face", "pdf_face")
+                       and t["status"] not in counts]
+            return {"counts": counts, "max_running": 1, "active": active, "history": history}
+
+    def update_activity(self, task_id: str, worker_id: str, detail):
+        # Per-image activity is transient: do not write SQLite for every image.
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return
+            if detail is None:
+                task.active_workers.pop(worker_id, None)
+            else:
+                task.active_workers[worker_id] = {
+                    **task.active_workers.get(worker_id, {}), **detail,
+                    'updated_at': datetime.now().isoformat(),
+                }
 
     def update_progress(
         self,
@@ -399,13 +446,14 @@ class TaskManager:
                 self._task_queue.task_done()
                 continue
 
-            # Nếu task đã bị hủy khi đang chờ trong queue
-            if task.status == "cancelled" or task.cancel_requested:
-                self._task_queue.task_done()
-                continue
-
             # Bắt đầu chạy task
             with self._lock:
+                # Check and transition atomically so cancelling a queued scan
+                # can never race with the worker starting that same scan.
+                if task.status == "cancelled" or task.cancel_requested:
+                    self._callbacks.pop(task_id, None)
+                    self._task_queue.task_done()
+                    continue
                 self._current_running_id = task_id
                 self._current_cancel_event.clear()
                 task.status = "running"
@@ -441,6 +489,7 @@ class TaskManager:
 
             finally:
                 with self._lock:
+                    task.active_workers.clear()
                     self._current_running_id = None
                     self._current_cancel_event.clear()
                     self._callbacks.pop(task_id, None)

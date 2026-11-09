@@ -93,6 +93,15 @@ class IdentityRegistry:
                     employee_id TEXT NOT NULL REFERENCES employees(employee_id),
                     relative_path TEXT NOT NULL,
                     PRIMARY KEY(project_id, relative_path));
+                CREATE TABLE IF NOT EXISTS report_employee_order (
+                    project_id TEXT NOT NULL REFERENCES projects(project_id),
+                    employee_id TEXT NOT NULL REFERENCES employees(employee_id),
+                    position INTEGER NOT NULL,
+                    PRIMARY KEY(project_id, employee_id));
+                CREATE TABLE IF NOT EXISTS employee_scan_pauses (
+                    project_id TEXT NOT NULL REFERENCES projects(project_id),
+                    employee_id TEXT NOT NULL REFERENCES employees(employee_id),
+                    PRIMARY KEY(project_id, employee_id));
             """)
 
     @contextmanager
@@ -391,12 +400,14 @@ class IdentityRegistry:
 
     def list_employees(self,project_id):
         with self._connect() as c:
+            paused = {row[0] for row in c.execute('SELECT employee_id FROM employee_scan_pauses WHERE project_id=?', (project_id,))}
             rows=c.execute("""SELECT e.*, (SELECT code FROM employee_internal_codes WHERE employee_id=e.employee_id) AS internal_code FROM employees e WHERE employee_id IN
                 (SELECT employee_id FROM memberships WHERE project_id=? UNION SELECT employee_id FROM legacy_sources WHERE project_id=?)
                 ORDER BY e.display_name,e.employee_id""",(project_id,project_id)).fetchall()
             items=[]
             for row in rows:
                 item=dict(row)
+                item['scan_paused'] = item['employee_id'] in paused
                 if c.execute("SELECT 1 FROM project_employee_archives WHERE project_id=? AND employee_id=?",
                              (project_id, item["employee_id"])).fetchone():
                     item["active"] = 0
@@ -408,6 +419,52 @@ class IdentityRegistry:
                             status="confirmed" if memberships else "needs_confirmation")
                 items.append(item)
         return items
+
+    def paused_employee_ids(self, project_id):
+        with self._connect() as c:
+            return [row[0] for row in c.execute(
+                'SELECT employee_id FROM employee_scan_pauses WHERE project_id=? ORDER BY employee_id', (project_id,))]
+
+    def set_scan_paused(self, project_id, employee_id, paused):
+        if type(paused) is not bool:
+            raise ValueError('Trạng thái tạm nghỉ phải là true hoặc false')
+        if not self.get_project(project_id)['active']:
+            raise ValueError('Dự án đã được lưu trữ')
+        if employee_id not in {e['employee_id'] for e in self.list_employees(project_id)}:
+            raise ValueError('Nhân viên không thuộc dự án')
+        with self._connect() as c:
+            if paused:
+                c.execute('INSERT OR IGNORE INTO employee_scan_pauses(project_id, employee_id) VALUES (?,?)', (project_id, employee_id))
+            else:
+                c.execute('DELETE FROM employee_scan_pauses WHERE project_id=? AND employee_id=?', (project_id, employee_id))
+
+    def report_order(self, project_id):
+        """Saved employees first; newly added employees follow in name order."""
+        self.get_project(project_id)
+        employees = self.list_employees(project_id)
+        with self._connect() as c:
+            saved = {row['employee_id']: row['position'] for row in c.execute(
+                'SELECT employee_id, position FROM report_employee_order WHERE project_id=?', (project_id,))}
+        employees.sort(key=lambda e: (saved.get(e['employee_id'], len(saved)),
+                                      e['display_name'].casefold(), e['employee_id']))
+        return employees
+
+    def save_report_order(self, project_id, employee_ids):
+        project = self.get_project(project_id)
+        if not project['active']:
+            raise ValueError('Dự án đã được lưu trữ')
+        if not isinstance(employee_ids, list) or any(not isinstance(eid, str) for eid in employee_ids):
+            raise ValueError('Thứ tự phải là danh sách ID nhân viên')
+        if len(set(employee_ids)) != len(employee_ids):
+            raise ValueError('Danh sách thứ tự có nhân viên trùng lặp')
+        members = {e['employee_id'] for e in self.list_employees(project_id)}
+        if any(eid not in members for eid in employee_ids):
+            raise ValueError('Nhân viên không thuộc dự án')
+        with self._connect() as c:
+            c.execute('DELETE FROM report_employee_order WHERE project_id=?', (project_id,))
+            c.executemany('INSERT INTO report_employee_order(project_id, employee_id, position) VALUES (?,?,?)',
+                          [(project_id, eid, index) for index, eid in enumerate(employee_ids)])
+        return self.report_order(project_id)
 
     def transfer_employee(self,source_id,target_id,employee_id,effective_date,payroll_code,reviewer):
         if source_id==target_id or not isinstance(reviewer,str) or not reviewer.strip():

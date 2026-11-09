@@ -19,6 +19,8 @@ import pickle
 import threading
 import sqlite3
 from datetime import datetime, date
+from src.face_inference import FaceInferenceError, usable_face_representations
+from src.scan_runtime import ScanCancelled, check_scan_cancelled, report_scan_activity
 
 # Cấu hình an toàn console Windows tránh UnicodeEncodeError
 if hasattr(sys.stdout, 'reconfigure'):
@@ -35,6 +37,7 @@ _deepface_lock = threading.Lock()
 # Thư mục temp để lưu ảnh tạm (tránh lỗi đường dẫn tiếng Việt)
 _temp_dir = None
 _temp_dir_lock = threading.Lock()
+_temp_copy_lock = threading.Lock()
 
 # Bộ nhớ đệm vector khuôn mặt lưu trên ổ đĩa (.cache/)
 _CACHE_LOCK = threading.Lock()
@@ -259,14 +262,24 @@ def copy_to_ascii_path(src_path: str) -> str:
     try:
         ext = os.path.splitext(src_path)[1]
         abs_path = os.path.abspath(src_path)
-        ascii_name = f"img_{hash(abs_path) & 0xFFFFFFFF}{ext}"
+        with open(src_path, 'rb') as source:
+            content = source.read()
+        ascii_name = f"img_{hashlib.sha256(content).hexdigest()}{ext}"
         
         temp_dir = get_temp_dir()
         dst_path = os.path.join(temp_dir, ascii_name)
         
-        if (not os.path.exists(dst_path) or
-                os.path.getmtime(src_path) > os.path.getmtime(dst_path)):
-            shutil.copy2(src_path, dst_path)
+        with _temp_copy_lock:
+            if not os.path.exists(dst_path):
+                # Publish an immutable snapshot atomically for concurrent scan threads.
+                fd, staging = tempfile.mkstemp(dir=temp_dir, suffix=ext)
+                try:
+                    with os.fdopen(fd, 'wb') as output:
+                        output.write(content)
+                    os.replace(staging, dst_path)
+                finally:
+                    if os.path.exists(staging):
+                        os.remove(staging)
         
         return dst_path
     except Exception as e:
@@ -281,7 +294,12 @@ def get_deepface():
             if _deepface is None:
                 try:
                     from deepface import DeepFace
-                    _deepface = DeepFace
+                    class ValidatedDeepFace:
+                        @staticmethod
+                        def represent(**request):
+                            values = DeepFace.represent(**request)
+                            return usable_face_representations(values, request['img_path'])
+                    _deepface = ValidatedDeepFace
                 except ImportError:
                     print("DeepFace chưa được cài đặt. Chạy: pip install deepface tf-keras")
                     return None
@@ -362,7 +380,8 @@ class FaceMatcher:
         distance_metric: str = "cosine",
         enforce_detection: bool = True,
         log_callback=None,
-        identity_registry=None
+        identity_registry=None,
+        inference_runner=None,
     ):
         """
         Args:
@@ -384,6 +403,7 @@ class FaceMatcher:
         self._embedding_cache = {}  # {path: (mtime, embedding)}
         self._photo_embedding_cache = {}
         self.log_callback = log_callback
+        self.inference_runner = inference_runner
         self._scan_portraits()
 
     def _log(self, message: str, log_type: str = "default"):
@@ -464,15 +484,16 @@ class FaceMatcher:
         FaceNotDetected means no face; other exceptions remain errors.
         A fresh ASCII snapshot also avoids the legacy mtime-based copy cache.
         """
+        check_scan_cancelled()
         if self.detector_backend.lower() == "skip":
             raise ValueError("Face detection cannot be skipped")
         with open(image_path, "rb") as image_file:
             content = image_file.read()
         key = (hashlib.sha256(content).hexdigest(), self.model_name,
-               self.detector_backend, True)
+               self.detector_backend, True, 'face-quality-v2')
         if key in self._photo_embedding_cache:
             return self._photo_embedding_cache[key]
-        deepface = get_deepface()
+        deepface = self.inference_runner or get_deepface()
         if deepface is None:
             raise RuntimeError("DeepFace is unavailable")
         with tempfile.TemporaryDirectory(prefix="face_photo_") as folder:
@@ -525,11 +546,13 @@ class FaceMatcher:
                 return result("no_portrait", reason="Chưa có chân dung nhân viên đã xác nhận")
             references = []
             for path in portraits:
+                report_scan_activity('Đang đọc chân dung', image=os.path.basename(path), image_index=1, image_total=len(portraits))
                 faces = self._get_detected_embeddings(str(path))
                 if len(faces) == 1:
                     references.append(faces[0])
             if not references:
                 return result("no_portrait", reason="Chân dung cần có một khuôn mặt đọc được")
+            report_scan_activity('Đang đối chiếu ảnh', image=os.path.basename(image_path), image_index=1, image_total=1)
             faces = self._get_detected_embeddings(str(image_path))
             if not faces:
                 return result("no_face", reason="Không phát hiện khuôn mặt trong ảnh")
@@ -545,6 +568,8 @@ class FaceMatcher:
                               "Có khuôn mặt khớp chân dung trong ngưỡng so sánh")
             return result("no_match", best_distance,
                           "Không có khuôn mặt đạt ngưỡng so sánh")
+        except (ScanCancelled, FaceInferenceError):
+            raise
         except Exception as exc:
             return result("error", reason=f"Lỗi đối chiếu khuôn mặt: {exc}")
 
@@ -563,6 +588,7 @@ class FaceMatcher:
         import json
         supplemental_results, legacy_images = [], []
         for path in camera_images:
+            check_scan_cancelled()
             image = Path(path)
             try:
                 metadata = json.loads(image.with_suffix(image.suffix + '.json').read_text(encoding='utf-8'))
@@ -571,9 +597,12 @@ class FaceMatcher:
             if not evidence_is_visible(image):
                 continue
             if isinstance(metadata, dict) and metadata.get('source') == 'supplement_original':
-                supplemental_results.append(self.match_employee_in_photo(project_id=project_id,
+                result = self.match_employee_in_photo(project_id=project_id,
                     employee_id=employee_id, attendance_date=attendance_date, image_path=str(image),
-                    distance_threshold=distance_threshold))
+                    distance_threshold=distance_threshold)
+                if fast_mode and result.status == 'matched':
+                    return result
+                supplemental_results.append(result)
             else:
                 legacy_images.append(str(image))
         matched = [result for result in supplemental_results if result.status == 'matched']
@@ -589,7 +618,10 @@ class FaceMatcher:
         if not portraits:
             return MatchResult("no_portrait", None, None, project_id, employee_id,
                                "Chưa có chân dung đã xác nhận")
-        embeddings = [self._get_embedding(str(path)) for path in portraits]
+        embeddings = []
+        for index, path in enumerate(portraits, 1):
+            report_scan_activity('Đang đọc chân dung', image=os.path.basename(path), image_index=index, image_total=len(portraits))
+            embeddings.append(self._get_embedding(str(path)))
         embeddings = [value for value in embeddings if value is not None]
         if not embeddings:
             return MatchResult("error", None, None, project_id, employee_id,
@@ -598,7 +630,8 @@ class FaceMatcher:
         if not np.isfinite(threshold) or threshold <= 0:
             raise ValueError("Ngưỡng so sánh không hợp lệ")
         best_path, best_distance, compared = None, float("inf"), 0
-        for path in camera_images:
+        for index, path in enumerate(camera_images, 1):
+            report_scan_activity('Đang đối chiếu ảnh', image=os.path.basename(path), image_index=index, image_total=len(camera_images))
             vector = self._get_embedding(str(path))
             if vector is None:
                 continue
@@ -610,7 +643,7 @@ class FaceMatcher:
             compared += 1
             if distance < best_distance:
                 best_path, best_distance = str(path), distance
-            if fast_mode and best_distance <= threshold * 0.7:
+            if fast_mode and best_distance <= threshold:
                 break
         if not compared:
             return MatchResult("error", None, None, project_id, employee_id,
@@ -625,17 +658,22 @@ class FaceMatcher:
         return float(1.0 - np.dot(a, b) / denom)
 
     def _get_embedding(self, image_path: str) -> Optional[np.ndarray]:
+        check_scan_cancelled()
         if not image_path or not os.path.exists(image_path):
             return None
 
         try:
+            if self.detector_backend.lower() == 'skip':
+                return None
             stat = os.stat(image_path)
+            with open(image_path, 'rb') as source:
+                content_hash = hashlib.sha256(source.read()).hexdigest()
             cache_key = (
                 os.path.abspath(image_path),
                 stat.st_size,
                 stat.st_mtime,
                 self.model_name,
-                self.detector_backend
+                f'{self.detector_backend}|face-quality-v2|{content_hash}'
             )
 
             # 1. Kiểm tra cache chung
@@ -647,7 +685,7 @@ class FaceMatcher:
                     return _DISK_CACHE[cache_key]
 
             # 2. Tính toán vector với DeepFace
-            DeepFace = get_deepface()
+            DeepFace = self.inference_runner or get_deepface()
             if DeepFace is None:
                 return None
 
@@ -656,12 +694,15 @@ class FaceMatcher:
                 img_path=img_ascii,
                 model_name=self.model_name,
                 detector_backend=self.detector_backend,
-                enforce_detection=self.enforce_detection
+                enforce_detection=True
             )
-            if not reps:
+            if not reps or len(reps) != 1:
                 return None
 
             embedding = np.array(reps[0]["embedding"], dtype=np.float32)
+            if (embedding.ndim != 1 or not embedding.size or
+                    not np.all(np.isfinite(embedding)) or np.linalg.norm(embedding) == 0):
+                return None
 
             # 3. Ghi vào cache chung
             with _CACHE_LOCK:
@@ -674,6 +715,10 @@ class FaceMatcher:
                         _save_disk_cache_locked()
 
             return embedding
+        except ScanCancelled:
+            raise
+        except FaceInferenceError as exc:
+            raise FaceInferenceError(f'{os.path.basename(image_path)}: {exc}') from exc
         except Exception:
             return None
 

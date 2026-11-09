@@ -1,0 +1,31 @@
+                    <section class="scan-journal" aria-label="Nhật ký quét trực tiếp">
+                        <div class="scan-journal-heading"><h3>Nhật ký quét trực tiếp</h3><span id="scan-log-connection" class="text-hint">Đang chờ nhật ký máy chủ; tiến độ vẫn cập nhật mỗi 2 giây.</span></div>
+                        <div class="scan-log-toolbar scan-log-filters">
+                            <label>Lượt quét<select id="scan-log-task" class="form-input"><option value="">Tất cả lượt / máy chủ</option></select></label>
+                            <label>Mức nhật ký<select id="scan-log-level" class="form-input"><option value="">Tất cả mức</option><option value="info">Thông tin</option><option value="success">Hoàn tất</option><option value="warning">Cảnh báo</option><option value="error">Lỗi</option></select></label>
+                            <label>Kết quả nhận diện<select id="scan-log-result" class="form-input"><option value="">Tất cả kết quả</option><option value="matched">Mặt khớp</option><option value="no_match">Mặt không khớp</option><option value="no_face">Không thấy khuôn mặt</option><option value="no_portrait">Thiếu chân dung</option><option value="error">Thất bại / Lỗi</option><option value="identity_unresolved">Chưa xác nhận danh tính</option><option value="not_run">Chưa thể đối soát</option><option value="other">Tiến trình / Thông báo khác</option></select></label>
+                            <label class="scan-log-search">Tìm nhân viên, ngày, ảnh<input id="scan-log-search" class="form-input" type="search" placeholder="Ví dụ: 2026-10-03 hoặc tên nhân viên"></label>
+                        </div>
+                        <div class="scan-log-toolbar scan-log-actions">
+                            <label class="scan-log-check"><input type="checkbox" id="scan-log-autoscroll" checked> Tự cuộn</label>
+                            <button class="btn btn-secondary btn-sm" id="scan-log-pause">Tạm dừng</button>
+                            <button class="btn btn-secondary btn-sm" id="scan-log-download" title="Tải toàn bộ nhật ký đang lọc">Tải log</button>
+                            <button class="btn btn-secondary btn-sm" id="scan-log-clear" title="Chỉ xóa nhật ký trên trình duyệt này">Xóa log</button>
+                            <span id="scan-log-count" class="text-hint">0 dòng</span>
+                        </div>
+                        <div id="scan-log-output" class="scan-log-output" role="log" aria-label="Các dòng nhật ký quét" tabindex="0"></div>
+                        <p class="text-hint">Lưu 1.000 dòng gần nhất trên trình duyệt; hiển thị tối đa 400 dòng. Tải log gồm toàn bộ kết quả lọc. Xóa log không hủy quét hay xóa báo cáo.</p>
+                    </section>
+                    <details class="scan-method">
+                        <summary>Hệ thống đang quét mặt như thế nào?</summary>
+                        <ol>
+                            <li><strong>Đọc hồ sơ chấm công:</strong> lấy nhân viên và ngày từ Excel/PDF trong kỳ quét. Đối soát các ngày vắng, thiếu giờ vào/ra, giờ vào bằng giờ ra hoặc làm dưới 3 giờ.</li>
+                            <li><strong>Xác nhận đúng người:</strong> dùng mã nhân viên, dự án và ngày hiệu lực để tìm chân dung đã xác nhận. Không tự ghép người theo tên gần giống hoặc lấy ảnh của dự án khác. Thiếu chân dung thì ghi nhận cần kiểm tra.</li>
+                            <li><strong>Tìm ảnh đúng ngày:</strong> duyệt ảnh trong thư mục ngày của dự án, đối chiếu ngày chụp nếu có. Ảnh khớp mặt nhưng chưa rõ ngày chỉ là ảnh đề xuất cần kiểm tra, không tự chèn làm bằng chứng đã xác nhận.</li>
+                            <li><strong>Phát hiện và so sánh:</strong> RetinaFace tìm khuôn mặt; ArcFace tạo vector đặc trưng rồi so khoảng cách cosine với chân dung. Khoảng cách càng nhỏ càng giống. Ngưỡng mặc định ArcFace là 0,37; nếu bạn chọn ngưỡng khác, lượt quét dùng ngưỡng đã chọn. Đây không phải tỷ lệ phần trăm độ tin cậy.</li>
+                            <li><strong>Xuất kết quả:</strong> tạo Word cho từng nhân viên và báo cáo tổng hợp khi hoàn tất lượt quét. Không có ảnh khớp vẫn có thể xuất hồ sơ với lý do cần kiểm tra; “Xong” không có nghĩa mọi ngày đều tìm thấy ảnh.</li>
+                        </ol>
+                        <p><strong>Ảnh nhiều người:</strong> luồng ảnh camera thông thường hiện dùng khuôn mặt đầu tiên mà bộ nhận diện trả về; luồng ảnh gốc bổ sung đối chiếu các khuôn mặt phát hiện được.</p>
+                        <p><strong>Hiểu tiến độ:</strong> 19/79 là số nhân viên đã xử lý, không phải số ảnh. Các nhân viên có thể cùng được chuẩn bị báo cáo, số ảnh được nhận diện cùng lúc phụ thuộc mục “Số ảnh AI nhận diện cùng lúc”. Chế độ tự động chọn giới hạn theo CPU/RAM và chờ thêm khi thiếu RAM; các luồng còn lại hiện “Đang chờ bộ nhận diện”. “Đã xong gần nhất” là người vừa hoàn tất, không phải người đang bị kẹt.</p>
+                        <p><strong>Giới hạn chờ:</strong> nạp AI lần đầu tối đa 300 giây, sau đó mỗi lần nhận diện ảnh tối đa 120 giây. Chờ đến lượt bộ AI là khoảng chờ riêng. Nếu quá hạn, lượt quét báo lỗi để kiểm tra; các file cá nhân đã xuất được giữ lại.</p>
+                    </details>

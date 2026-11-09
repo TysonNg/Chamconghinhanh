@@ -41,17 +41,7 @@ def _parse_date(value) -> Optional[date]:
 
 
 def _explanation_for(record: Dict) -> str:
-    if record.get("same_in_out"):
-        return "Giờ vào và giờ ra trùng hoặc quá gần, bổ sung hình ảnh thực tế"
-    if record.get("under_3h"):
-        return "Làm dưới 3 tiếng, bổ sung hình ảnh thực tế"
-    if record.get("missing_checkin"):
-        return "Thiếu giờ vào, bổ sung hình ảnh thực tế"
-    if record.get("missing_checkout"):
-        return "Thiếu giờ ra, bổ sung hình ảnh thực tế"
-    if record.get("is_absent"):
-        return "Vắng mặt, cần giải trình"
-    return "Cần giải trình dữ liệu chấm công"
+    return "Nhân viên có trực, bổ sung hình"
 
 
 def _note_for(record: Dict) -> str:
@@ -71,12 +61,18 @@ def collect_issue_rows(
     persons: Iterable[Dict],
     from_date=None,
     to_date=None,
+    employee_order=None,
+    paused_employee_ids=None,
 ) -> List[Dict]:
     """Gom, lọc và sắp xếp các ngày chấm công cần giải trình."""
     start = _parse_date(from_date)
     end = _parse_date(to_date)
     rows = []
+    from src.report_order import sort_report_persons, filter_paused_persons
+    persons = filter_paused_persons(persons, paused_employee_ids)
+    persons = sort_report_persons(persons, employee_order) if employee_order else persons
     for person in persons:
+        person_rows = []
         for record in person.get("records", []):
             is_issue = any(
                 record.get(key)
@@ -91,7 +87,7 @@ def collect_issue_rows(
                 continue
             if end and record_date > end:
                 continue
-            rows.append({
+            person_rows.append({
                 "name": str(person.get("name") or "").strip(),
                 "date": record_date.strftime("%d/%m/%Y"),
                 "date_value": record_date,
@@ -99,7 +95,9 @@ def collect_issue_rows(
                 "note": _note_for(record),
                 "image_path": record.get("matched_image_path"),
             })
-    rows.sort(key=lambda item: (item["name"].casefold(), item["date_value"]))
+        rows.extend(sorted(person_rows, key=lambda item: item['date_value']))
+    if not employee_order:
+        rows.sort(key=lambda item: (item["name"].casefold(), item["date_value"]))
     return rows
 
 
@@ -366,7 +364,7 @@ def _find_data_table(doc):
     raise ValueError("Template không có bảng dữ liệu giải trình hợp lệ")
 
 
-def _fit_image(image_path, max_width_cm=5.4, max_height_cm=3.6):
+def _fit_image(image_path, max_width_cm=5.6, max_height_cm=7.5):
     with Image.open(image_path) as image:
         width, height = image.size
     if width <= 0 or height <= 0:
@@ -400,7 +398,8 @@ def _fill_data_table(table, rows):
         current_name = str(item.get("name") or "").strip()
         display_name = "" if previous_name and current_name.casefold() == previous_name.casefold() else current_name
         previous_name = current_name
-        values = [display_name, item["date"], item["explanation"], ""]
+        explanation = item["explanation"]
+        values = [display_name, item["date"], explanation, ""]
         for cell_index, (cell, width) in enumerate(zip(row.cells, DATA_WIDTHS)):
             cell.width = width
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
@@ -413,7 +412,7 @@ def _fill_data_table(table, rows):
             )
             paragraph.paragraph_format.space_after = Pt(0)
             if values[cell_index]:
-                _set_font(paragraph.add_run(values[cell_index]), size=9)
+                _set_font(paragraph.add_run(values[cell_index]), size=9, bold=(cell_index == 0))
 
         image_cell = row.cells[3]
         image_paragraph = image_cell.paragraphs[0]
@@ -457,6 +456,8 @@ def export_aggregate_report(
     to_date=None,
     report_date=None,
     template_path: str = DEFAULT_TEMPLATE_PATH,
+    employee_order=None,
+    paused_employee_ids=None,
 ) -> str:
     """Xuất một DOCX giải trình tổng hợp, giữ nguyên các file cá nhân hiện có."""
     persons = list(persons)
@@ -472,7 +473,8 @@ def export_aggregate_report(
         "{{TO_DATE}}": end.strftime("%d/%m/%Y"),
         "{{REPORT_DATE_LONG}}": report_day.strftime("Ngày %d tháng %m năm %Y"),
     })
-    rows = collect_issue_rows(persons, from_date=start, to_date=end)
+    rows = collect_issue_rows(persons, from_date=start, to_date=end, employee_order=employee_order,
+                              paused_employee_ids=paused_employee_ids)
     _fill_data_table(_find_data_table(doc), rows)
 
     os.makedirs(output_dir, exist_ok=True)
